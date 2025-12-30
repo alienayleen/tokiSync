@@ -88,7 +88,7 @@ window.TokiSyncCore = function (GM_context) {
     let detectedCategory = "Webtoon"; // Default
     if (bookMatch) { site = "북토끼"; protocolDomain = currentURL.match(/^https:\/\/booktoki[0-9]+\.com/)[0]; workId = bookMatch[1]; detectedCategory = "Novel"; }
     else if (newMatch) { site = "뉴토끼"; protocolDomain = currentURL.match(/^https:\/\/newtoki[0-9]+\.com/)[0]; workId = newMatch[1]; detectedCategory = "Webtoon"; }
-    else if (manaMatch) { site = "마나토끼"; protocolDomain = currentURL.match(/^https:\/\/manatoki[0-9]+\.net/)[0]; workId = manaMatch[1]; detectedCategory = "Webtoon"; }
+    else if (manaMatch) { site = "마나토끼"; protocolDomain = currentURL.match(/^https:\/\/manatoki[0-9]+\.net/)[0]; workId = manaMatch[1]; detectedCategory = "Manga"; }
     else { return; }
     // #endregion
 

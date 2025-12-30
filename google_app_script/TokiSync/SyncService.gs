@@ -193,10 +193,11 @@ function migrateLegacyStructure(rootFolderId) {
 
   const catWebtoon = ensureCat("Webtoon");
   const catNovel = ensureCat("Novel");
+  const catManga = ensureCat("Manga");
 
   const folders = root.getFolders();
   const toMigrate = [];
-  const EXT = ["Webtoon", "Novel", "Libraries", "System"];
+  const EXT = ["Webtoon", "Novel", "Manga", "Libraries", "System"];
 
   // 1. Collect Valid Folders (Snapshot)
   while (folders.hasNext()) {
@@ -226,11 +227,25 @@ function migrateLegacyStructure(rootFolderId) {
         const content = infoFile.getBlob().getDataAsString();
         try {
           const json = JSON.parse(content);
+          const metaPublisher = (
+            json.publisher ||
+            (json.metadata && json.metadata.publisher) ||
+            ""
+          ).toString();
+          const metaSite = (json.site || "").toString();
+
+          // Category Detection
           if (
             json.category === "Novel" ||
             (json.metadata && json.metadata.category === "Novel")
           ) {
             category = "Novel";
+          } else if (
+            json.category === "Manga" ||
+            metaPublisher.includes("마나토끼") ||
+            metaSite.includes("마나토끼")
+          ) {
+            category = "Manga";
           }
 
           // Extract Thumbnail
@@ -255,7 +270,10 @@ function migrateLegacyStructure(rootFolderId) {
       }
 
       // 2. Move Folder
-      const targetCat = category === "Novel" ? catNovel : catWebtoon;
+      let targetCat = catWebtoon;
+      if (category === "Novel") targetCat = catNovel;
+      else if (category === "Manga") targetCat = catManga;
+
       folder.moveTo(targetCat);
       movedCount++;
       Debug.log(`   -> Moved to ${category}`);

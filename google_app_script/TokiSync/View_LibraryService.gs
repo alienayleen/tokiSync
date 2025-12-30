@@ -50,7 +50,7 @@ function View_rebuildLibraryIndex(folderId) {
   const seriesList = [];
 
   // Known Categories
-  const CATEGORIES = ["Webtoon", "Novel"];
+  const CATEGORIES = ["Webtoon", "Manga", "Novel"];
 
   while (folders.hasNext()) {
     const folder = folders.next();

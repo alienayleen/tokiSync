@@ -205,15 +205,61 @@ function saveManualConfig() {
  * 검색창 입력 이벤트 핸들러.
  * `allSeries`에서 제목을 검색하여 그리드를 필터링합니다.
  */
+// 🚀 Global State
+let currentTab = 'all'; // 'all', 'Webtoon', 'Manga', 'Novel'
+
+// ... (Existing Init Code) ...
+
+/**
+ * 탭을 전환하고 리스트를 필터링합니다.
+ * @param {string} tabName - 'all', 'Webtoon', 'Manga', 'Novel'
+ */
+function switchTab(tabName) {
+    currentTab = tabName;
+    
+    // UI Update
+    const buttons = document.querySelectorAll('.tab-btn');
+    buttons.forEach(btn => {
+        if (btn.innerText === getTabLabel(tabName)) btn.classList.add('active');
+        else btn.classList.remove('active');
+    });
+
+    // Re-filter
+    filterData();
+}
+
+function getTabLabel(key) {
+    if (key === 'all') return '전체';
+    if (key === 'Webtoon') return '웹툰';
+    if (key === 'Manga') return '만화';
+    if (key === 'Novel') return '소설';
+    return '';
+}
+
+/**
+ * 검색창 입력 및 탭 선택에 따라 그리드를 필터링합니다.
+ */
 function filterData() {
     const query = document.getElementById('search').value.toLowerCase();
     const cards = document.querySelectorAll('.card');
+    
     cards.forEach((card, index) => {
         const series = allSeries[index];
         const meta = series.metadata || { authors: [] };
         const authors = meta.authors || [];
         const text = (series.name + (authors.join(' '))).toLowerCase();
-        card.style.display = text.includes(query) ? 'flex' : 'none';
+        
+        // 1. Text Search
+        const matchText = text.includes(query);
+        
+        // 2. Category Filter
+        // Note: Server returns 'category' in metadata or root object
+        const cat = series.category || (series.metadata ? series.metadata.category : 'Unknown');
+        const matchTab = (currentTab === 'all') || (cat === currentTab) || 
+                         (currentTab === 'Webtoon' && cat === 'Webtoon') || // Legacy Compat
+                         (currentTab === 'Manga' && cat === 'Manga');
+
+        card.style.display = (matchText && matchTab) ? 'flex' : 'none';
     });
 }
 
