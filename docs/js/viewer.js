@@ -272,7 +272,34 @@ function renderEpubMode(htmlContent) {
     scrollContainer.style.display = 'block';
     
     // Apply EPUB Settings (Loaded from Storage potentially)
+    // Apply EPUB Settings (Loaded from Storage potentially)
     applyTextSettings();
+    
+    // [New] Infinite Scroll Logic for EPUB
+    scrollContainer.onscroll = () => {
+        const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+        if (scrollTop + clientHeight >= scrollHeight - 50) {
+            // End of Chapter
+             if (!window.isLoadingNext) {
+                const nextIndex = currentBookIndex + 1;
+                if (currentBookList[nextIndex]) {
+                    window.isLoadingNext = true;
+                    showToast("⏩ 다음 화를 불러옵니다...", 2000);
+                    setTimeout(() => {
+                        loadViewer(nextIndex, true)
+                            .then(() => { window.isLoadingNext = false; scrollToPage(0); }) // Reset scroll
+                            .catch(() => window.isLoadingNext = false);
+                    }, 500); 
+                } else {
+                    if(!window.isEndToastShown) {
+                        showToast("🏁 마지막 회차입니다.");
+                        window.isEndToastShown = true;
+                        setTimeout(()=> window.isEndToastShown = false, 3000);
+                    }
+                }
+             }
+        }
+    };
 }
 
 function applyTextSettings() {

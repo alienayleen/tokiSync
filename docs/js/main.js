@@ -144,7 +144,7 @@ function renderGrid(seriesList) {
                 <div class="thumb-wrapper">
                     <img src="${thumb}" class="thumb" onerror="this.src='${NO_IMAGE_SVG}'">
                     <div class="overlay">
-                        <a href="${series.url}" target="_blank" class="btn btn-drive">📂 드라이브</a>
+                        <a href="${series.id ? 'https://drive.google.com/drive/u/0/folders/' + series.id : '#'}" target="_blank" class="btn btn-drive">📂 드라이브</a>
                         <button onclick="openEpisodeList('${series.id}', '${series.name}', ${index})" class="btn" style="background:#444; color:white;">📄 목록</button>
                         ${hasContentId ? `
                             <a href="${dynamicUrl}" target="_blank" class="btn btn-site">🌐 사이트</a>
@@ -319,9 +319,9 @@ function loadDomains() {
     const elDeploy = document.getElementById('setting_deployId');
     
     if (API.folderId && elFolder) elFolder.value = API.folderId;
-    if (API.url && elDeploy) {
+    if (API.baseUrl && elDeploy) {
         // Extract Deployment ID from URL
-        const match = API.url.match(/\/s\/([^\/]+)\/exec/);
+        const match = API.baseUrl.match(/\/s\/([^\/]+)\/exec/);
         if (match && match[1]) elDeploy.value = match[1];
     }
 
@@ -337,21 +337,30 @@ function loadDomains() {
 
 function getDynamicLink(series) {
     const contentId = series.sourceId;
+    // Defensive Category Check
+    let cat = series.category || (series.metadata ? series.metadata.category : '');
     const site = (series.name || "").toLowerCase();
-    
+
+    // Fallback if category is missing
+    if (!cat) {
+        if (site.includes("북토끼")) cat = "Novel";
+        else if (site.includes("마나토끼")) cat = "Manga";
+        else cat = "Webtoon";
+    }
+
     const saved = JSON.parse(localStorage.getItem('toki_domains')) || DEFAULT_DOMAINS;
     
-    // Construct URLs dynamically
-    let baseUrl = `https://manatoki${saved.manatoki}.net`;
-    let path = "/comic/";
+    // Default: Webtoon (NewToki)
+    let baseUrl = `https://newtoki${saved.newtoki}.com`;
+    let path = "/webtoon/";
 
-    if (site.includes("뉴토끼")) { 
-        baseUrl = `https://newtoki${saved.newtoki}.com`; 
-        path = "/webtoon/"; 
-    }
-    else if (site.includes("북토끼")) { 
+    if (cat === "Novel") { 
         baseUrl = `https://booktoki${saved.booktoki}.com`; 
         path = "/novel/"; 
+    }
+    else if (cat === "Manga") { 
+        baseUrl = `https://manatoki${saved.manatoki}.net`; 
+        path = "/comic/"; 
     }
 
     return contentId ? (baseUrl + path + contentId) : "#";
