@@ -71,8 +71,10 @@ window.TokiSyncCore = function (GM_context) {
 
     const MAX_UPLOAD_CONCURRENCY = 2;
     const MAX_IMG_CONCURRENCY = 5;
-
-    const WAIT_PER_EPISODE_MS = 3000;
+    // [Updated] Category-specific intervals
+    const WAIT_WEBTOON_MS = 3000; // Image content (naturally slow due to img processing)
+    const WAIT_NOVEL_MS = 8000;   // Text content (too fast, needs longer delay)
+    // const WAIT_PER_EPISODE_MS = 3000; // Deprecated
     const WAIT_PER_BATCH_MS = 500;
     const CHUNK_SIZE = 20 * 1024 * 1024;
 
@@ -262,8 +264,8 @@ ${htmlBody}
         GM_setValue(CFG_FOLDER_ID, folderId);
         alert(`✅ 설정 완료!\nFolder ID: ${folderId}`);
 
-        // 2. 고급 설정 (URL 변경 - 선택 사항)
-        if (confirm("고급 설정(API URL 변경)을 하시겠습니까? (보통은 불필요)")) {
+        // 2. 고급 설정 (URL 변경 - 선택 사항 -> 필수 사항)
+        if (confirm("API 서버 URL 설정을 진행하시겠습니까?\n(뷰어 자동 연결을 위해선 필수입니다)")) {
             const apiUrlInput = prompt("API 서버 URL:", currentConfig.url);
             if (apiUrlInput) GM_setValue(CFG_URL_KEY, apiUrlInput.trim());
 
@@ -295,13 +297,50 @@ ${htmlBody}
         return true;
     }
 
-    function openDashboard() {
-        const config = getConfig();
+    async function openDashboard() {
+        let config = getConfig();
+        
         if (!config.dashUrl) {
             alert("⚠️ 대시보드 URL이 설정되지 않았습니다.");
             return;
         }
-        window.open(config.dashUrl, '_blank');
+
+        // [Safety Check] Ensure API URL exists for injection
+        if (!config.url) {
+            if(confirm("⚠️ API URL이 설정되지 않았습니다.\n뷰어 자동 연결 기능이 작동하지 않습니다.\n지금 설정하시겠습니까?")) {
+                await openSettings();
+                config = getConfig(); // Reload
+                if(!config.url) {
+                     if(!confirm("여전히 API URL이 없습니다. 그래도 여시겠습니까?")) return;
+                }
+            }
+        }
+        
+        // Open Viewer
+        const newWindow = window.open(config.dashUrl, '_blank');
+        
+        // Zero-Config Injection
+        if (newWindow && config.url && config.folderId) {
+            // Extract DeployID from URL
+            let deployId = "";
+            const match = config.url.match(/\/s\/([^\/]+)\/exec/);
+            if (match) deployId = match[1];
+
+            // Send Config message repeatedly (just in case it loads slowly)
+            let tries = 0;
+            const timer = setInterval(() => {
+                newWindow.postMessage({
+                    type: 'TOKI_CONFIG',
+                    url: config.url,
+                    folderId: config.folderId,
+                    deployId: deployId
+                }, "*"); // Target Origin: Allow all (Viewer is usually Github Pages)
+                
+                tries++;
+                if(tries > 5) clearInterval(timer);
+                console.log(`📡 Config Injection Sent (${tries}/5)`);
+            }, 1000);
+        }
     }
 
     function initStatusUI() {
@@ -693,7 +732,7 @@ ${htmlBody}
                 const epFullTitle = currentLi.querySelector('a').innerHTML.replace(/<span[\s\S]*?\/span>/g, '').trim();
                 let epCleanTitle = epFullTitle.replace(info.fullTitle, '').trim();
                 epCleanTitle = epCleanTitle.replace(/[\\/:*?"<>|]/g, '');
-                const zipFileName = `${numText.padStart(4, '0')} - ${epCleanTitle}.cbz`;
+                let zipFileName = `${numText.padStart(4, '0')} - ${epCleanTitle}.cbz`;
 
                 // ⭐️ 에러 발생 시 파일에 기록할 로그 배열
                 let failedLog = [];
@@ -702,7 +741,10 @@ ${htmlBody}
                 updateStatus(`[${targetFolderName}]<br><strong>${epCleanTitle}</strong> (${i + 1}/${list.length}) 로딩...<br>현재 업로드 중: ${activeUploads.size}개`);
 
                 await waitIframeLoad(src);
-                await sleep(getDynamicWait(WAIT_PER_EPISODE_MS));
+                
+                // [Updated] Use Category-specific delay
+                const delayBase = (site == "북토끼" || info.category === "Novel") ? WAIT_NOVEL_MS : WAIT_WEBTOON_MS;
+                await sleep(getDynamicWait(delayBase));
 
                 let iframeDocument = iframe.contentWindow.document;
                 // ... 캡차 체크 로직 (생략) ...
@@ -1057,6 +1099,23 @@ ${htmlBody}
     function init() {
         markDownloadedItems();
         fetchHistoryFromCloud();
+
+        // ⚡️ [Viewer Optimization] Inject Config to Viewer Storage directly
+        // This solves the race condition where main.js runs before postMessage arrives.
+        if (location.host.includes("github.io") && location.pathname.includes("tokiSync")) {
+            const config = getConfig();
+            if (config.url && config.folderId) {
+                // Determine if it's safe to inject (Non-empty, non-default if default was bad)
+                console.log("⚡️ [TokiSync Loader] Injecting Config into Viewer LocalStorage...");
+                localStorage.setItem('TOKI_API_URL', config.url);
+                localStorage.setItem('TOKI_ROOT_ID', config.folderId);
+                
+                // Optional: Trigger a reload if main.js already failed?
+                // But better: main.js reads localStorage on load. 
+                // Since this script runs at document-end, it might be slightly late if main.js is async.
+                // But usually, main.js waits for DOMContentLoaded.
+            }
+        }
 
         // ⚡️ 원격 실행 감지 (TokiView -> Client)
         const urlParams = new URLSearchParams(window.location.search);
