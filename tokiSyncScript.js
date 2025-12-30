@@ -127,20 +127,20 @@
         const storedScript = GM_getValue(STORED_CORE_KEY, "");
         
         // [Verified] Manual Injection Support
+        // [Verified] Manual Injection Support
         if (pinnedVer === "MANUAL_DEBUG" && storedScript) {
              console.log("🛠 Loading Manually Injected Core Script");
              executeScript(storedScript);
              return;
         }
 
-        /* [Disabled for Remote Verification]
+        // [Enabled] Cached Execution Logic
         if (pinnedVer && pinnedVer === latestVer && storedScript) {
             // 버전 변경 없음 & 스크립트 보유 -> 즉시 실행
             console.log(`⚡️ Loading stored Core (${pinnedVer}) - No Network`);
             executeScript(storedScript);
             return;
         }
-        */
 
         // 2. 최초 실행 또는 업데이트 필요
         if (!pinnedVer) {
@@ -164,11 +164,13 @@
             if (storedScript) {
                 executeScript(storedScript);
             } else {
-                fetchAndStoreScript(pinnedVer); // 구버전이라도 받아옴
+                fetchAndStoreScript(pinnedVer); // 구버전이라도 받아옴 (하지만 만약 태그가 지워졌다면?)
             }
         } else {
-            // 버전은 같은데 script가 없음 (삭제됨? 오류?)
-            fetchAndStoreScript(pinnedVer);
+             // pinned === latest but no storedScript (Reached here because storedScript was false in condition above)
+             // Or cached block was skipped/commented out previously. Now it's enabled.
+             console.log(`⚠️ Version matches (${pinnedVer}) but script missing. Re-fetching...`);
+             fetchAndStoreScript(pinnedVer);
         }
     }
 
