@@ -38,7 +38,7 @@ window.TokiSyncCore = function (GM_context) {
     const CURRENT_CONFIG_VER = 1; // v3.0.0 초기 버전
 
     // 🚀 v3.0.0-beta.251211 New Deployment URLs (Fixed ID Strategy)
-    const DEFAULT_API_URL = "https://script.google.com/macros/s//exec"; // @50
+    const DEFAULT_API_URL = ""; // 설정값에서 로드됨
     const DEFAULT_DASH_URL = "https://pray4skylark.github.io/tokiSync/"; // @25
 
     function getConfig() {
