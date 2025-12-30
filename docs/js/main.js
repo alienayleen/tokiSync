@@ -26,30 +26,35 @@ let allSeries = [];
 
 // 초기화
 window.addEventListener('DOMContentLoaded', () => {
-    // Load Saved Domains
-    loadDomains();
-
+    
     // Listener for Zero-Config (Tampermonkey Injection)
     window.addEventListener("message", handleMessage, false);
-
+    
     // [New] Initialize Version Display
     const el = document.getElementById('viewerVersionDisplay');
     if(el) el.innerText = `Viewer Version: ${VIEWER_VERSION}`;
-
+    
     // Initial Load Check
     if (API.isConfigured()) {
         showToast("🚀 저장된 설정으로 연결합니다...");
         refreshDB(null, true);
+        // Load Saved Domains
+        loadDomains();
     } else {
         // Not configured yet. Wait for injection or manual input.
-        // We set a small timeout to show the "Manual Config" modal if injection doesn't happen fast.
+        // We set a small timeout to check formatting injection/manual
         setTimeout(() => {
             if (!API.isConfigured()) {
                 document.getElementById('configModal').style.display = 'flex';
+            } else {
+                 showToast("🚀 저장된 설정으로 연결합니다...");
+                 refreshDB(null, true);
             }
+            loadDomains();
         }, 1000);
     }
 });
+
 
 /**
  * UserScript(Tampermonkey)로부터의 설정 주입 메시지를 처리합니다.
