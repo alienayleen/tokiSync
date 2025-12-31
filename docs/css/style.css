@@ -389,59 +389,60 @@ h1 {
   font-weight: bold;
 }
 
-/* Viewer */
+/* Viewer Layers */
 .viewer-overlay {
   display: none;
   position: fixed;
   inset: 0;
   background: black;
   z-index: 3000;
-  flex-direction: column;
+  /* Flex not strictly needed if we use absolute layers, but keeps structure */
+  display: none; /* toggled via JS */
 }
-.viewer-header {
-  position: absolute;
-  top: 0;
-  width: 100%;
-  height: 50px;
-  background: rgba(0, 0, 0, 0.8);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0 20px;
-  box-sizing: border-box;
-  z-index: 100;
-  transition: opacity 0.3s;
-  pointer-events: none;
-  opacity: 0;
-}
-.viewer-overlay:hover .viewer-header,
-.viewer-header.show {
-  opacity: 1;
-  pointer-events: auto;
-}
-/* Only show on top interaction */
-.viewer-header:hover {
-  opacity: 1;
-  pointer-events: auto;
-}
-.viewer-overlay:hover .viewer-header {
-  opacity: 0;
-  pointer-events: none;
-} /* Reset global hover */
 
-.viewer-trigger-zone {
+/* Layer 1: Content */
+.viewer-content {
   position: absolute;
-  top: 0;
-  left: 0;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* Layer 2: Controls */
+.viewer-controls {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none; /* Let clicks pass through empty areas */
+}
+
+/* Header & Footer inside Controls Layer */
+.viewer-header, .viewer-footer {
+  position: absolute;
+  left: 0; 
   width: 100%;
-  height: 80px;
-  z-index: 90;
+  pointer-events: auto; /* Re-enable clicks for buttons */
+  transition: opacity 0.3s;
+  opacity: 0; /* Hidden by default */
+  background: rgba(0, 0, 0, 0.8);
 }
-.viewer-trigger-zone:hover ~ .viewer-header,
-.viewer-header:hover {
+
+.viewer-header { top: 0; height: 50px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; box-sizing: border-box; }
+.viewer-footer { bottom: 0; display: flex; flex-direction: column; padding: 10px; gap: 10px; box-sizing: border-box; }
+
+/* Show Controls Class */
+.viewer-controls.show .viewer-header,
+.viewer-controls.show .viewer-footer {
   opacity: 1;
-  pointer-events: auto;
 }
+
+/* Remove old hover logic if we use explicit toggle */
+/* .viewer-overlay:hover .viewer-header ... REMOVED */
+
+/* Nav Zones (Inside Content Layer) */
 .viewer-content {
   flex: 1;
   position: relative;

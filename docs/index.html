@@ -141,57 +141,61 @@
 
     <!-- 3. Viewer Overlay -->
     <!-- 3. Viewer Overlay -->
+    <!-- 3. Viewer Overlay -->
     <div id="viewerOverlay" class="viewer-overlay">
-        <!-- Top Header (Title & Close) -->
-        <div class="viewer-header">
-            <span class="viewer-title" id="viewerTitle">TokiViewer</span>
-            <button class="btn-icon close-btn" onclick="closeViewer()">×</button>
-        </div>
-        
-        <!-- Center Trigger Zone (Toggle UI) -->
-        <div class="viewer-trigger-zone" onclick="toggleControls()"></div>
-        
-        <!-- Main Content (Image & Nav Zones) -->
-        <div class="viewer-content" id="viewerContent">
+        <!-- Layer 1: Content (Images & Scroll) -->
+        <div class="viewer-content" id="viewerContent" onclick="handleViewerClick(event)">
             <div class="nav-zone nav-prev"></div>
             <div class="nav-zone nav-next"></div>
             <div id="viewerImageContainer" class="viewer-image-container"></div>
-            <!-- Page Counter (Floating, separate from footer) -->
+            <!-- Scroll Container will be injected here or reused -->
+            <div id="viewerScrollContainer" class="viewer-scroll-container" style="display:none;"></div>
+            
+            <!-- Page Counter (Floating) -->
             <div id="pageCounter" class="page-counter">- / -</div>
         </div>
 
-        <!-- Bottom Footer (Honeyview Style) -->
-        <div class="viewer-footer">
-            <!-- Row 1: Navigation & Slider -->
-            <div class="footer-row main-row">
-                <button class="btn-icon" onclick="openEpisodeListFromViewer()" title="목차">📑</button>
-                
-                <div class="slider-container">
-                    <span id="sliderCurrent" class="slider-label">1</span>
-                    <input type="range" id="pageSlider" min="1" max="100" value="1" step="1" oninput="onSliderInput(this.value)" onchange="onSliderChange(this.value)">
-                    <span id="sliderTotal" class="slider-label">100</span>
-                </div>
-
-                <div class="nav-buttons">
-                    <button class="btn-icon" onclick="navigateViewer(-1)">◀</button>
-                    <button class="btn-icon" onclick="navigateViewer(1)">▶</button>
-                </div>
+        <!-- Layer 2: Controls (Header & Footer) -->
+        <div id="viewerControls" class="viewer-controls">
+            <!-- Top Header -->
+            <div class="viewer-header">
+                <span class="viewer-title" id="viewerTitle">TokiViewer</span>
+                <button class="btn-icon close-btn" onclick="closeViewer()">×</button>
             </div>
 
-            <!-- Row 2: Settings Toggles -->
-            <div class="footer-row settings-row">
-                <!-- Image Mode Settings -->
-                <button id="btnTwoPage" class="btn-toggle image-only" onclick="toggleViewMode()">2쪽 보기</button>
-                <button id="btnCover" class="btn-toggle image-only" onclick="toggleCoverMode()">표지 먼저</button>
-                <button id="btnScroll" class="btn-toggle image-only" onclick="toggleScrollMode()">스크롤 보기</button>
-                <button id="btnRtl" class="btn-toggle image-only" onclick="toggleRtlMode()">일본어(우좌)</button>
-                
-                <!-- EPUB Mode Settings -->
-                <button class="btn-toggle epub-only" onclick="changeFontSize(-2)">글자 -</button>
-                <button class="btn-toggle epub-only" onclick="changeFontSize(2)">글자 +</button>
-                
-                <div class="divider"></div>
-                <button id="btnPreload" class="btn-toggle" onclick="togglePreloadMode()">미리 등</button>
+            <!-- Cloud/Bottom Footer -->
+            <div class="viewer-footer">
+                <!-- Row 1: Navigation & Slider -->
+                <div class="footer-row main-row">
+                    <button class="btn-icon" onclick="openEpisodeListFromViewer()" title="목차">📑</button>
+                    
+                    <div class="slider-container">
+                        <span id="sliderCurrent" class="slider-label">1</span>
+                        <input type="range" id="pageSlider" min="1" max="100" value="1" step="1" oninput="onSliderInput(this.value)" onchange="onSliderChange(this.value)">
+                        <span id="sliderTotal" class="slider-label">100</span>
+                    </div>
+
+                    <div class="nav-buttons">
+                        <button class="btn-icon" onclick="navigateViewer(-1)">◀</button>
+                        <button class="btn-icon" onclick="navigateViewer(1)">▶</button>
+                    </div>
+                </div>
+
+                <!-- Row 2: Settings Toggles -->
+                <div class="footer-row settings-row">
+                    <!-- Image Mode Settings -->
+                    <button id="btnTwoPage" class="btn-toggle image-only" onclick="toggleViewMode()">2쪽 보기</button>
+                    <button id="btnCover" class="btn-toggle image-only" onclick="toggleCoverMode()">표지 먼저</button>
+                    <button id="btnScroll" class="btn-toggle image-only" onclick="toggleScrollMode()">스크롤 보기</button>
+                    <button id="btnRtl" class="btn-toggle image-only" onclick="toggleRtlMode()">일본어(우좌)</button>
+                    
+                    <!-- EPUB Mode Settings -->
+                    <button class="btn-toggle epub-only" onclick="changeFontSize(-2)">글자 -</button>
+                    <button class="btn-toggle epub-only" onclick="changeFontSize(2)">글자 +</button>
+                    
+                    <div class="divider"></div>
+                    <button id="btnPreload" class="btn-toggle" onclick="togglePreloadMode()">미리 등</button>
+                </div>
             </div>
         </div>
     </div>

@@ -38,6 +38,10 @@ let vState = {
 };
 let nextBookPreload = null;
 
+// Data Reuse Cache
+let cachedFileId = null;
+let cachedBytes = null;
+
 // ============================================================
 // 1. Episode List
 // ============================================================
@@ -331,7 +335,17 @@ async function fetchAndUnzip(fileId, totalSize, onProgress) {
     let combinedBytes = null;
     const SAFE_THRESHOLD = 26 * 1024 * 1024; // 26MB
 
-    if (totalSize > 0 && totalSize < SAFE_THRESHOLD) {
+    // Check Reuse Cache
+    if (cachedFileId === fileId && cachedBytes) {
+        console.log("♻️ Using cached data for re-render");
+        combinedBytes = cachedBytes;
+        // Skip network logic
+    } else {
+        // Clear old cache
+        cachedFileId = null;
+        cachedBytes = null;
+
+        if (totalSize > 0 && totalSize < SAFE_THRESHOLD) {
         // [Mode A] Single Fetch
         console.log(`📉 Small File detected (${formatSize(totalSize)}). using Single Fetch.`);
         if (onProgress) onProgress(`다운로드 중... (0%)`);
@@ -440,6 +454,14 @@ async function fetchAndUnzip(fileId, totalSize, onProgress) {
             combinedBytes.set(r, pos);
             pos += r.length;
         });
+    } // End of Network Fetch (if)
+
+    } // End of Cache Check Else Block
+
+    // Update Cache
+    if (combinedBytes) {
+        cachedFileId = fileId;
+        cachedBytes = combinedBytes;
     }
 
     if (onProgress) onProgress('압축 해제 중...');
@@ -723,7 +745,7 @@ function renderCurrentSpread() {
     // RTL
     const dirStyle = vState.rtlMode ? 'flex-direction:row-reverse;' : '';
 
-    container.innerHTML = `<div class="viewer-spread" style="${dirStyle}" onclick="toggleControls()">
+    container.innerHTML = `<div class="viewer-spread" style="${dirStyle}">
         ${spreadIndices.map(idx => `
             <img src="${vState.images[idx].src}" class="viewer-page ${spreadIndices.length > 1 ? 'half' : ''}">
         `).join('')}
@@ -1042,8 +1064,52 @@ function formatSize(bytes) {
  */
 function getProgress(seriesId, bookId) {
     const json = localStorage.getItem(`prog_${seriesId}`);
-    const data = json ? JSON.parse(json) : {};
     return data[bookId] || 0;
+}
+
+// ============================================================
+// 1. Episode List (Viewer-Independent) & UI Helpers
+// ============================================================
+
+/**
+ * Handle Viewer Click (Separated Layer Logic)
+ * 
+ * - If click target is inside controls -> Ignore (stop prop handled by CSS pointer-events or handlers)
+ * - If click target is nav-zone -> Ignore (nav handles itself)
+ * - Otherwise -> Toggle Controls
+ */
+function handleViewerClick(e) {
+    // If we clicked a button/input inside content (unlikely but possible), ignore
+    if (e.target.tagName.toLowerCase() === 'button' || e.target.tagName.toLowerCase() === 'input') return;
+    
+    // If Nav Zone, ignore
+    if (e.target.closest('.nav-zone')) return;
+
+    toggleControls();
+}
+
+/**
+ * 토스트 메시지를 화면에 표시합니다.
+ * @param {string} msg - 표시할 메시지
+ * @param {number} [duration=2000] - 지속 시간 (ms)
+ */
+function showToast(msg, duration = 2000) {
+    const toast = document.getElementById('toast');
+    toast.innerText = msg;
+    toast.className = 'toast show';
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => {
+        toast.className = 'toast';
+    }, duration);
+}
+
+/**
+ * 뷰어 UI (헤더/푸터) 토글
+ */
+function toggleControls() {
+    const controls = document.getElementById('viewerControls');
+    if (!controls) return;
+    controls.classList.toggle('show');
 }
 /**
  * 현재 읽고 있는 페이지 인덱스를 저장합니다.
@@ -1056,12 +1122,6 @@ function saveProgress(seriesId, bookId, pageIndex) {
 }
 
 /* New UI Handlers */
-function toggleControls() {
-    const header = document.querySelector('.viewer-header');
-    const footer = document.querySelector('.viewer-footer');
-    header.classList.toggle('show');
-    footer.classList.toggle('show');
-}
 
 function updateSliderUI() {
     const slider = document.getElementById('pageSlider');
