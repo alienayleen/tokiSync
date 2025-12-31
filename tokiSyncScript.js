@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         TokiSync (Loader)
-// @namespace    https://github.com/pray4skylark/tokiSync
-// @version      3.1.1-251231.0001
-// @description  TokiSync Core Script Loader (GitHub CDN)
+// @name         TokiSync (Link to Drive)
+// @namespace    http://tampermonkey.net/
+// @version      3.2.0-251231.1345
+// @description  Toki series sites -> Google Drive syncing tool (Loader) (GitHub CDN)
 // @author       pray4skylark
 // @updateURL    https://github.com/pray4skylark/tokiSync/raw/main/tokiSyncScript.js
 // @downloadURL  https://github.com/pray4skylark/tokiSync/raw/main/tokiSyncScript.js
@@ -37,14 +37,12 @@
     const CFG_FOLDER_ID = 'TOKI_FOLDER_ID';
 
 
-    // ⭐️ 핵심: GitHub 사용자명, 레포지토리명, 버전 설정
-    const GITHUB_USER = "pray4skylark";
-    const GITHUB_REPO = "tokiSync";
-    const CORE_FILENAME = "tokiSyncCore.js";
-
-    // 캐시 및 버전 설정
-    const CACHE_KEY_VER = "TOKI_CACHE_VERSION_V2"; // Cache Busting for v3.1.1
-    const CACHE_KEY_TIME = "TOKI_CACHE_TIME";
+    //    // GitHub API Config
+    // ----------------------------------------------------------------
+    const GITHUB_OWNER = 'pray4skylark';
+    const GITHUB_REPO = 'tokiSync';
+    const CACHE_KEY_VER = 'TOKI_CACHE_VERSION_V3'; // Cache busting for v3.2.0
+    const CACHE_KEY_SCRIPT = 'TOKI_CACHED_SCRIPT_CONTENT';
     const STORED_CORE_KEY = "TOKI_CORE_SCRIPT";
     const PINNED_VER_KEY = "TOKI_PINNED_VERSION";
     const CACHE_DURATION = 60 * 60 * 1000; // 1시간

@@ -585,7 +585,27 @@ h1 {
   margin-bottom: 10px;
 }
 @keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+}
+
+/* Foliate Viewer Integration */
+#viewerScrollContainer.epub-mode {
+    width: 100%;
+    height: 100vh; /* Full viewport height */
+    overflow: hidden; /* Foliate manages its own scroll/pagination */
+    background: #fff; /* Default reading background */
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 100; /* Above everything else */
+}
+
+/* Dark Mode Override for Container */
+body.dark-mode #viewerScrollContainer.epub-mode {
+    background: #1a1a1a;
+}
+
+foliate-view {
+    width: 100%;
+    height: 100%;
+    display: block;
 }

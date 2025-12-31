@@ -249,6 +249,15 @@ function migrateLegacyStructure(rootFolderId) {
           }
 
           // Extract Thumbnail
+          let needsUpdate = false;
+          // Force Update Category in info.json if it changed
+          if (json.category !== category) {
+            json.category = category;
+            // Also update metadata.category if exists
+            if (json.metadata) json.metadata.category = category;
+            needsUpdate = true;
+          }
+
           if (json.thumbnail && json.thumbnail.length > 500) {
             // Assume Base64
             const blob = Utilities.newBlob(
@@ -260,9 +269,14 @@ function migrateLegacyStructure(rootFolderId) {
 
             // Update info.json to remove Base64
             json.thumbnail = ""; // Clear it
-            infoFile.setContent(JSON.stringify(json, null, 2));
+            needsUpdate = true;
             fixedThumbnails++;
             Debug.log(`   -> Extracted Thumbnail`);
+          }
+
+          if (needsUpdate) {
+            infoFile.setContent(JSON.stringify(json, null, 2));
+            Debug.log(`   -> Updated info.json (Category/Thumbnail)`);
           }
         } catch (e) {
           Debug.log(`   -> JSON Parse Error: ${e}`);

@@ -18,7 +18,12 @@ function initResumableUpload(data, rootFolderId) {
   const metadata = {
     name: data.fileName,
     parents: [folderId],
-    mimeType: "application/zip",
+    mimeType:
+      data.fileName.endsWith(".jpg") || data.fileName.endsWith(".jpeg")
+        ? "image/jpeg"
+        : data.fileName.endsWith(".epub")
+        ? "application/epub+zip"
+        : "application/zip",
   };
 
   const params = {

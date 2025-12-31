@@ -14,7 +14,9 @@ window.TokiSyncCore = function (GM_context) {
     const GM_addValueChangeListener = GM_context.GM_addValueChangeListener;
     const JSZip = GM_context.JSZip;
     const PROTOCOL_VERSION = 3; // Major Version (Server Compatibility)
-    const CLIENT_VERSION = "3.1.1-251231.0001"; // Viewer Injection & Scroll Fix
+    const SCRIPT_NAME = "TokiSync Core";
+    const CLIENT_VERSION = "3.2.0-251231.1345"; // v3.2.0 Foliate Integration
+    const LOG_PREFIX = `[${SCRIPT_NAME}]`;
 
     // [New] 호환성 체크: Core가 요구하는 최소 로더 버전 확인
     const MIN_LOADER_VERSION = "3.0.0-beta.251215.0002";

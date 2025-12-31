@@ -198,8 +198,12 @@ async function loadViewer(index, isContinuous = false) {
 
         if (result.type === 'epub') {
             vState.epubMode = true;
-            renderEpubMode(result.content);
+            renderFoliateMode(result.blob);
             return; // Stop here for EPUB
+        } else if (result.type === 'epub_legacy') {
+            vState.epubMode = true;
+            renderLegacyMode(result.content);
+            return;
         } else {
             vState.epubMode = false;
             blobUrls = result.images;
@@ -252,71 +256,48 @@ async function loadViewer(index, isContinuous = false) {
     }
 }
 
-/* EPUB Rendering Logic */
-function renderEpubMode(htmlContent) {
-    const container = document.getElementById('viewerScrollContainer');
-    if (!container) {
-        const content = document.getElementById('viewerContent');
-        const sc = document.createElement('div');
-        sc.id = 'viewerScrollContainer';
-        sc.className = 'viewer-scroll-container epub-mode';
-        content.appendChild(sc);
-        // Ensure image container is hidden
-        const ic = document.getElementById('viewerImageContainer');
-        if(ic) ic.style.display = 'none';
-        content.classList.add('scroll-mode');
-    }
-    
-    const scrollContainer = document.getElementById('viewerScrollContainer');
-    scrollContainer.innerHTML = `<div class="epub-content">${htmlContent}</div>`;
-    scrollContainer.style.display = 'block';
-    
-    // Apply EPUB Settings (Loaded from Storage potentially)
-    // Apply EPUB Settings (Loaded from Storage potentially)
-    applyTextSettings();
-    
-    // [New] Infinite Scroll Logic for EPUB
-    scrollContainer.onscroll = () => {
-        const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
-        if (scrollTop + clientHeight >= scrollHeight - 50) {
-            // End of Chapter
-             if (!window.isLoadingNext) {
-                const nextIndex = currentBookIndex + 1;
-                if (currentBookList[nextIndex]) {
-                    window.isLoadingNext = true;
-                    showToast("⏩ 다음 화를 불러옵니다...", 2000);
-                    setTimeout(() => {
-                        loadViewer(nextIndex, true)
-                            .then(() => { window.isLoadingNext = false; scrollToPage(0); }) // Reset scroll
-                            .catch(() => window.isLoadingNext = false);
-                    }, 500); 
-                } else {
-                    if(!window.isEndToastShown) {
-                        showToast("🏁 마지막 회차입니다.");
-                        window.isEndToastShown = true;
-                        setTimeout(()=> window.isEndToastShown = false, 3000);
-                    }
-                }
-             }
-        }
-    };
-}
-
+/* Legacy renderEpubMode removed in favor of Foliate */
+/* Legacy renderEpubMode removed in favor of Foliate */
 function applyTextSettings() {
-    const el = document.querySelector('.epub-content');
-    if (!el) return;
-    el.style.fontSize = `${vState.textSettings.fontSize}px`;
-    el.style.lineHeight = vState.textSettings.lineHeight;
+    // 1. Legacy Mode Support
+    if (vState.epubMode && !vState.foliateView) {
+        const el = document.querySelector('.epub-content');
+        if(el) {
+            el.style.fontSize = `${vState.textSettings.fontSize}px`;
+            el.style.lineHeight = vState.textSettings.lineHeight;
+        }
+        return;
+    }
+
+    // 2. Foliate Mode
+    if (!vState.foliateView || !vState.foliateView.renderer) return;
+    
+    // Foliate manages content in iframes (renderer.getContents())
+    // We need to apply styles to each active document
+    const contents = vState.foliateView.renderer.getContents();
+    for (const content of contents) {
+        if (content.doc) {
+            content.doc.body.style.fontSize = `${vState.textSettings.fontSize}px`;
+            content.doc.body.style.lineHeight = vState.textSettings.lineHeight;
+            // Dark Mode / Theme Handling (Future)
+            content.doc.body.style.color = '#333';
+            content.doc.body.style.backgroundColor = '#fff';
+        }
+    }
 }
 
 function changeFontSize(delta) {
-    if (!vState.epubMode) return;
+    if (!vState.epubMode || !vState.foliateView) return;
+    
+    // Update State
     vState.textSettings.fontSize += delta;
     if(vState.textSettings.fontSize < 12) vState.textSettings.fontSize = 12;
-    if(vState.textSettings.fontSize > 36) vState.textSettings.fontSize = 36;
+    if(vState.textSettings.fontSize > 48) vState.textSettings.fontSize = 48; // Increased max
     
     // Save
     localStorage.setItem('toki_v_fontsize', vState.textSettings.fontSize);
+    
+    // Apply
     applyTextSettings();
     showToast(`글자 크기: ${vState.textSettings.fontSize}px`);
 }
@@ -473,24 +454,27 @@ async function fetchAndUnzip(fileId, totalSize, onProgress) {
 
     // Check for EPUB
     if (zip.file("OEBPS/content.opf") || zip.file("OPS/content.opf") || zip.file("mimetype")) {
-        // EPUB Mode
-        console.log("📘 EPUB Detected");
-        let contentHtml = "";
+        // EPUB Detected
+        const engine = localStorage.getItem('toki_v_engine') || 'foliate';
+        console.log(`📘 EPUB Detected (Engine: ${engine})`);
+
+        if (engine === 'legacy') {
+             let htmlContent = "";
+             // Find chapter.xhtml or any HTML
+             let targetFile = zip.file("OEBPS/Text/chapter.xhtml");
+             if (!targetFile) {
+                 const htmlFiles = files.filter(f => f.match(/\.(xhtml|html)$/i));
+                 if (htmlFiles.length > 0) targetFile = zip.file(htmlFiles[0]);
+             }
+             if (targetFile) {
+                 htmlContent = await targetFile.async("string");
+                 return { type: 'epub_legacy', content: htmlContent };
+             }
+        } 
         
-        // Find Spine/Manifest (Simplified: Just find the chapter.xhtml we generated)
-        // Since we generated it, we know it's OEBPS/Text/chapter.xhtml
-        // But for generic support, search for .xhtml or .html files
-        let targetFile = zip.file("OEBPS/Text/chapter.xhtml"); 
-        if (!targetFile) {
-            // Fallback: Find first html/xhtml
-             const htmlFiles = files.filter(f => f.match(/\.(xhtml|html)$/i));
-             if (htmlFiles.length > 0) targetFile = zip.file(htmlFiles[0]);
-        }
-        
-        if (targetFile) {
-            contentHtml = await targetFile.async("string");
-            return { type: 'epub', content: contentHtml };
-        }
+        // Default: Foliate Mode
+        const blob = new Blob([combinedBytes], { type: 'application/epub+zip' });
+        return { type: 'epub', blob: blob };
     }
 
     const imageUrls = [];
@@ -501,6 +485,102 @@ async function fetchAndUnzip(fileId, totalSize, onProgress) {
         }
     }
     return { type: 'images', images: imageUrls };
+}
+
+/* Foliate Integration Logic */
+async function renderFoliateMode(blob) {
+    const container = document.getElementById('viewerScrollContainer');
+    if (!container) {
+        const content = document.getElementById('viewerContent');
+        const sc = document.createElement('div');
+        sc.id = 'viewerScrollContainer';
+        sc.className = 'viewer-scroll-container epub-mode';
+        content.appendChild(sc);
+        // Ensure image container is hidden
+        const ic = document.getElementById('viewerImageContainer');
+        if(ic) ic.style.display = 'none';
+        content.classList.add('scroll-mode');
+    } else {
+        container.style.display = 'block';
+        container.innerHTML = ''; // Clear previous
+        container.classList.add('epub-mode');
+    }
+    
+    const scrollContainer = document.getElementById('viewerScrollContainer');
+    
+    showToast("📘 리더 엔진을 초기화합니다...");
+    
+    try {
+        // Dynamic Import Foliate
+        const { View } = await import('./foliate/view.js');
+        
+        const view = new View(scrollContainer);
+        await view.open(blob);
+        
+        vState.foliateView = view;
+        console.log("✅ Foliate View Initialized");
+        
+        // Apply Initial Settings on Load
+        view.addEventListener('load', () => {
+             console.log("📘 Foliate Content Loaded - Applying Settings");
+             applyTextSettings();
+        });
+        
+    } catch (e) {
+        console.error("Foliate Init Failed:", e);
+        showToast("❌ 리더 초기화 실패: " + e.message);
+    }
+}
+
+/* Legacy EPUB Rendering (Simple HTML) */
+function renderLegacyMode(htmlContent) {
+    const container = document.getElementById('viewerScrollContainer');
+    if (!container) {
+        const content = document.getElementById('viewerContent');
+        const sc = document.createElement('div');
+        sc.id = 'viewerScrollContainer';
+        sc.className = 'viewer-scroll-container epub-mode';
+        content.appendChild(sc);
+        const ic = document.getElementById('viewerImageContainer');
+        if(ic) ic.style.display = 'none';
+        content.classList.add('scroll-mode');
+    } else {
+        container.style.display = 'block';
+        container.innerHTML = '';
+        container.classList.add('epub-mode');
+    }
+    
+    const scrollContainer = document.getElementById('viewerScrollContainer');
+    // Inject Content
+    scrollContainer.innerHTML = `<div class="epub-content" style="padding:20px; max-width:800px; margin:0 auto; line-height:1.8; font-size:${vState.textSettings.fontSize}px; color:inherit;">${htmlContent}</div>`;
+    
+    // Apply Settings Logic for Legacy
+    applyTextSettings();
+
+    // Restore Infinite Scroll for Legacy
+    scrollContainer.onscroll = () => {
+        const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+        if (scrollTop + clientHeight >= scrollHeight - 50) {
+             if (!window.isLoadingNext) {
+                const nextIndex = currentBookIndex + 1;
+                if (currentBookList[nextIndex]) {
+                    window.isLoadingNext = true;
+                    showToast("⏩ 다음 화를 불러옵니다...", 2000);
+                    setTimeout(() => {
+                        loadViewer(nextIndex, true)
+                            .then(() => { window.isLoadingNext = false; })
+                            .catch(() => window.isLoadingNext = false);
+                    }, 500); 
+                } else {
+                    if(!window.isEndToastShown) {
+                        showToast("🏁 마지막 회차입니다.");
+                        window.isEndToastShown = true;
+                        setTimeout(()=> window.isEndToastShown = false, 3000);
+                    }
+                }
+             }
+        }
+    };
 }
 
 // Fallback for unknown size (Sequential)

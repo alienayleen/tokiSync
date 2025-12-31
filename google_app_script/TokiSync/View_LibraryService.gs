@@ -144,7 +144,13 @@ function processSeriesFolder(folder, categoryContext) {
       if (parsed.file_count) booksCount = parsed.file_count;
 
       // Metadata overrides
-      if (parsed.category) metadata.category = parsed.category;
+      if (parsed.category) {
+        // [Fix] Prioritize Folder Context (e.g. Manga) over potentially stale info.json (e.g. Webtoon)
+        // Only use info.json category if we are in Root/Uncategorized
+        if (!categoryContext || categoryContext === "Uncategorized") {
+          metadata.category = parsed.category;
+        }
+      }
       if (parsed.status) metadata.status = parsed.status;
       if (parsed.metadata && parsed.metadata.authors)
         metadata.authors = parsed.metadata.authors;

@@ -98,25 +98,29 @@ function getOrCreateSeriesFolder(
     return DriveApp.getFolderById(legacyId);
   }
 
-  if (!createIfMissing) return null;
-
   // 2. Check/Create Category Folder
   // category should be "Webtoon" or "Novel"
   const catName = category || "Webtoon";
   let catFolder;
   const catIter = root.getFoldersByName(catName);
+
   if (catIter.hasNext()) {
     catFolder = catIter.next();
   } else {
+    // If scanning (read-only) and category missing -> Not Found
+    if (!createIfMissing) return null;
     Debug.log(`📂 Creating Category Folder: ${catName}`);
     catFolder = root.createFolder(catName);
   }
 
   // 3. Check Series in Category
+  // Note: if catFolder was just created, this is redundant but safe
   const seriesId = findFolderId(folderName, catFolder.getId());
   if (seriesId) {
     return DriveApp.getFolderById(seriesId);
   }
+
+  if (!createIfMissing) return null;
 
   // 4. Create New Series in Category
   Debug.log(`🆕 Creating New Series Folder in ${catName}: ${folderName}`);

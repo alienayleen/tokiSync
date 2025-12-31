@@ -294,10 +294,12 @@ function saveActiveSettings() {
     const vMode = document.getElementById('pref_2page').checked ? '2page' : '1page';
     const vCover = document.getElementById('pref_cover').checked;
     const vRtl = document.getElementById('pref_rtl').checked;
+    const vEngine = document.querySelector('input[name="view_engine"]:checked').value;
 
     localStorage.setItem('toki_v_mode', vMode);
     localStorage.setItem('toki_v_cover', vCover);
     localStorage.setItem('toki_v_rtl', vRtl);
+    localStorage.setItem('toki_v_engine', vEngine);
 
     // UI Feedback
     document.getElementById('domainPanel').style.display = 'none';
@@ -334,10 +336,17 @@ function loadDomains() {
     const vMode = localStorage.getItem('toki_v_mode') || '1page';
     const vCover = (localStorage.getItem('toki_v_cover') === 'true');
     const vRtl = (localStorage.getItem('toki_v_rtl') === 'true');
+    const vEngine = localStorage.getItem('toki_v_engine') || 'foliate';
 
     if(document.getElementById('pref_2page')) document.getElementById('pref_2page').checked = (vMode === '2page');
     if(document.getElementById('pref_cover')) document.getElementById('pref_cover').checked = vCover;
     if(document.getElementById('pref_rtl')) document.getElementById('pref_rtl').checked = vRtl;
+    
+    // Set Radio
+    const radios = document.getElementsByName('view_engine');
+    for(const r of radios) {
+        r.checked = (r.value === vEngine);
+    }
 }
 
 function getDynamicLink(series) {
