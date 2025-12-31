@@ -473,8 +473,10 @@ async function fetchAndUnzip(fileId, totalSize, onProgress) {
         } 
         
         // Default: Foliate Mode
-        const blob = new Blob([combinedBytes], { type: 'application/epub+zip' });
-        return { type: 'epub', blob: blob };
+        // Default: Foliate Mode
+        // Note: Foliate requires a File object (with name) to check extension (e.g., .endsWith)
+        const file = new File([combinedBytes], "content.epub", { type: 'application/epub+zip' });
+        return { type: 'epub', blob: file }; // Passing File object as 'blob' property
     }
 
     const imageUrls = [];
