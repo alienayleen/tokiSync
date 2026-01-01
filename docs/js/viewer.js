@@ -1064,6 +1064,7 @@ function formatSize(bytes) {
  */
 function getProgress(seriesId, bookId) {
     const json = localStorage.getItem(`prog_${seriesId}`);
+    const data = json ? JSON.parse(json) : {}; // Restore missing line
     return data[bookId] || 0;
 }
 

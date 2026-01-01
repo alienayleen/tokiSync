@@ -15,7 +15,7 @@ window.TokiSyncCore = function (GM_context) {
     const JSZip = GM_context.JSZip;
     const PROTOCOL_VERSION = 3; // Major Version (Server Compatibility)
     const SCRIPT_NAME = "TokiSync Core";
-    const CLIENT_VERSION = "3.2.4-260101.1510"; // v3.2.4 Style Sync & Cleanup
+    const CLIENT_VERSION = "3.2.4.1-260101.1525"; // v3.2.4.1 Hotfix
     const LOG_PREFIX = `[${SCRIPT_NAME}]`;
 
     // [New] 호환성 체크: Core가 요구하는 최소 로더 버전 확인
