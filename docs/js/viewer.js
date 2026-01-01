@@ -145,7 +145,11 @@ async function loadViewer(index, isContinuous = false) {
     const viewer = document.getElementById('viewerOverlay');
     const content = document.getElementById('viewerContent');
     const container = document.getElementById('viewerImageContainer');
+    vState.scrollMode = vState.scrollMode; // This line seems to be a placeholder or intended for a parameter 'isScrollMode'
+    vState.spreads = []; // Reset spreads
+    window.isViewerLoading = true; // Lock Input
     
+    // Show Viewer
     viewer.style.display = 'flex';
     document.body.classList.add('no-scroll'); // Prevent BG scroll
 
@@ -168,7 +172,7 @@ async function loadViewer(index, isContinuous = false) {
             content.appendChild(scrollContainer);
         }
         scrollContainer.innerHTML = '<div style="color:white; font-size:14px; padding:20px;">로딩 중... (0%)</div>';
-        scrollContainer.style.display = 'flex';
+        scrollContainer.style.display = 'block'; // Block for vertical stacking
     } else {
         content.classList.remove('scroll-mode');
         container.classList.add('viewer-image-container');
@@ -202,14 +206,17 @@ async function loadViewer(index, isContinuous = false) {
 
         if (result.type === 'epub') {
             vState.epubMode = true;
+            updateButtonStates(); // Sync UI
             renderFoliateMode(result.blob);
             return; // Stop here for EPUB
         } else if (result.type === 'epub_legacy') {
             vState.epubMode = true;
+            updateButtonStates(); // Sync UI
             renderLegacyMode(result.content);
             return;
         } else {
             vState.epubMode = false;
+            updateButtonStates(); // Sync UI
             blobUrls = result.images;
         }
 
@@ -255,20 +262,52 @@ async function loadViewer(index, isContinuous = false) {
         }
 
     } catch (e) {
-        alert("뷰어 로드 실패: " + e.message);
-        closeViewer();
+        console.error(e);
+        container.innerHTML = `<div style="color:red; text-align:center;">오류 발생: ${e.message}<br><button onclick="closeViewer()" style="margin-top:20px; padding:10px;">닫기</button></div>`;
+    } finally {
+        // Unlock input (except if Foliate which handles it internally, but Legacy/Image are done)
+        // Give a small buffer for layout
+        setTimeout(() => { window.isViewerLoading = false; }, 500);
     }
 }
 
 /* Legacy renderEpubMode removed in favor of Foliate */
 /* Legacy renderEpubMode removed in favor of Foliate */
 function applyTextSettings() {
-    // 1. Legacy Mode Support
+    // 1. Legacy Mode Support - Unified Structure
     if (vState.epubMode && !vState.foliateView) {
         const el = document.querySelector('.epub-content');
         if(el) {
             el.style.fontSize = `${vState.textSettings.fontSize}px`;
             el.style.lineHeight = vState.textSettings.lineHeight;
+
+            // Apply 2-Page / 1-Page Column Logic
+            if (vState.scrollMode) {
+                 el.style.columnCount = 'auto';
+                 el.style.width = '100%';
+                 el.style.height = '100%'; // Must be constrained for overflow-y to work
+                 el.style.overflowY = 'auto'; // Vertical scroll enabled
+                 el.style.overflowX = 'hidden';
+            } else {
+                // Paged Mode
+                // Force fixed height to viewport minus margins to ensure multi-column generation
+                // 100vh - (Header 50px + Footer 50px + Margin 40px) approx 140px safe zone
+                el.style.height = 'calc(100vh - 120px)'; 
+                el.style.width = 'auto'; // Must be auto to expand horizontally
+                el.style.overflowX = 'hidden'; // Hidden because we use scrollBy? No, standard horizontal scroll needs hidden URL bar? 
+                // Actually for JS scrollBy to work, it must be scrollable.
+                // Usually overflow-x: hidden allows programmatic scroll but hides bar.
+                el.style.overflowX = 'hidden'; 
+                el.style.overflowY = 'hidden';
+                
+                if (vState.mode === '2page') {
+                    el.style.columnCount = 2;
+                    el.style.columnGap = '80px'; // Wider gap for spread look
+                } else {
+                    el.style.columnCount = 1; 
+                    el.style.columnGap = '0px';
+                }
+            }
         }
         return;
     }
@@ -475,30 +514,42 @@ async function fetchAndUnzip(fileId, totalSize, onProgress) {
     });
 
     // Check for EPUB
-    if (zip.file("OEBPS/content.opf") || zip.file("OPS/content.opf") || zip.file("mimetype")) {
-        // EPUB Detected
-        const engine = localStorage.getItem('toki_v_engine') || 'legacy'; // Default to Legacy
-        console.log(`📘 EPUB Detected (Engine: ${engine})`);
+    // Check for EPUB
+    const isEpub = zip.file("OEBPS/content.opf") || zip.file("OPS/content.opf") || zip.file("mimetype");
 
-        if (engine === 'legacy') {
-             let htmlContent = "";
-             // Find chapter.xhtml or any HTML
-             let targetFile = zip.file("OEBPS/Text/chapter.xhtml");
-             if (!targetFile) {
-                 const htmlFiles = files.filter(f => f.match(/\.(xhtml|html)$/i));
-                 if (htmlFiles.length > 0) targetFile = zip.file(htmlFiles[0]);
-             }
-             if (targetFile) {
-                 htmlContent = await targetFile.async("string");
-                 return { type: 'epub_legacy', content: htmlContent };
-             }
-        } 
-        
-        // Default: Foliate Mode
-        // Default: Foliate Mode
-        // Note: Foliate requires a File object (with name) to check extension (e.g., .endsWith)
-        const file = new File([combinedBytes], "content.epub", { type: 'application/epub+zip' });
-        return { type: 'epub', blob: file }; // Passing File object as 'blob' property
+    if (isEpub) {
+        // [New] Image EPUB Detection (Comic EPUB)
+        // Check if file contains mostly images
+        const imageFiles = files.filter(f => f.match(/\.(jpg|jpeg|png|webp|gif)$/i));
+        const textFiles = files.filter(f => f.match(/\.(xhtml|html)$/i));
+
+        // If it looks like a Comic (Many images, or more images than text chapters)
+        if (imageFiles.length > 5 && imageFiles.length >= textFiles.length) {
+            console.log("📘 Comic EPUB Detected -> Using Image Mode");
+            // Do NOT return here. Fall through to Image Extraction loop below.
+        } else {
+            // Text EPUB detected
+            const engine = localStorage.getItem('toki_v_engine') || 'legacy'; // Default to Legacy
+            console.log(`📘 Text EPUB Detected (Engine: ${engine})`);
+    
+            if (engine === 'legacy') {
+                 let htmlContent = "";
+                 // Find chapter.xhtml or any HTML
+                 let targetFile = zip.file("OEBPS/Text/chapter.xhtml");
+                 if (!targetFile) {
+                     const htmlFiles = files.filter(f => f.match(/\.(xhtml|html)$/i));
+                     if (htmlFiles.length > 0) targetFile = zip.file(htmlFiles[0]);
+                 }
+                 if (targetFile) {
+                     htmlContent = await targetFile.async("string");
+                     return { type: 'epub_legacy', content: htmlContent };
+                 }
+            } 
+            
+            // Foliate Mode
+            const file = new File([combinedBytes], "content.epub", { type: 'application/epub+zip' });
+            return { type: 'epub', blob: file }; 
+        }
     }
 
     const imageUrls = [];
@@ -557,55 +608,170 @@ async function renderFoliateMode(blob) {
 }
 
 /* Legacy EPUB Rendering (Simple HTML) */
+/* Legacy EPUB Rendering (Simple HTML) - Unified Structure */
 function renderLegacyMode(htmlContent) {
-    const container = document.getElementById('viewerScrollContainer');
-    if (!container) {
-        const content = document.getElementById('viewerContent');
-        const sc = document.createElement('div');
-        sc.id = 'viewerScrollContainer';
-        sc.className = 'viewer-scroll-container epub-mode';
-        content.appendChild(sc);
-        const ic = document.getElementById('viewerImageContainer');
-        if(ic) ic.style.display = 'none';
-        content.classList.add('scroll-mode');
-    } else {
-        container.style.display = 'block';
-        container.innerHTML = '';
-        container.classList.add('epub-mode');
-    }
-    
-    const scrollContainer = document.getElementById('viewerScrollContainer');
-    // Inject Content
-    scrollContainer.innerHTML = `<div class="epub-content" style="padding:20px; max-width:800px; margin:0 auto; line-height:1.8; font-size:${vState.textSettings.fontSize}px; color:inherit;">${htmlContent}</div>`;
-    
-    // Apply Settings Logic for Legacy
-    applyTextSettings();
+    // 1. Use Unified Container
+    const container = document.getElementById('viewerImageContainer');
+    const scrollContainer = document.getElementById('viewerScrollContainer'); 
 
-    // Restore Infinite Scroll for Legacy
-    scrollContainer.onscroll = () => {
-        const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
-        if (scrollTop + clientHeight >= scrollHeight - 50) {
-             if (!window.isLoadingNext) {
-                const nextIndex = currentBookIndex + 1;
-                if (currentBookList[nextIndex]) {
-                    window.isLoadingNext = true;
-                    showToast("⏩ 다음 화를 불러옵니다...", 2000);
-                    setTimeout(() => {
-                        loadViewer(nextIndex, true)
-                            .then(() => { window.isLoadingNext = false; })
-                            .catch(() => window.isLoadingNext = false);
-                    }, 500); 
+    // Hide old container if it exists
+    if (scrollContainer) scrollContainer.style.display = 'none';
+    
+    // Show Unified Container
+    container.style.display = 'flex';
+    container.innerHTML = '';
+    container.classList.add('epub-mode');
+    
+    // 2. Render inside .viewer-spread
+    const viewClass = vState.scrollMode ? 'scroll-view' : 'paged-view';
+    
+    container.innerHTML = `
+        <div class="viewer-spread ${vState.rtlMode ? 'is-rtl' : ''}">
+            <div class="viewer-page-wrapper text-mode">
+                 <div class="epub-content ${viewClass}" style="font-size:${vState.textSettings.fontSize}px; line-height:${vState.textSettings.lineHeight}; color: inherit;">
+                    ${htmlContent}
+                 </div>
+            </div>
+        </div>
+    `;
+    
+    // 3. Apply Settings
+    applyTextSettings();
+    
+    // 4. Restore Scroll Listener for Scroll Mode (Legacy Infinite Scroll support)
+    if (vState.scrollMode) {
+        const content = container.querySelector('.epub-content');
+        if (content) {
+            content.onscroll = () => {
+                const { scrollTop, scrollHeight, clientHeight } = content;
+                
+                // 1. Check Infinite Scroll (Next Episode)
+                // Block trigger if restoring position
+                if (window.isRestoring) return;
+                
+                if (scrollTop + clientHeight >= scrollHeight - 50) {
+                     // Double-Tap Logic for Infinite Scroll
+                     if (!window.scrollBottomTriggered) {
+                         window.scrollBottomTriggered = true;
+                         window.scrollBottomTimestamp = Date.now(); // Latch time
+                         showToast("마지막입니다. 계속 내리면 다음 화로 이동합니다.");
+                         return;
+                     }
+                     
+                     // Time Latch: Prevent immediate trigger within 1 second
+                     if (Date.now() - window.scrollBottomTimestamp < 1000) {
+                         return;
+                     }
+
+                     if (!window.isLoadingNext) checkNextEpisodeTrigger();
                 } else {
-                    if(!window.isEndToastShown) {
-                        showToast("🏁 마지막 회차입니다.");
-                        window.isEndToastShown = true;
-                        setTimeout(()=> window.isEndToastShown = false, 3000);
+                    // Reset if user scrolls up away from bottom
+                    if (scrollHeight - (scrollTop + clientHeight) > 100) {
+                        window.scrollBottomTriggered = false;
+                        window.scrollBottomTimestamp = 0;
                     }
                 }
-             }
+
+                // 3. Update Page Counter (Approximate)
+                const percent = Math.round((scrollTop / (scrollHeight - clientHeight)) * 100) || 0;
+                // console.log(`[ScrollEvent] Top: ${scrollTop}, H: ${scrollHeight}, Percent: ${percent}%`);
+                
+                const counter = document.getElementById('pageCounter');
+                if (counter) {
+                    counter.innerText = `${percent}%`;
+                } else {
+                    console.warn("[ScrollEvent] #pageCounter not found");
+                }
+
+                // 2. Save Anchor (Throttled)
+                if (!window.saveAnchorTimer) {
+                    window.saveAnchorTimer = setTimeout(() => {
+                        window.saveAnchorTimer = null;
+                        const anchor = findVisibleAnchor(content);
+                        if (anchor && currentBookList[currentBookIndex]) {
+                             saveProgress(currentBookList[currentBookIndex].seriesId, currentBookList[currentBookIndex].id, anchor);
+                             // console.log("Saved Anchor:", anchor);
+                        }
+                    }, 500);
+                }
+            };
+
+            // 3. Restore Progress (Anchor)
+            if (currentBookList[currentBookIndex]) {
+                 const progress = getProgress(currentBookList[currentBookIndex].seriesId, currentBookList[currentBookIndex].id);
+                 if (progress && typeof progress === 'object' && progress.index !== undefined) {
+                      // It's an anchor object
+                      // Set Guard Flag
+                      window.isRestoring = true;
+                      
+                      setTimeout(() => {
+                           const candidates = content.querySelectorAll('p, div, h1, h2, h3, h4, h5, h6');
+                           if (candidates[progress.index]) {
+                                candidates[progress.index].scrollIntoView({ block: 'start' });
+                                showToast(`🔖 저장된 위치(${progress.index}번째 문단)로 이동했습니다.`);
+                           }
+                           // Release Guard after delay
+                           setTimeout(() => { window.isRestoring = false; }, 1000);
+                      }, 100); // Small delay for layout
+                 }
+            }
         }
-    };
+    }
 }
+
+/**
+ * 텍스트 뷰어(페이지 모드) 페이지 이동
+ */
+function navigateTextPage(dir) {
+    // Locate the unique text content container
+    const content = document.querySelector('.epub-content.paged-view');
+    if (!content) return;
+
+    // Use content as the scroll container
+    const container = content;
+    
+    // Dimensions
+    const pageWidth = container.clientWidth;
+    const scrollWidth = container.scrollWidth;
+    let currentScroll = container.scrollLeft;
+
+    // Direction Logic
+    const isRtl = vState.rtlMode;
+    
+    console.log(`[Nav] Dir: ${dir}, Scroll: ${currentScroll}/${scrollWidth}, Client: ${pageWidth}`);
+
+    // Boundary Detection
+    // 1. Next Page
+    if (dir === 1) { 
+        if (Math.abs(currentScroll + pageWidth - scrollWidth) < 10 || currentScroll + pageWidth >= scrollWidth) {
+             console.log("[Nav] End of Chapter Reached");
+             if (!window.isLoadingNext) checkNextEpisodeTrigger();
+             return;
+        }
+        container.scrollBy({ left: pageWidth, behavior: 'smooth' });
+    } 
+    // 2. Prev Page
+    else {
+        if (currentScroll <= 10) { 
+            console.log("[Nav] Start of Chapter");
+            showToast("첫 페이지입니다.");
+            return;
+        }
+        container.scrollBy({ left: -pageWidth, behavior: 'smooth' });
+    }
+    
+    // Update Progress
+    setTimeout(() => {
+        const page = Math.round(container.scrollLeft / pageWidth) + 1;
+        const total = Math.ceil(container.scrollWidth / pageWidth);
+        const safeTotal = total > 0 ? total : 1;
+        const safePage = page > safeTotal ? safeTotal : (page < 1 ? 1 : page);
+        
+        const counter = document.getElementById('pageCounter');
+        if(counter) counter.innerText = `${safePage} / ${safeTotal}`;
+    }, 400); 
+}
+
 
 // Fallback for unknown size (Sequential)
 async function fetchAndUnzipSequentialFallback(fileId, onProgress) {
@@ -745,9 +911,11 @@ function renderCurrentSpread() {
     // RTL
     const dirStyle = vState.rtlMode ? 'flex-direction:row-reverse;' : '';
 
-    container.innerHTML = `<div class="viewer-spread" style="${dirStyle}">
+    container.innerHTML = `<div class="viewer-spread ${vState.rtlMode ? 'is-rtl' : ''}" style="${dirStyle}">
         ${spreadIndices.map(idx => `
-            <img src="${vState.images[idx].src}" class="viewer-page ${spreadIndices.length > 1 ? 'half' : ''}">
+            <div class="${spreadIndices.length > 1 ? 'half' : ''}">
+                <img src="${vState.images[idx].src}" class="viewer-page">
+            </div>
         `).join('')}
     </div>`;
     
@@ -788,6 +956,19 @@ function renderCurrentSpread() {
  * @param {number} dir - 이동 방향 (1: 다음, -1: 이전)
  */
 function navigateViewer(dir) {
+    if (window.isViewerLoading) return; // Block input during load
+    
+    if (vState.scrollMode) {
+        navigateScrollMode(dir);
+        return;
+    }
+    
+    if (vState.epubMode && !vState.foliateView) {
+        // Text Page Mode Navigation (Legacy Paged)
+        navigateTextPage(dir);
+        return;
+    }
+
     const nextIdx = vState.currentSpreadIndex + dir;
     if (nextIdx >= vState.spreads.length) {
         if (currentBookIndex < currentBookList.length - 1) {
@@ -803,6 +984,143 @@ function navigateViewer(dir) {
     }
     vState.currentSpreadIndex = nextIdx;
     renderCurrentSpread();
+}
+
+/**
+ * 스크롤 모드에서의 페이지 이동 (키보드/버튼)
+ * 화면의 90%만큼 스크롤하고, 끝에 도달하면 다음 화로 이동합니다.
+ */
+function navigateScrollMode(dir) {
+    if (window.isViewerLoading) return;
+
+    // 1. Identify Scroll Container
+    let container = null;
+    if (vState.epubMode) {
+        container = document.querySelector('.epub-content.scroll-view');
+        // Fallback or Image mode
+        if (!container) container = document.getElementById('viewerScrollContainer'); 
+    } else {
+        container = document.getElementById('viewerScrollContainer');
+    }
+    
+    if (!container) {
+        console.warn("[ScrollNav] No Container Found!");
+        return;
+    }
+
+    // 2. Calculate Scroll
+    const clientHeight = container.clientHeight > 0 ? container.clientHeight : window.innerHeight;
+    const scrollAmount = clientHeight * 0.9;
+    const currentScroll = container.scrollTop;
+    const maxScroll = container.scrollHeight - clientHeight;
+
+    const childCount = container.childElementCount;
+    const firstImg = container.querySelector('img');
+    const firstImgH = firstImg ? firstImg.offsetHeight : 'N/A';
+
+    console.log(`[ScrollNav] Dir: ${dir}, Scroll: ${currentScroll} / ${maxScroll} (H: ${clientHeight}) | Children: ${childCount}, 1stImgH: ${firstImgH}`);
+    
+    if (dir === 1) { // Next (Down)
+        if (Math.abs(currentScroll - maxScroll) < 10 || currentScroll >= maxScroll) {
+             console.log("[ScrollNav] Reached Bottom");
+             
+             // Double-Tap Logic
+             if (!window.scrollBottomTriggered) {
+                 window.scrollBottomTriggered = true;
+                 showToast("마지막입니다. 한번 더 내리면 다음 화로 이동합니다.");
+                 return;
+             }
+             
+             console.log("[ScrollNav] Triggering Next Episode");
+             checkNextEpisodeTrigger();
+             return;
+        }
+        // Reset trigger if scrolling normally
+        window.scrollBottomTriggered = false;
+        container.scrollBy({ top: scrollAmount, behavior: 'smooth' });
+    } else { // Prev (Up)
+        window.scrollBottomTriggered = false; // Reset on up scroll
+        if (currentScroll <= 10) {
+            console.log("[ScrollNav] Reached Top");
+            showToast("첫 부분입니다.");
+            return;
+        }
+        container.scrollBy({ top: -scrollAmount, behavior: 'smooth' });
+    }
+}
+
+/**
+ * 텍스트 뷰어(페이지 모드) 페이지 이동
+ */
+function navigateTextPage(dir) {
+    // Locate the unique text content container
+    const content = document.querySelector('.epub-content.paged-view');
+    if (!content) return;
+
+    // Use content as the scroll container
+    const container = content;
+    
+    // Dimensions
+    const pageWidth = container.clientWidth;
+    const scrollWidth = container.scrollWidth;
+    let currentScroll = container.scrollLeft;
+
+    // Direction Logic
+    const isRtl = vState.rtlMode;
+    
+    console.log(`[Nav] Dir: ${dir}, Scroll: ${currentScroll}/${scrollWidth}, Client: ${pageWidth}`);
+
+    // Boundary Detection
+    // 1. Next Page
+    if (dir === 1) { 
+        if (Math.abs(currentScroll + pageWidth - scrollWidth) < 10 || currentScroll + pageWidth >= scrollWidth) {
+             console.log("[Nav] End of Chapter Reached");
+             if (!window.isLoadingNext) checkNextEpisodeTrigger();
+             return;
+        }
+        container.scrollBy({ left: pageWidth, behavior: 'smooth' });
+    } 
+    // 2. Prev Page
+    else {
+        if (currentScroll <= 10) { 
+            console.log("[Nav] Start of Chapter");
+            showToast("첫 페이지입니다.");
+            return;
+        }
+        container.scrollBy({ left: -pageWidth, behavior: 'smooth' });
+    }
+    
+    // Update Progress
+    setTimeout(() => {
+        const page = Math.round(container.scrollLeft / pageWidth) + 1;
+        const total = Math.ceil(container.scrollWidth / pageWidth);
+        const safeTotal = total > 0 ? total : 1;
+        const safePage = page > safeTotal ? safeTotal : (page < 1 ? 1 : page);
+        
+        const counter = document.getElementById('pageCounter');
+        if(counter) counter.innerText = `${safePage} / ${safeTotal}`;
+    }, 400); 
+}
+
+function checkNextEpisodeTrigger() {
+    if (!window.isLoadingNext) {
+        const nextIndex = currentBookIndex + 1;
+        if (currentBookList[nextIndex]) {
+            window.isLoadingNext = true;
+            showToast("⏩ 다음 화를 불러옵니다...", 2000);
+            setTimeout(() => {
+                loadViewer(nextIndex, true)
+                    .then(() => { window.isLoadingNext = false; })
+                    .catch(() => window.isLoadingNext = false);
+            }, 500); 
+        } else {
+            if(!window.isEndToastShown) {
+                showToast("🏁 마지막 회차입니다.");
+                window.isEndToastShown = true;
+                setTimeout(()=> window.isEndToastShown = false, 3000);
+            }
+        }
+    }
 }
 
 /**
@@ -828,10 +1146,30 @@ function closeViewer() {
 // Key Controls
 document.addEventListener('keydown', (e) => {
     if (document.getElementById('viewerOverlay').style.display === 'flex') {
-        if (e.key === 'Escape') closeViewer();
-        else if (e.key === 'ArrowLeft') navigateViewer(vState.rtlMode ? 1 : -1);
-        else if (e.key === 'ArrowRight') navigateViewer(vState.rtlMode ? -1 : 1);
-        else if (e.key === ' ' || e.key === 'Enter') navigateViewer(1);
+        if (e.key === 'Escape') {
+            closeViewer();
+            e.preventDefault();
+        }
+        else if (e.key === 'ArrowLeft') {
+            navigateViewer(vState.rtlMode ? 1 : -1);
+            e.preventDefault();
+        }
+        else if (e.key === 'ArrowRight') {
+            navigateViewer(vState.rtlMode ? -1 : 1);
+            e.preventDefault();
+        }
+        else if (e.key === 'ArrowUp') {
+            navigateViewer(-1); // Prev
+            e.preventDefault();
+        }
+        else if (e.key === 'ArrowDown') {
+            navigateViewer(1); // Next
+            e.preventDefault();
+        }
+        else if (e.key === ' ' || e.key === 'Enter') {
+            navigateViewer(1);
+            e.preventDefault();
+        }
     } else if (document.getElementById('episodeModal').style.display === 'flex') {
          if (e.key === 'Escape') closeEpisodeModal();
     }
@@ -914,7 +1252,7 @@ function renderScrollMode() {
     vState.images.forEach((imgData, index) => {
         const img = document.createElement('img');
         img.src = imgData.src;
-        img.loading = 'lazy'; // Native lazy load
+        // img.loading = 'lazy'; // Removed to ensure dimension calculation for scroll
         img.className = 'viewer-page';
         img.setAttribute('data-index', index);
         
@@ -926,6 +1264,34 @@ function renderScrollMode() {
 
     // Initial update
     updateSliderUI();
+    
+    // Add Infinite Scroll Trigger with Double-Tap Protection
+    container.onscroll = () => {
+        const { scrollTop, scrollHeight, clientHeight } = container;
+        
+        if (scrollTop + clientHeight >= scrollHeight - 50) {
+             // Double-Tap Logic
+             if (!window.scrollBottomTriggered) {
+                 window.scrollBottomTriggered = true;
+                 window.scrollBottomTimestamp = Date.now();
+                 showToast("마지막입니다. 계속 내리면 다음 화로 이동합니다.");
+                 return;
+             }
+             
+             // Time Latch (1s)
+             if (Date.now() - window.scrollBottomTimestamp < 1000) {
+                 return;
+             }
+
+             if (!window.isLoadingNext) checkNextEpisodeTrigger();
+        } else {
+            // Reset if user scrolls up
+            if (scrollHeight - (scrollTop + clientHeight) > 100) {
+                window.scrollBottomTriggered = false;
+                window.scrollBottomTimestamp = 0;
+            }
+        }
+    };
 }
 
 function updateScrollProgress(index) {
@@ -1014,11 +1380,17 @@ function updateButtonStates() {
     setBtn('btnScroll', vState.scrollMode); // Add Button State
 }
 
+
 function toggleViewMode() {
     vState.mode = (vState.mode === '1page') ? '2page' : '1page';
     localStorage.setItem('toki_v_mode', vState.mode);
     updateButtonStates();
-    recalcSpreads(false); // Keep current page if possible
+    
+    if (vState.epubMode) {
+        applyTextSettings(); // Apply to text
+    } else {
+        recalcSpreads(false); // Apply to images
+    }
 }
 
 function toggleCoverMode() {
@@ -1113,13 +1485,40 @@ function toggleControls() {
     controls.classList.toggle('show');
 }
 /**
- * 현재 읽고 있는 페이지 인덱스를 저장합니다.
+ * 현재 읽고 있는 페이지 인덱스(또는 앵커 객체)를 저장합니다.
+ * @param {string} seriesId
+ * @param {string} bookId
+ * @param {number|Object} pageIndexOrAnchor - 페이지 번호(이미지) 또는 앵커 객체(텍스트)
  */
-function saveProgress(seriesId, bookId, pageIndex) {
+function saveProgress(seriesId, bookId, pageIndexOrAnchor) {
     const json = localStorage.getItem(`prog_${seriesId}`);
     const data = json ? JSON.parse(json) : {};
-    data[bookId] = pageIndex;
+    data[bookId] = pageIndexOrAnchor;
     localStorage.setItem(`prog_${seriesId}`, JSON.stringify(data));
+}
+
+/**
+ * 텍스트 뷰어용: 화면 상단에 보이는 첫 번째 문단(Anchor)을 찾습니다.
+ * @param {HTMLElement} container - 스크롤 컨테이너
+ * @returns {Object|null} { pIndex: number, offset: number }
+ */
+function findVisibleAnchor(container) {
+    if (!container) return null;
+    
+    // Find all potential anchors (paragraphs, divs, headings)
+    const candidates = container.querySelectorAll('p, div, h1, h2, h3, h4, h5, h6');
+    const scrollTop = container.scrollTop;
+    
+    // Binary search or linear scan? Linear is fine for typical chapter size (~100-200 paragraphs)
+    for (let i = 0; i < candidates.length; i++) {
+        const el = candidates[i];
+        // If element top is below scrollTop (or close enough), it's the first visible one
+        // offsetTop is relative to offsetParent. paged-view might be tricky, but scroll-view is simple.
+        if (el.offsetTop + el.clientHeight > scrollTop) {
+            return { index: i, id: el.id, tagName: el.tagName };
+        }
+    }
+    return null;
 }
 
 /* New UI Handlers */

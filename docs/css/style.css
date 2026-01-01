@@ -1,4 +1,3 @@
-@import url("viewer_ui.css");
 :root {
   --bg-color: #1a1a1a;
   --card-bg: #252525;
@@ -535,9 +534,6 @@ input[type=range]::-webkit-slider-thumb {
   transform: translateY(0);
 }
 
-/* Remove old hover logic if we use explicit toggle */
-/* .viewer-overlay:hover .viewer-header ... REMOVED */
-
 /* Nav Zones (Inside Content Layer) */
 .viewer-content {
   flex: 1;
@@ -552,45 +548,83 @@ input[type=range]::-webkit-slider-thumb {
 .viewer-image-container {
   width: 100%;
   height: 100%;
+  min-height: 0; /* Important for nested flex scroll */
   display: flex;
   justify-content: center;
   align-items: center;
+  overflow: hidden; /* Stop expansion */
 }
 .viewer-spread {
   display: flex;
   width: 100%;
   height: 100%;
+  min-height: 0; /* Important for nested flex scroll */
   justify-content: center;
   align-items: center;
+  overflow: hidden; /* Stop expansion */
 }
 .viewer-page {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
 }
-.viewer-page.half {
-  max-width: 50%;
+/* Wrapper Div Styling */
+.viewer-spread > div {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%; 
+  width: auto;
+  max-width: 100%;
 }
+.viewer-spread > div.half {
+  max-width: 50%;
+  flex: 1; 
+}
+
+/* Spine Alignment (Gather to Center) */
+/* LTR Default: [Left Page] [Right Page] -> Align Inner */
+.viewer-spread > div.half:first-child { justify-content: flex-end; }
+.viewer-spread > div.half:last-child { justify-content: flex-start; }
+
+/* RTL Mode: [Right Page] [Left Page] (visually) -> Align Inner */
+/* DOM Order in RTL is still [0, 1], but 0 is Right Page, 1 is Left Page */
+/* 0 (Right Page) should align Left (Start) */
+/* 1 (Left Page) should align Right (End) */
+.viewer-spread.is-rtl > div.half:first-child { justify-content: flex-start; }
+.viewer-spread.is-rtl > div.half:last-child { justify-content: flex-end; }
 
 /* Scroll Mode Styles */
 .viewer-content.scroll-mode {
-  overflow-y: auto; /* Enable vertical scroll */
-  display: block; /* Remove flex centering */
-  -webkit-overflow-scrolling: touch;
+  overflow: hidden !important; /* Wrapper shouldn't scroll */
+  display: flex !important; /* Ensure it fills space */
+  flex-direction: column;
 }
 .viewer-scroll-container {
-  display: flex;
-  flex-direction: column;
+  display: block; /* Flex column often behaves weird with scroll */
+  height: 100%; /* Fill viewport */
+  overflow-y: auto; /* Scroll internally */
+  overflow-x: hidden;
   width: 100%;
-  max-width: 800px; /* Limit width for reading */
+  max-width: 800px; /* Limit width */
   margin: 0 auto;
-  gap: 0; /* No gap between images */
   background: black;
 }
 .viewer-scroll-container img {
   width: 100%;
   height: auto;
+  min-height: 100px; /* Ensure scrollbar exists even if loading */
+  max-height: none !important; /* Allow full height expansion */
   display: block;
+}
+
+/* Hide Scrollbar for Image Scroll Mode too */
+.viewer-scroll-container {
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+}
+.viewer-scroll-container::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
 }
 
 .nav-zone {
@@ -685,15 +719,96 @@ input[type=range]::-webkit-slider-thumb {
 }
 
 /* Foliate Viewer Integration */
+/* Foliate Viewer Integration (Shared with Legacy EPUB) */
 #viewerScrollContainer.epub-mode {
     width: 100%;
-    height: 100vh; /* Full viewport height */
-    overflow: hidden; /* Foliate manages its own scroll/pagination */
-    background: #fff; /* Default reading background */
-    position: absolute;
+    max-width: none; /* Override base class limit */
+    height: 100%; /* Fit to content layer */
+    overflow-y: auto; /* Allow scrolling for Legacy Mode */
+    background: #fff;
+    position: absolute; /* Relative to viewer-content */
     top: 0;
     left: 0;
-    z-index: 100; /* Above everything else */
+    z-index: 5; /* Above images(1), but BELOW Controls(20) */
+}
+
+/* Legacy EPUB Content Overrides */
+.epub-content, .epub-content * {
+    background-color: transparent !important; /* Strip internal backgrounds */
+    color: inherit !important; /* Inherit our theme color */
+}
+.epub-content img {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Text Paged Mode (Horizontal Pagination) */
+#viewerScrollContainer.epub-mode.paged-mode {
+    overflow-x: hidden; /* JS Controlled */
+    overflow-y: hidden;
+    display: block;
+    height: 100vh; /* Full Height */
+}
+
+/* Scroll Mode override */
+#viewerScrollContainer.epub-mode.scroll-mode {
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.viewer-page-wrapper.text-mode {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start; /* Fix "Floating" look: Align to Top */
+    height: 100%;
+    width: 100%;
+    height: 100%;
+    width: 100%;
+    overflow: hidden; /* Crucial: Prevents wrapper from expanding with content */
+    position: relative;
+    z-index: 1;
+}
+.epub-content.paged-view {
+    height: calc(100vh - 120px); 
+    column-fill: auto; 
+    width: 100%; /* Fill wrapper */
+    max-width: 1100px; /* Constrain reading width */
+    padding: 0 40px; 
+    box-sizing: border-box;
+    text-align: justify;
+    
+    /* Ensure no vertical scroll inside */
+    overflow-y: hidden;
+    overflow-x: hidden; /* Programmatic scroll only */
+}
+
+/* Scroll View Constraint */
+.epub-content.scroll-view {
+    width: 100%;
+    height: 100% !important; /* Force fit to parent */
+    max-height: 100vh !important; /* Safety cap */
+    max-width: 900px; /* Readability constraint */
+    padding: 40px; 
+    box-sizing: border-box;
+    overflow-y: auto !important; /* Force scrollbar */
+    display: block !important;
+    /* margin: 0 auto; - handled by flex wrapper */
+    
+    /* Hide Scrollbar */
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+}
+.epub-content.scroll-view::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+}
+
+/* Mobile Tweaks */
+@media (max-width: 800px) {
+    .epub-content.paged-view {
+        padding: 10px 20px;
+        column-gap: 20px !important;
+    }
 }
 
 /* Dark Mode Override for Container */
