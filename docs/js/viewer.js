@@ -299,9 +299,11 @@ function applyTextSettings() {
                 
                 if (vState.mode === '2page') {
                     el.style.columnCount = 2;
-                    el.style.columnGap = '80px'; // Wider gap for spread look
+                    el.style.columnWidth = 'auto'; // Force Count priority
+                    el.style.columnGap = '40px'; // Safer gap
                 } else {
                     el.style.columnCount = 1; 
+                    el.style.columnWidth = 'auto';
                     el.style.columnGap = '0px';
                 }
             }
