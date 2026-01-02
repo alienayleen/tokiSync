@@ -19,7 +19,8 @@ function View_Dispatcher(data) {
     // Route Actions
     if (action === "view_get_library") {
       if (!data.folderId) throw new Error("folderId is required for library");
-      resultBody = View_getSeriesList(data.folderId);
+      const bypassCache = data.bypassCache === true;
+      resultBody = View_getSeriesList(data.folderId, bypassCache);
     } else if (action === "view_get_books" || action === "view_refresh_cache") {
       if (!data.seriesId) throw new Error("seriesId is required for books");
       const bypassCache =
@@ -35,7 +36,7 @@ function View_Dispatcher(data) {
       throw new Error("Unknown Viewer Action: " + action);
     }
 
-    return createRes("success", resultBody);
+    return createRes("success", resultBody, Debug.getLogs());
   } catch (e) {
     return createRes("error", e.toString());
   }

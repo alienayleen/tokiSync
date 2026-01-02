@@ -79,20 +79,27 @@ function View_getBooks(seriesId, bypassCache = false) {
       const f = files.next();
       const name = f.getName();
       const mime = f.getMimeType();
+      const lowerName = name.toLowerCase();
 
+      // Filter: System Files & Images
       if (
         name === "info.json" ||
         name === INDEX_FILE_NAME ||
-        name === CACHE_FILE_NAME
+        name === CACHE_FILE_NAME ||
+        name === "cover.jpg" ||
+        lowerName.endsWith(".jpg") ||
+        lowerName.endsWith(".png") ||
+        lowerName.endsWith(".json")
       )
         continue;
 
-      const lowerName = name.toLowerCase();
       if (
         lowerName.endsWith(".cbz") ||
         lowerName.endsWith(".zip") ||
+        lowerName.endsWith(".epub") ||
         mime.includes("zip") ||
-        mime.includes("archive")
+        mime.includes("archive") ||
+        mime.includes("epub")
       ) {
         books.push(createBook(f, "file"));
       }

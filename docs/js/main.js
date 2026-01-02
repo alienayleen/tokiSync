@@ -14,7 +14,7 @@ const DEFAULT_DOMAINS = {
     booktoki: '469'
 };
 
-const VIEWER_VERSION = "v3.1.0-beta.251218.0004"; // Viewer Optimization Update
+const VIEWER_VERSION = "v1.0.0"; // Official Release
 // [New] Expose Version to Global Scope for Debugging
 window.TOKI_VIEWER_VERSION = VIEWER_VERSION;
 
@@ -86,8 +86,9 @@ function handleMessage(event) {
  * 
  * @param {string} [forceId=null] - 강제로 특정 폴더 ID를 사용할 경우 지정
  * @param {boolean} [silent=false] - 로딩 인디케이터 표시 여부 (true면 숨김)
+ * @param {boolean} [bypassCache=false] - 서버 캐시 무시 여부 (강제 새로고침)
  */
-async function refreshDB(forceId = null, silent = false) {
+async function refreshDB(forceId = null, silent = false, bypassCache = false) {
     const loader = document.getElementById('pageLoader');
     const btn = document.getElementById('refreshBtn');
 
@@ -97,17 +98,19 @@ async function refreshDB(forceId = null, silent = false) {
     }
 
     try {
-        const seriesList = await API.request('view_get_library', { 
+        const payload = { 
             folderId: forceId || API.folderId 
-        });
+        };
+        if (bypassCache) payload.bypassCache = true;
+
+        const seriesList = await API.request('view_get_library', payload);
         
         renderGrid(seriesList);
+        showToast("📚 라이브러리 업데이트 완료");
 
     } catch (e) {
         console.error("Library Fetch Error:", e);
         showToast(`❌ 로드 실패: ${e.message}`, 5000);
-        // Show config modal if auth failing implies wrong URL/ID
-        // But maybe it's just network?
     } finally {
         if(loader) loader.style.display = 'none';
         if(btn) btn.classList.remove('spin-anim');
@@ -141,7 +144,17 @@ function renderGrid(seriesList) {
             const meta = series.metadata || { status: 'Unknown', authors: [] };
             const authors = meta.authors || [];
             const status = meta.status || 'Unknown';
-            const thumb = series.thumbnail && series.thumbnail.startsWith("data:image") ? series.thumbnail : NO_IMAGE_SVG;
+            
+            // Thumbnail Logic: Base64 -> DriveID -> Default
+            let thumb = NO_IMAGE_SVG;
+            if (series.thumbnail && series.thumbnail.startsWith("data:image")) {
+                thumb = series.thumbnail;
+            } else if (series.thumbnailId) {
+                // High-performance Drive Thumbnail URL
+                thumb = `https://lh3.googleusercontent.com/d/${series.thumbnailId}=s400`;
+            } else if (series.thumbnail && series.thumbnail.startsWith("http")) {
+                thumb = series.thumbnail;
+            }
             const dynamicUrl = getDynamicLink(series);
             const hasContentId = !!series.sourceId;
 

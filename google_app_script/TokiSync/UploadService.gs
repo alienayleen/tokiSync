@@ -12,6 +12,14 @@ function initResumableUpload(data, rootFolderId) {
   );
   const folderId = seriesFolder.getId();
 
+  // [Fix] Prevent Duplicate Covers: Delete existing cover.jpg if uploading a new one
+  if (data.fileName === "cover.jpg") {
+    const existing = seriesFolder.getFilesByName("cover.jpg");
+    while (existing.hasNext()) {
+      existing.next().setTrashed(true);
+    }
+  }
+
   const url =
     "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable";
 

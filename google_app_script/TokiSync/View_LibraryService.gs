@@ -9,24 +9,26 @@
  * @param {string} folderId - 라이브러리 루트 폴더 ID
  * @returns {Array<Object>} 시리즈 목록 (JSON)
  */
-function View_getSeriesList(folderId) {
+function View_getSeriesList(folderId, bypassCache = false) {
   if (!folderId) throw new Error("Folder ID is required");
 
-  // 1. Check Cache
-  const root = DriveApp.getFolderById(folderId);
-  const files = root.getFilesByName(INDEX_FILE_NAME);
+  // 1. Check Cache (if not bypassed)
+  if (!bypassCache) {
+    const root = DriveApp.getFolderById(folderId);
+    const files = root.getFilesByName(INDEX_FILE_NAME);
 
-  if (files.hasNext()) {
-    const file = files.next();
-    const content = file.getBlob().getDataAsString();
-    if (content && content.trim() !== "") {
-      try {
-        return JSON.parse(content);
-      } catch (e) {}
+    if (files.hasNext()) {
+      const file = files.next();
+      const content = file.getBlob().getDataAsString();
+      if (content && content.trim() !== "") {
+        try {
+          return JSON.parse(content);
+        } catch (e) {}
+      }
     }
   }
 
-  // 2. Rebuild if missing
+  // 2. Rebuild if missing or bypassed
   return View_rebuildLibraryIndex(folderId);
 }
 
@@ -108,6 +110,8 @@ function View_rebuildLibraryIndex(folderId) {
  */
 function processSeriesFolder(folder, categoryContext) {
   const folderName = folder.getName();
+  // Debug.log(`[Scan] Processing: ${folderName}`); // Too noisy for all, maybe enable if needed
+
   let metadata = {
     status: "ONGOING",
     authors: [],
@@ -115,8 +119,8 @@ function processSeriesFolder(folder, categoryContext) {
     category: categoryContext,
   };
   let seriesName = folderName;
-  let thumbnailId = ""; // Optimized: Use File ID instead of Base64
-  let thumbnailOld = ""; // Fallback
+  let thumbnailId = "";
+  let thumbnailOld = "";
   let sourceId = "";
   let booksCount = 0;
 
@@ -124,18 +128,29 @@ function processSeriesFolder(folder, categoryContext) {
   const idMatch = folderName.match(/^\[(\d+)\]/);
   if (idMatch) sourceId = idMatch[1];
 
-  // 1. Check for 'cover.jpg' (Preferred)
-  const coverFiles = folder.getFilesByName("cover.jpg");
+  // 1. Check for 'cover.jpg'
+  // Try exact match first
+  let coverFiles = folder.getFilesByName("cover.jpg");
   if (coverFiles.hasNext()) {
-    thumbnailId = coverFiles.next().getId();
+    const f = coverFiles.next();
+    thumbnailId = f.getId();
+    // Debug.log(`  -> Found cover.jpg: ${thumbnailId}`);
+  } else {
+    // Try Case-Insensitive / Alternative names
+    const altNames = ["Cover.jpg", "cover.png", "Cover.png", "cover.jpeg"];
+    for (const alt of altNames) {
+      const alts = folder.getFilesByName(alt);
+      if (alts.hasNext()) {
+        thumbnailId = alts.next().getId();
+        break;
+      }
+    }
   }
 
   // 2. Parse info.json
   const infoFiles = folder.getFilesByName("info.json");
   if (infoFiles.hasNext()) {
     try {
-      // To optimize scan time, we might skip parsing if we already have cover.jpg and just need name?
-      // But we need total count etc.
       const content = infoFiles.next().getBlob().getDataAsString();
       const parsed = JSON.parse(content);
 
@@ -143,51 +158,31 @@ function processSeriesFolder(folder, categoryContext) {
       if (parsed.id) sourceId = parsed.id;
       if (parsed.file_count) booksCount = parsed.file_count;
 
-      // Metadata overrides
-      if (parsed.category) {
-        // [Fix] Prioritize Folder Context (e.g. Manga) over potentially stale info.json (e.g. Webtoon)
-        // Only use info.json category if we are in Root/Uncategorized
-        if (!categoryContext || categoryContext === "Uncategorized") {
-          metadata.category = parsed.category;
-        }
+      if (
+        parsed.category &&
+        (!categoryContext || categoryContext === "Uncategorized")
+      ) {
+        metadata.category = parsed.category;
       }
       if (parsed.status) metadata.status = parsed.status;
       if (parsed.metadata && parsed.metadata.authors)
         metadata.authors = parsed.metadata.authors;
       else if (parsed.author) metadata.authors = [parsed.author];
 
-      // Fallback Thumbnail (URL or Base64 - avoid Base64 if possible in Index)
-      // If thumbnailId is empty, we might check parsed.thumbnail
-      // But we want to Avoid Base64.
-      if (!thumbnailId && parsed.thumbnail) {
-        if (parsed.thumbnail.startsWith("http"))
-          thumbnailOld = parsed.thumbnail;
-        // parsed.thumbnail might be base64. If so, ignore for index size optimization?
-        // Or keep it? The user wanted optimization.
-        // Let's Skip Base64 in Index. Only allow http links.
-      }
+      // Dual Strategy: Base64 from info.json (temp store in thumbnailId if we want, but let's use separate field)
+      if (parsed.thumbnail) thumbnailOld = parsed.thumbnail; // Base64 or URL
     } catch (e) {}
   } else {
-    // Fallback Name Parsing
     const match = folderName.match(/^\[(\d+)\]\s*(.+)/);
     if (match) seriesName = match[2];
   }
 
-  // 3. Count Books (if not in info.json)
-  if (booksCount === 0) {
-    // Fast approximation? Or accurate scan?
-    // Accurate scan is slow. Let's try to trust info.json or just check file (slow).
-    // For optimization, trusting info.json is best.
-    // If 0, maybe just leave it 0 or do a quick check?
-    // Let's do a quick iterator check but limit it? No, explicit scan.
-    /* 
-        const files = folder.getFiles();
-        while(files.hasNext()) {
-            if (files.next().getMimeType() === MimeType.ZIP || files.next().getName().endsWith('.cbz')) booksCount++;
-        }
-        */
-    // Skip for performance unless critical.
+  // Refine Dual Strategy Return
+  let base64Thumb = "";
+  if (thumbnailOld && thumbnailOld.startsWith("data:image")) {
+    base64Thumb = thumbnailOld;
   }
+  // If thumbnailOld is http url, we keep it in 'thumbnail' field anyway.
 
   return {
     id: folder.getId(),
@@ -195,10 +190,10 @@ function processSeriesFolder(folder, categoryContext) {
     name: seriesName,
     booksCount: booksCount,
     metadata: metadata,
-    thumbnailId: thumbnailId, // NEW
-    thumbnail: thumbnailOld, // Legacy/External URL
+    thumbnail: base64Thumb || thumbnailOld, // Base64 or External URL
+    thumbnailId: thumbnailId, // Drive ID (cover.jpg)
     hasCover: !!thumbnailId,
     lastModified: folder.getLastUpdated(),
-    category: metadata.category, // Top level access
+    category: metadata.category,
   };
 }
