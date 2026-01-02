@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TokiSync (Link to Drive)
 // @namespace    http://tampermonkey.net/
-// @version      1.0.1
+// @version      1.0.2
 // @description  Toki series sites -> Google Drive syncing tool (Loader) (GitHub CDN)
 // @author       pray4skylark
 // @updateURL    https://github.com/pray4skylark/tokiSync/raw/main/tokiSyncScript.js
@@ -41,6 +41,7 @@
     // ----------------------------------------------------------------
     const GITHUB_OWNER = 'pray4skylark';
     const GITHUB_REPO = 'tokiSync';
+    const CORE_FILENAME = 'tokiSyncCore.js';
     const CACHE_KEY_VER = 'TOKI_CACHE_VERSION_LEGACY';
     const CACHE_KEY_TIME = 'TOKI_CACHE_TIME';
     const CACHE_KEY_SCRIPT = 'TOKI_CACHED_SCRIPT_CONTENT';
@@ -172,7 +173,7 @@
 
             GM_xmlhttpRequest({
                 method: "GET",
-                url: `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/tags`,
+                url: `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/tags`,
                 onload: (res) => {
                     if (res.status === 200) {
                         try {
@@ -198,7 +199,7 @@
      */
     function fetchAndStoreScript(version, reloadAfter = false) {
         // [Changed] Use Raw GitHub for instant updates (Bypass CDN delay)
-        const cdnUrl = `https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/${version}/${CORE_FILENAME}?t=${Date.now()}`;
+        const cdnUrl = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${version}/${CORE_FILENAME}?t=${Date.now()}`;
         
         console.log(`☁️ Fetching Core Script from: ${cdnUrl}`);
 
@@ -263,10 +264,10 @@
                     GM_registerMenuCommand('☁️ 자동 동기화', coreApi.autoSyncDownloadManager);
                     GM_registerMenuCommand('📊 서재 열기', coreApi.openDashboard);
                     GM_registerMenuCommand('🔢 범위 다운로드', coreApi.batchDownloadManager);
+                    GM_registerMenuCommand('⚙️ 설정 (URL/FolderID)', coreApi.openSettings);
                     GM_registerMenuCommand('🐞 디버그 모드', coreApi.toggleDebugMode);
 
                     if (GM_getValue(CFG_DEBUG_KEY, false)) {
-                        GM_registerMenuCommand('⚙️ 설정 (URL/FolderID)', coreApi.openSettings);
                         GM_registerMenuCommand('🧪 1회성 다운로드', coreApi.manualDownloadManager);
 
                         // [Loader Debug Menus]

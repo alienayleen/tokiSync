@@ -14,7 +14,7 @@ const DEFAULT_DOMAINS = {
     booktoki: '469'
 };
 
-const VIEWER_VERSION = "v1.0.1"; // Hotfix: CACHE_KEY_TIME
+const VIEWER_VERSION = "v1.0.2"; // Hotfix: ReferenceErrors
 // [New] Expose Version to Global Scope for Debugging
 window.TOKI_VIEWER_VERSION = VIEWER_VERSION;
 
