@@ -14,7 +14,7 @@ const DEFAULT_DOMAINS = {
     booktoki: '469'
 };
 
-const VIEWER_VERSION = "v1.0.2"; // Hotfix: ReferenceErrors
+const VIEWER_VERSION = "v1.1.0"; // Modularization + New Text Layout
 // [New] Expose Version to Global Scope for Debugging
 window.TOKI_VIEWER_VERSION = VIEWER_VERSION;
 
@@ -400,3 +400,13 @@ function toggleSettings() {
     const el = document.getElementById('domainPanel');
     el.style.display = el.style.display === 'block' ? 'none' : 'block';
 }
+
+// 🚀 Expose Globals for HTML onclick & Modules
+window.refreshDB = refreshDB;
+window.toggleSettings = toggleSettings;
+window.switchTab = switchTab;
+window.filterData = filterData;
+window.saveActiveSettings = saveActiveSettings;
+window.saveManualConfig = saveManualConfig;
+window.showToast = showToast; // Used by viewer?
+window.renderGrid = renderGrid; // Debugging
