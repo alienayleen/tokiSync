@@ -14,7 +14,7 @@ const DEFAULT_DOMAINS = {
     booktoki: '469'
 };
 
-const VIEWER_VERSION = "v1.1.0"; // Modularization + New Text Layout
+const VIEWER_VERSION = "v1.1.1"; // Hotfix: Loop & unknown response fix
 // [New] Expose Version to Global Scope for Debugging
 window.TOKI_VIEWER_VERSION = VIEWER_VERSION;
 

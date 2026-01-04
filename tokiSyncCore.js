@@ -15,12 +15,12 @@ window.TokiSyncCore = function (GM_context) {
     const JSZip = GM_context.JSZip;
     const PROTOCOL_VERSION = 3; // Major Version (Server Compatibility)
     const SCRIPT_NAME = "TokiSync Core";
-    const CLIENT_VERSION = "3.2.4.2-260101.1555"; // v3.2.4.2 Styles Restored
+    const CLIENT_VERSION = "v1.1.1"; // Unified with Server/Viewer
     const LOG_PREFIX = `[${SCRIPT_NAME}]`;
 
     // [New] 호환성 체크: Core가 요구하는 최소 로더 버전 확인
-    const MIN_LOADER_VERSION = "3.0.0-beta.251215.0002";
-    const currentLoaderVer = GM_context.loaderVersion || "2.0.0"; // 없을 경우 구버전 간주
+    const MIN_LOADER_VERSION = "v1.1.1";
+    const currentLoaderVer = GM_context.loaderVersion || "1.0.0"; // 없을 경우 구버전 간주
 
     if (currentLoaderVer < MIN_LOADER_VERSION) {
         console.error(`❌ Loader is outdated! (Current: ${currentLoaderVer}, Required: ${MIN_LOADER_VERSION})`);
