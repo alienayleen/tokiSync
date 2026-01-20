@@ -1,7 +1,9 @@
 import { saveInfoJson, uploadResumable } from './network.js';
 import { updateStatus, setListItemStatus, log } from './logger.js';
-import { getSeriesInfo } from './parser.js';
-import { getConfig, CFG_FOLDER_ID } from './config.js';
+import { getSeriesInfo, parseListItem } from './parser.js';
+import { getConfig } from './config.js';
+import { enqueueTask } from './queue.js';
+import { setState, getGM } from './state.js';
 
 let GM = null; 
 let JSZip = null;
@@ -9,6 +11,7 @@ let JSZip = null;
 export function initDownloader(gmContext) {
     GM = gmContext;
     JSZip = gmContext.JSZip;
+    setState({ gmContext }); // Sync to State
 }
 
 // Helper: Fetch Blob (using GM)
@@ -56,23 +59,31 @@ export async function createEpub(zip, title, author, textContent) {
     zip.file("OEBPS/toc.ncx", ncx);
 }
 
+// ...
+
+export async function addTasksToQueue(taskItems, seriesInfo) {
+    if (!taskItems || taskItems.length === 0) return 0;
+
+    // 1. Ensure Series Info is saved (Once per batch/single)
+    // This fixes the missing info.json issue for single downloads
+    await saveInfoJson(seriesInfo, 0, 0, true); 
+
+    let addedCount = 0;
+    taskItems.forEach(({ task, li }) => {
+        if(enqueueTask(task)) {
+            addedCount++;
+            if(li) setListItemStatus(li, "⏳ 대기 중", "#fff9c4", "#fbc02d");
+        } else {
+            if(li) setListItemStatus(li, "⚠️ 중복/대기", "#eeeeee", "#9e9e9e");
+        }
+    });
+    return addedCount;
+}
+
+// [Unified Logic] tokiDownload now behaves as a Batch Enqueuer
 export async function tokiDownload(startIndex, lastIndex, targetNumbers, siteInfo) {
     const { site, workId, detectedCategory } = siteInfo;
     const config = getConfig();
-
-    const pauseForCaptcha = (iframe) => {
-        return new Promise(resolve => {
-            updateStatus("<strong>🤖 캡차/차단 감지!</strong><br>해결 후 버튼 클릭");
-            iframe.style.cssText = "position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); width:80vw; height:80vh; background:white; z-index:99998;";
-            const btn = document.getElementById('tokiResumeButton');
-            btn.style.display = 'block';
-            btn.onclick = () => {
-                iframe.style.cssText = "position:absolute; top:-9999px; left:-9999px; width:600px; height:600px;";
-                btn.style.display = 'none';
-                resolve();
-            };
-        });
-    };
 
     try {
         let list = Array.from(document.querySelector('.list-body').querySelectorAll('li')).reverse();
@@ -81,123 +92,48 @@ export async function tokiDownload(startIndex, lastIndex, targetNumbers, siteInf
             if (startIndex) { while (list.length > 0 && parseInt(list[0].querySelector('.wr-num').innerText) < startIndex) list.shift(); }
             if (lastIndex) { while (list.length > 0 && parseInt(list.at(-1).querySelector('.wr-num').innerText) > lastIndex) list.pop(); }
         }
-        if (list.length === 0) return;
-
-        const info = getSeriesInfo(workId, detectedCategory);
-        const targetFolderName = `[${info.id}] ${info.cleanTitle}`;
-
-        await saveInfoJson(info, 0, 0, true); 
-
-        const iframe = document.createElement('iframe');
-        iframe.id = 'tokiDownloaderIframe';
-        iframe.style.cssText = "position:absolute; top:-9999px; left:-9999px; width:600px; height:600px;";
-        document.querySelector('.content').prepend(iframe);
-        const waitIframeLoad = (u) => new Promise(r => { iframe.src = u; iframe.onload = () => r(); });
-
-        const activeUploads = new Set();
-
-        for (let i = 0; i < list.length; i++) {
-            const currentLi = list[i];
-            try {
-                const zip = new JSZip();
-                const src = currentLi.querySelector('a').href;
-                const numText = currentLi.querySelector('.wr-num').innerText.trim();
-                const num = parseInt(numText);
-
-                const epFullTitle = currentLi.querySelector('a').innerHTML.replace(/<span[\s\S]*?\/span>/g, '').trim();
-                let epCleanTitle = epFullTitle.replace(info.fullTitle, '').trim();
-                epCleanTitle = epCleanTitle.replace(/[\\/:*?"<>|]/g, '');
-                let zipFileName = `${numText.padStart(4, '0')} - ${epCleanTitle}.cbz`;
-
-                setListItemStatus(currentLi, "⏳ 로딩 중...", "#fff9c4", "#d32f2f");
-                updateStatus(`[${targetFolderName}]<br><strong>${epCleanTitle}</strong> (${i + 1}/${list.length}) 로딩...<br>현재 업로드 중: ${activeUploads.size}개`);
-
-                await waitIframeLoad(src);
-                
-                const delayBase = (site == "북토끼" || info.category === "Novel") ? WAIT_NOVEL_MS : WAIT_WEBTOON_MS;
-                await sleep(getDynamicWait(delayBase));
-
-                let iframeDocument = iframe.contentWindow.document;
-                
-                // Captcha Logic
-                 const isCaptcha = iframeDocument.querySelector('iframe[src*="hcaptcha"]') || iframeDocument.querySelector('.g-recaptcha') || iframeDocument.querySelector('#kcaptcha_image');
-                const isCloudflare = iframeDocument.title.includes('Just a moment') || iframeDocument.getElementById('cf-challenge-running');
-                const noContent = (site == "북토끼") ? !iframeDocument.querySelector('#novel_content') : false;
-                const pageTitle = iframeDocument.title.toLowerCase();
-                const bodyText = iframeDocument.body ? iframeDocument.body.innerText.toLowerCase() : "";
-                const isError = pageTitle.includes("403") || pageTitle.includes("forbidden") || bodyText.includes("access denied");
-
-                if (isCaptcha || isCloudflare || noContent || isError) {
-                    await pauseForCaptcha(iframe);
-                    await sleep(3000);
-                    iframeDocument = iframe.contentWindow.document;
-                }
-                
-                // Parsing
-                if (site == "북토끼" || info.category === "Novel") {
-                    const fileContent = iframeDocument.querySelector('#novel_content')?.innerText;
-                    if (!fileContent) throw new Error("Novel Content Not Found");
-                    await createEpub(zip, epCleanTitle, info.author || "Unknown", fileContent);
-                    zipFileName = `${numText.padStart(4, '0')} - ${epCleanTitle}.epub`; 
-                } else {
-                    let imgLists = Array.from(iframeDocument.querySelectorAll('.view-padding div img'));
-                    for (let j = 0; j < imgLists.length;) { if (imgLists[j].checkVisibility() === false) imgLists.splice(j, 1); else j++; }
-                    
-                    if (imgLists.length === 0) {
-                        await sleep(2000);
-                        imgLists = Array.from(iframeDocument.querySelectorAll('.view-padding div img'));
-                         if (imgLists.length === 0) throw new Error("이미지 0개 발견 (Skip)");
-                    }
-
-                    setListItemStatus(currentLi, `🖼️ 이미지 0/${imgLists.length}`, "#fff9c4", "#d32f2f");
-                    
-                    // Simple Image Fetcher (Re-implemented via GM_xmlhttpRequest)
-                    const fetchAndAddToZip = (imgSrc, j, ext) => new Promise((resolve) => {
-                        // Use window.TokiSyncCore.GM? No, need to export GM from somewhere or pass it
-                        // NOTE: Network.js doesn't expose raw GM. Need a helper there or inject logic.
-                        // Ideally, create 'fetchBlob(url)' in network.js
-                        
-                        // For now, simpler solution: Just use fetch? No, CORS block.
-                        // Must use GM_xmlhttpRequest
-                        // I will assume `fetchBlob` exists in network.js (Wait, I need to add it!)
-                        resolve(); // Placeholder to pass bundling
-                    });
-
-                    // For now, I will add `fetchBlob` to `network.js` in next step to support this.
-                }
-
-                // Placeholder for ZIP upload logic...
-                // await uploadResumable(await zip.generateAsync({type:"blob"}), targetFolderName, zipFileName, info.category);
-                 setListItemStatus(currentLi, "✅ 완료 (가상)", "#c8e6c9", "green");
-
-            } catch (epError) {
-                console.error(epError);
-                setListItemStatus(currentLi, `❌ 실패: ${epError.message}`, "#ffcdd2", "red");
-                updateStatus(`⚠️ 오류: ${epError.message}`);
-            }
+        if (list.length === 0) {
+            updateStatus("⚠️ 다운로드할 항목이 없습니다.");
+            return;
         }
 
-        iframe.remove();
+        // Get Series Info
+        const info = getSeriesInfo(workId, detectedCategory);
+        
+        updateStatus(`🚀 ${list.length}개 항목을 대기열에 추가합니다...`);
+
+        // Prepare Task Items
+        const taskItems = list.map(li => {
+            const task = parseListItem(li, info);
+            return { task, li };
+        });
+
+        // Add to Queue (Centralized)
+        const addedCount = await addTasksToQueue(taskItems, info);
+        
+        updateStatus(`✅ 총 ${addedCount}개 작업이 대기열에 추가되었습니다. (백그라운드에서 진행됨)`);
+
     } catch (error) {
-        document.getElementById('tokiDownloaderIframe')?.remove();
+        console.error(error);
+        updateStatus(`❌ 일괄 추가 실패: ${error.message}`);
     }
 }
 
+
 export async function tokiDownloadSingle(task) {
-    const { url, title, id, category, folderName } = task; // folderName passed from queue
+    // Task object is well-formed by parser.js and contains { site, category, ... }
+    const { url, title, id, category, folderName, seriesTitle, site } = task; 
     const config = getConfig();
     
-    // [Refactor] Derive site info locally or passed in task
-    // We assume 'id' is like "site_workId_epNum" or similar, or just "workId"?
-    // Actually, in the new Worker architecture, 'task' structure is critical.
-    // For now, let's keep it compatible with what `ui.js` sends.
+    // No redundant site detection here. We trust the task.
+    // However, if we need 'site' for logic switches (like image selectors):
+    // const effectiveSite = site || '뉴토끼'; // Fallback if missing
     
-    // TODO: Better Site Detection
-    let site = '뉴토끼';
-    if(url.includes('booktoki')) site = '북토끼';
-    if(url.includes('manatoki')) site = '마나토끼';
+    // Pass seriesTitle if available for better cleaning
+    // If category is missing, derive it from site (fallback)
+    const effectiveCategory = category || (site === '북토끼' ? 'Novel' : 'Webtoon');
     
-    const info = { id, cleanTitle: title, category: category || (site === '북토끼' ? 'Novel' : 'Webtoon') };
+    const info = { id, cleanTitle: title, fullTitle: seriesTitle, category: effectiveCategory };
     const targetFolderName = folderName || `[${id}] ${title}`;
 
     updateStatus(`🚀 작업 시작: ${title}`);
@@ -294,29 +230,33 @@ export async function tokiDownloadSingle(task) {
 
             // Download Images
             let downloaded = 0;
-            const promises = imgLists.map(async (img, idx) => {
-                const src = img.getAttribute('data-original') || img.src;
-                if (!src) return;
+            // Parallel Download (Batch of 3)
+            let p = 0;
+            while(p < imgLists.length) {
+                const batch = imgLists.slice(p, p+3); 
+                await Promise.all(batch.map(async (img, idx) => {
+                     const src = img.getAttribute('data-original') || img.src;
+                     if(!src) return;
+                     
+                     // Retry 3 times
+                     let blob = null;
+                     for(let r=0; r<3; r++) {
+                         blob = await fetchBlob(src);
+                         if(blob) break;
+                         await sleep(1000);
+                     }
 
-                // Retry Logic (3 times)
-                let blob = null;
-                for(let r=0; r<3; r++) {
-                    blob = await fetchBlob(src); // Uses GM_xmlhttpRequest
-                    if(blob) break;
-                    await sleep(1000);
-                }
+                     if (blob) {
+                         const ext = src.match(/\.(jpg|jpeg|png|webp|gif)/i)?.[1] || 'jpg';
+                         zip.file(`${String(p + idx + 1).padStart(3, '0')}.${ext}`, blob);
+                         downloaded++;
+                     } else {
+                         console.warn(`[Image Fail] ${src}`);
+                     }
+                }));
+                p += 3;
+            }
 
-                if (blob) {
-                    const ext = src.match(/\.(jpg|jpeg|png|webp|gif)/i)?.[1] || 'jpg';
-                    zip.file(`${String(idx+1).padStart(3, '0')}.${ext}`, blob);
-                    downloaded++;
-                } else {
-                    console.warn(`[Image Fail] ${src}`);
-                    // We don't throw here to allow partial success, or maybe we should?
-                }
-            });
-
-            await Promise.all(promises);
             if (downloaded === 0) throw new Error("All images failed to download");
             
             finalFileName = `${zipFileName}.cbz`;
@@ -340,20 +280,3 @@ export async function tokiDownloadSingle(task) {
         throw e;
     }
 }
-
-// Helper: Pause for Captcha
-const pauseForCaptcha = (iframe) => {
-    return new Promise(resolve => {
-        updateStatus("<strong>🤖 캡차/차단 감지!</strong><br>해결 후 버튼 클릭");
-        iframe.style.cssText = "position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); width:80vw; height:80vh; background:white; z-index:99998;";
-        const btn = document.getElementById('tokiResumeButton');
-        if(btn) {
-            btn.style.display = 'block';
-            btn.onclick = () => {
-                iframe.style.cssText = "position:absolute; top:-9999px; left:-9999px; width:600px; height:600px;";
-                btn.style.display = 'none';
-                resolve();
-            };
-        } else resolve(); // Safety fallback
-    });
-};

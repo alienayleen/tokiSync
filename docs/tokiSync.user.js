@@ -1,5 +1,36 @@
-// 🚀 TokiSync Core Logic v1.1.3 (Bundled)
-// This file is generated from src/core. Do not edit directly.
+// ==UserScript==
+// @name         TokiSync (Link to Drive)
+// @namespace    http://tampermonkey.net/
+// @version      1.2.0
+// @description  Toki series sites -> Google Drive syncing tool (Bundled)
+// @author       pray4skylark
+// @match        https://*.com/webtoon/*
+// @match        https://*.com/novel/*
+// @match        https://*.net/comic/*
+// @match        https://script.google.com/*
+// @match        https://*.github.io/tokiSync/*
+// @match        https://pray4skylark.github.io/tokiSync/*
+// @match        http://127.0.0.1:5500/*
+// @match        http://localhost:*
+// @grant        GM_xmlhttpRequest
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_deleteValue
+// @grant        GM_addValueChangeListener
+// @grant        GM_registerMenuCommand
+// @connect      api.github.com
+// @connect      raw.githubusercontent.com
+// @connect      script.google.com
+// @connect      script.googleusercontent.com
+// @connect      127.0.0.1
+// @connect      localhost
+// @connect      *
+// @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js
+// @require      https://cdnjs.cloudflare.com/ajax/libs/jszip-utils/0.1.0/jszip-utils.js
+// @run-at       document-end
+// @license      MIT
+// ==/UserScript==
+
 /******/ (() => { // webpackBootstrap
 /******/ 	"use strict";
 /******/ 	var __webpack_modules__ = ({
@@ -8,6 +39,7 @@
 (__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) {
 
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   V: () => (/* binding */ parseListItem),
 /* harmony export */   Y: () => (/* binding */ getSeriesInfo)
 /* harmony export */ });
 function getSeriesInfo(workId, detectedCategory) {
@@ -43,6 +75,95 @@ function getDetailInfo() {
     return { author, category, status, thumbnail };
 }
 
+function parseListItem(li, siteInfo) {
+    // 1. Extract Number
+    const numEl = li.querySelector('.wr-num');
+    let numText = "0";
+    if (numEl) {
+        const numClone = numEl.cloneNode(true);
+        Array.from(numClone.querySelectorAll('.toki-down-btn')).forEach(el => el.remove());
+        numText = numClone.innerText.trim();
+    }
+
+    // 2. Extract Title & URL
+    const linkEl = li.querySelector('a');
+    let epFullTitle = "Unknown";
+    let url = "";
+    if (linkEl) {
+        url = linkEl.href;
+        const linkClone = linkEl.cloneNode(true);
+        Array.from(linkClone.querySelectorAll('.toki-down-btn, span, div')).forEach(el => el.remove());
+        epFullTitle = linkClone.innerText.trim();
+    }
+
+    // Construct Task Object
+    // siteInfo must contain { id, cleanTitle, site, detectedCategory }
+    const folderName = `[${siteInfo.id}] ${siteInfo.cleanTitle}`;
+
+    return {
+        id: `${siteInfo.site}_${siteInfo.id}_${numText}`,
+        title: epFullTitle,
+        url: url,
+        site: siteInfo.site,
+        category: siteInfo.detectedCategory,
+        folderName: folderName,
+        seriesTitle: siteInfo.cleanTitle,
+        wrNum: numText
+    };
+}
+
+
+/***/ },
+
+/***/ 292
+(__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) {
+
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   j: () => (/* binding */ bus),
+/* harmony export */   q: () => (/* binding */ EVENTS)
+/* harmony export */ });
+class EventBus {
+    constructor() {
+        this.listeners = {};
+    }
+
+    on(event, fn) {
+        if (!this.listeners[event]) {
+            this.listeners[event] = [];
+        }
+        this.listeners[event].push(fn);
+    }
+
+    off(event, fn) {
+        if (!this.listeners[event]) return;
+        this.listeners[event] = this.listeners[event].filter(l => l !== fn);
+    }
+
+    emit(event, data) {
+        if (!this.listeners[event]) return;
+        this.listeners[event].forEach(fn => {
+            try {
+                fn(data);
+            } catch (e) {
+                console.error(`[EventBus] Error in listener for ${event}:`, e);
+            }
+        });
+    }
+}
+
+const bus = new EventBus();
+
+// Core Events
+const EVENTS = {
+    // Commands (Request Action)
+    CMD_ENQUEUE_TASK: 'CMD_ENQUEUE_TASK',
+    CMD_START_BATCH: 'CMD_START_BATCH',
+    
+    // Status Updates (Notification)
+    UI_UPDATE_STATUS: 'UI_UPDATE_STATUS',
+    TASK_COMPLETE: 'TASK_COMPLETE', // Replaces custom window event
+};
+
 
 /***/ },
 
@@ -50,12 +171,13 @@ function getDetailInfo() {
 (__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) {
 
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   C$: () => (/* binding */ initQueue),
 /* harmony export */   Rt: () => (/* binding */ completeTask),
-/* harmony export */   enqueueTask: () => (/* binding */ enqueueTask),
+/* harmony export */   UT: () => (/* binding */ enqueueTask),
 /* harmony export */   wv: () => (/* binding */ getMyStats),
 /* harmony export */   zq: () => (/* binding */ claimNextTask)
 /* harmony export */ });
-/* unused harmony exports initQueue, getQueue, setQueue, releaseTask */
+/* unused harmony exports getQueue, setQueue, releaseTask */
 /* harmony import */ var _logger_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(569);
 
 
@@ -120,7 +242,15 @@ function claimNextTask(workerId) {
         }
     });
 
-    // 2. Find pending
+    // 2. Global Concurrency Check
+    // If ANY task is currently working, we must wait.
+    // This enforces 1 global download at a time across all tabs.
+    const isAnyWorking = q.some(t => t.status === 'working');
+    if (isAnyWorking) {
+        return null; // Busy
+    }
+
+    // 3. Find pending
     const candidate = q.find(t => t.status === 'pending');
     if (candidate) {
         candidate.status = 'working';
@@ -142,6 +272,7 @@ function completeTask(taskId) {
     if (q.length !== initialLen) {
         setQueue(q);
         (0,_logger_js__WEBPACK_IMPORTED_MODULE_0__/* .log */ .Rm)(`Task Completed & Removed: ${taskId}`);
+        window.dispatchEvent(new CustomEvent('toki-task-complete', { detail: { id: taskId } }));
         return true;
     }
     return false;
@@ -182,6 +313,7 @@ function getMyStats(workerId) {
 /* harmony export */ });
 /* unused harmony export arrayBufferToBase64 */
 /* harmony import */ var _config_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(899);
+/* harmony import */ var _logger_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(569);
 
 
 
@@ -390,6 +522,7 @@ async function uploadResumable(blob, folderName, fileName, category, onProgress)
 (__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) {
 
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   _3: () => (/* binding */ addTasksToQueue),
 /* harmony export */   aM: () => (/* binding */ initDownloader),
 /* harmony export */   qc: () => (/* binding */ tokiDownload),
 /* harmony export */   tokiDownloadSingle: () => (/* binding */ tokiDownloadSingle)
@@ -399,6 +532,10 @@ async function uploadResumable(blob, folderName, fileName, category, onProgress)
 /* harmony import */ var _logger_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(569);
 /* harmony import */ var _parser_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(126);
 /* harmony import */ var _config_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(899);
+/* harmony import */ var _queue_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(302);
+/* harmony import */ var _state_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(892);
+
+
 
 
 
@@ -410,6 +547,7 @@ let JSZip = null;
 function initDownloader(gmContext) {
     GM = gmContext;
     JSZip = gmContext.JSZip;
+    (0,_state_js__WEBPACK_IMPORTED_MODULE_5__/* .setState */ .wb)({ gmContext }); // Sync to State
 }
 
 // Helper: Fetch Blob (using GM)
@@ -457,23 +595,31 @@ async function createEpub(zip, title, author, textContent) {
     zip.file("OEBPS/toc.ncx", ncx);
 }
 
+// ...
+
+async function addTasksToQueue(taskItems, seriesInfo) {
+    if (!taskItems || taskItems.length === 0) return 0;
+
+    // 1. Ensure Series Info is saved (Once per batch/single)
+    // This fixes the missing info.json issue for single downloads
+    await (0,_network_js__WEBPACK_IMPORTED_MODULE_0__/* .saveInfoJson */ .Gd)(seriesInfo, 0, 0, true); 
+
+    let addedCount = 0;
+    taskItems.forEach(({ task, li }) => {
+        if((0,_queue_js__WEBPACK_IMPORTED_MODULE_4__/* .enqueueTask */ .UT)(task)) {
+            addedCount++;
+            if(li) (0,_logger_js__WEBPACK_IMPORTED_MODULE_1__/* .setListItemStatus */ .OF)(li, "⏳ 대기 중", "#fff9c4", "#fbc02d");
+        } else {
+            if(li) (0,_logger_js__WEBPACK_IMPORTED_MODULE_1__/* .setListItemStatus */ .OF)(li, "⚠️ 중복/대기", "#eeeeee", "#9e9e9e");
+        }
+    });
+    return addedCount;
+}
+
+// [Unified Logic] tokiDownload now behaves as a Batch Enqueuer
 async function tokiDownload(startIndex, lastIndex, targetNumbers, siteInfo) {
     const { site, workId, detectedCategory } = siteInfo;
     const config = (0,_config_js__WEBPACK_IMPORTED_MODULE_3__/* .getConfig */ .zj)();
-
-    const pauseForCaptcha = (iframe) => {
-        return new Promise(resolve => {
-            (0,_logger_js__WEBPACK_IMPORTED_MODULE_1__/* .updateStatus */ .yB)("<strong>🤖 캡차/차단 감지!</strong><br>해결 후 버튼 클릭");
-            iframe.style.cssText = "position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); width:80vw; height:80vh; background:white; z-index:99998;";
-            const btn = document.getElementById('tokiResumeButton');
-            btn.style.display = 'block';
-            btn.onclick = () => {
-                iframe.style.cssText = "position:absolute; top:-9999px; left:-9999px; width:600px; height:600px;";
-                btn.style.display = 'none';
-                resolve();
-            };
-        });
-    };
 
     try {
         let list = Array.from(document.querySelector('.list-body').querySelectorAll('li')).reverse();
@@ -482,123 +628,48 @@ async function tokiDownload(startIndex, lastIndex, targetNumbers, siteInfo) {
             if (startIndex) { while (list.length > 0 && parseInt(list[0].querySelector('.wr-num').innerText) < startIndex) list.shift(); }
             if (lastIndex) { while (list.length > 0 && parseInt(list.at(-1).querySelector('.wr-num').innerText) > lastIndex) list.pop(); }
         }
-        if (list.length === 0) return;
-
-        const info = (0,_parser_js__WEBPACK_IMPORTED_MODULE_2__/* .getSeriesInfo */ .Y)(workId, detectedCategory);
-        const targetFolderName = `[${info.id}] ${info.cleanTitle}`;
-
-        await (0,_network_js__WEBPACK_IMPORTED_MODULE_0__/* .saveInfoJson */ .Gd)(info, 0, 0, true); 
-
-        const iframe = document.createElement('iframe');
-        iframe.id = 'tokiDownloaderIframe';
-        iframe.style.cssText = "position:absolute; top:-9999px; left:-9999px; width:600px; height:600px;";
-        document.querySelector('.content').prepend(iframe);
-        const waitIframeLoad = (u) => new Promise(r => { iframe.src = u; iframe.onload = () => r(); });
-
-        const activeUploads = new Set();
-
-        for (let i = 0; i < list.length; i++) {
-            const currentLi = list[i];
-            try {
-                const zip = new JSZip();
-                const src = currentLi.querySelector('a').href;
-                const numText = currentLi.querySelector('.wr-num').innerText.trim();
-                const num = parseInt(numText);
-
-                const epFullTitle = currentLi.querySelector('a').innerHTML.replace(/<span[\s\S]*?\/span>/g, '').trim();
-                let epCleanTitle = epFullTitle.replace(info.fullTitle, '').trim();
-                epCleanTitle = epCleanTitle.replace(/[\\/:*?"<>|]/g, '');
-                let zipFileName = `${numText.padStart(4, '0')} - ${epCleanTitle}.cbz`;
-
-                (0,_logger_js__WEBPACK_IMPORTED_MODULE_1__/* .setListItemStatus */ .OF)(currentLi, "⏳ 로딩 중...", "#fff9c4", "#d32f2f");
-                (0,_logger_js__WEBPACK_IMPORTED_MODULE_1__/* .updateStatus */ .yB)(`[${targetFolderName}]<br><strong>${epCleanTitle}</strong> (${i + 1}/${list.length}) 로딩...<br>현재 업로드 중: ${activeUploads.size}개`);
-
-                await waitIframeLoad(src);
-                
-                const delayBase = (site == "북토끼" || info.category === "Novel") ? WAIT_NOVEL_MS : WAIT_WEBTOON_MS;
-                await sleep(getDynamicWait(delayBase));
-
-                let iframeDocument = iframe.contentWindow.document;
-                
-                // Captcha Logic
-                 const isCaptcha = iframeDocument.querySelector('iframe[src*="hcaptcha"]') || iframeDocument.querySelector('.g-recaptcha') || iframeDocument.querySelector('#kcaptcha_image');
-                const isCloudflare = iframeDocument.title.includes('Just a moment') || iframeDocument.getElementById('cf-challenge-running');
-                const noContent = (site == "북토끼") ? !iframeDocument.querySelector('#novel_content') : false;
-                const pageTitle = iframeDocument.title.toLowerCase();
-                const bodyText = iframeDocument.body ? iframeDocument.body.innerText.toLowerCase() : "";
-                const isError = pageTitle.includes("403") || pageTitle.includes("forbidden") || bodyText.includes("access denied");
-
-                if (isCaptcha || isCloudflare || noContent || isError) {
-                    await pauseForCaptcha(iframe);
-                    await sleep(3000);
-                    iframeDocument = iframe.contentWindow.document;
-                }
-                
-                // Parsing
-                if (site == "북토끼" || info.category === "Novel") {
-                    const fileContent = iframeDocument.querySelector('#novel_content')?.innerText;
-                    if (!fileContent) throw new Error("Novel Content Not Found");
-                    await createEpub(zip, epCleanTitle, info.author || "Unknown", fileContent);
-                    zipFileName = `${numText.padStart(4, '0')} - ${epCleanTitle}.epub`; 
-                } else {
-                    let imgLists = Array.from(iframeDocument.querySelectorAll('.view-padding div img'));
-                    for (let j = 0; j < imgLists.length;) { if (imgLists[j].checkVisibility() === false) imgLists.splice(j, 1); else j++; }
-                    
-                    if (imgLists.length === 0) {
-                        await sleep(2000);
-                        imgLists = Array.from(iframeDocument.querySelectorAll('.view-padding div img'));
-                         if (imgLists.length === 0) throw new Error("이미지 0개 발견 (Skip)");
-                    }
-
-                    (0,_logger_js__WEBPACK_IMPORTED_MODULE_1__/* .setListItemStatus */ .OF)(currentLi, `🖼️ 이미지 0/${imgLists.length}`, "#fff9c4", "#d32f2f");
-                    
-                    // Simple Image Fetcher (Re-implemented via GM_xmlhttpRequest)
-                    const fetchAndAddToZip = (imgSrc, j, ext) => new Promise((resolve) => {
-                        // Use window.TokiSyncCore.GM? No, need to export GM from somewhere or pass it
-                        // NOTE: Network.js doesn't expose raw GM. Need a helper there or inject logic.
-                        // Ideally, create 'fetchBlob(url)' in network.js
-                        
-                        // For now, simpler solution: Just use fetch? No, CORS block.
-                        // Must use GM_xmlhttpRequest
-                        // I will assume `fetchBlob` exists in network.js (Wait, I need to add it!)
-                        resolve(); // Placeholder to pass bundling
-                    });
-
-                    // For now, I will add `fetchBlob` to `network.js` in next step to support this.
-                }
-
-                // Placeholder for ZIP upload logic...
-                // await uploadResumable(await zip.generateAsync({type:"blob"}), targetFolderName, zipFileName, info.category);
-                 (0,_logger_js__WEBPACK_IMPORTED_MODULE_1__/* .setListItemStatus */ .OF)(currentLi, "✅ 완료 (가상)", "#c8e6c9", "green");
-
-            } catch (epError) {
-                console.error(epError);
-                (0,_logger_js__WEBPACK_IMPORTED_MODULE_1__/* .setListItemStatus */ .OF)(currentLi, `❌ 실패: ${epError.message}`, "#ffcdd2", "red");
-                (0,_logger_js__WEBPACK_IMPORTED_MODULE_1__/* .updateStatus */ .yB)(`⚠️ 오류: ${epError.message}`);
-            }
+        if (list.length === 0) {
+            (0,_logger_js__WEBPACK_IMPORTED_MODULE_1__/* .updateStatus */ .yB)("⚠️ 다운로드할 항목이 없습니다.");
+            return;
         }
 
-        iframe.remove();
+        // Get Series Info
+        const info = (0,_parser_js__WEBPACK_IMPORTED_MODULE_2__/* .getSeriesInfo */ .Y)(workId, detectedCategory);
+        
+        (0,_logger_js__WEBPACK_IMPORTED_MODULE_1__/* .updateStatus */ .yB)(`🚀 ${list.length}개 항목을 대기열에 추가합니다...`);
+
+        // Prepare Task Items
+        const taskItems = list.map(li => {
+            const task = (0,_parser_js__WEBPACK_IMPORTED_MODULE_2__/* .parseListItem */ .V)(li, info);
+            return { task, li };
+        });
+
+        // Add to Queue (Centralized)
+        const addedCount = await addTasksToQueue(taskItems, info);
+        
+        (0,_logger_js__WEBPACK_IMPORTED_MODULE_1__/* .updateStatus */ .yB)(`✅ 총 ${addedCount}개 작업이 대기열에 추가되었습니다. (백그라운드에서 진행됨)`);
+
     } catch (error) {
-        document.getElementById('tokiDownloaderIframe')?.remove();
+        console.error(error);
+        (0,_logger_js__WEBPACK_IMPORTED_MODULE_1__/* .updateStatus */ .yB)(`❌ 일괄 추가 실패: ${error.message}`);
     }
 }
 
+
 async function tokiDownloadSingle(task) {
-    const { url, title, id, category, folderName } = task; // folderName passed from queue
+    // Task object is well-formed by parser.js and contains { site, category, ... }
+    const { url, title, id, category, folderName, seriesTitle, site } = task; 
     const config = (0,_config_js__WEBPACK_IMPORTED_MODULE_3__/* .getConfig */ .zj)();
     
-    // [Refactor] Derive site info locally or passed in task
-    // We assume 'id' is like "site_workId_epNum" or similar, or just "workId"?
-    // Actually, in the new Worker architecture, 'task' structure is critical.
-    // For now, let's keep it compatible with what `ui.js` sends.
+    // No redundant site detection here. We trust the task.
+    // However, if we need 'site' for logic switches (like image selectors):
+    // const effectiveSite = site || '뉴토끼'; // Fallback if missing
     
-    // TODO: Better Site Detection
-    let site = '뉴토끼';
-    if(url.includes('booktoki')) site = '북토끼';
-    if(url.includes('manatoki')) site = '마나토끼';
+    // Pass seriesTitle if available for better cleaning
+    // If category is missing, derive it from site (fallback)
+    const effectiveCategory = category || (site === '북토끼' ? 'Novel' : 'Webtoon');
     
-    const info = { id, cleanTitle: title, category: category || (site === '북토끼' ? 'Novel' : 'Webtoon') };
+    const info = { id, cleanTitle: title, fullTitle: seriesTitle, category: effectiveCategory };
     const targetFolderName = folderName || `[${id}] ${title}`;
 
     (0,_logger_js__WEBPACK_IMPORTED_MODULE_1__/* .updateStatus */ .yB)(`🚀 작업 시작: ${title}`);
@@ -695,29 +766,33 @@ async function tokiDownloadSingle(task) {
 
             // Download Images
             let downloaded = 0;
-            const promises = imgLists.map(async (img, idx) => {
-                const src = img.getAttribute('data-original') || img.src;
-                if (!src) return;
+            // Parallel Download (Batch of 3)
+            let p = 0;
+            while(p < imgLists.length) {
+                const batch = imgLists.slice(p, p+3); 
+                await Promise.all(batch.map(async (img, idx) => {
+                     const src = img.getAttribute('data-original') || img.src;
+                     if(!src) return;
+                     
+                     // Retry 3 times
+                     let blob = null;
+                     for(let r=0; r<3; r++) {
+                         blob = await fetchBlob(src);
+                         if(blob) break;
+                         await sleep(1000);
+                     }
 
-                // Retry Logic (3 times)
-                let blob = null;
-                for(let r=0; r<3; r++) {
-                    blob = await fetchBlob(src); // Uses GM_xmlhttpRequest
-                    if(blob) break;
-                    await sleep(1000);
-                }
+                     if (blob) {
+                         const ext = src.match(/\.(jpg|jpeg|png|webp|gif)/i)?.[1] || 'jpg';
+                         zip.file(`${String(p + idx + 1).padStart(3, '0')}.${ext}`, blob);
+                         downloaded++;
+                     } else {
+                         console.warn(`[Image Fail] ${src}`);
+                     }
+                }));
+                p += 3;
+            }
 
-                if (blob) {
-                    const ext = src.match(/\.(jpg|jpeg|png|webp|gif)/i)?.[1] || 'jpg';
-                    zip.file(`${String(idx+1).padStart(3, '0')}.${ext}`, blob);
-                    downloaded++;
-                } else {
-                    console.warn(`[Image Fail] ${src}`);
-                    // We don't throw here to allow partial success, or maybe we should?
-                }
-            });
-
-            await Promise.all(promises);
             if (downloaded === 0) throw new Error("All images failed to download");
             
             finalFileName = `${zipFileName}.cbz`;
@@ -742,23 +817,6 @@ async function tokiDownloadSingle(task) {
     }
 }
 
-// Helper: Pause for Captcha
-const pauseForCaptcha = (iframe) => {
-    return new Promise(resolve => {
-        updateStatus("<strong>🤖 캡차/차단 감지!</strong><br>해결 후 버튼 클릭");
-        iframe.style.cssText = "position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); width:80vw; height:80vh; background:white; z-index:99998;";
-        const btn = document.getElementById('tokiResumeButton');
-        if(btn) {
-            btn.style.display = 'block';
-            btn.onclick = () => {
-                iframe.style.cssText = "position:absolute; top:-9999px; left:-9999px; width:600px; height:600px;";
-                btn.style.display = 'none';
-                resolve();
-            };
-        } else resolve(); // Safety fallback
-    });
-};
-
 
 /***/ },
 
@@ -771,6 +829,8 @@ const pauseForCaptcha = (iframe) => {
 /* harmony export */   yB: () => (/* binding */ updateStatus)
 /* harmony export */ });
 /* harmony import */ var _config_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(899);
+/* harmony import */ var _events_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(292);
+
 
 
 function log(msg, type = 'info') {
@@ -781,12 +841,14 @@ function log(msg, type = 'info') {
 }
 
 function updateStatus(msg) {
-    const el = document.getElementById('tokiStatusText');
-    if (el) {
-        const config = (0,_config_js__WEBPACK_IMPORTED_MODULE_0__/* .getConfig */ .zj)();
-        const debugBadge = config.debug ? '<span style="color:yellow; font-weight:bold;">[DEBUG]</span> ' : '';
-        el.innerHTML = debugBadge + msg;
-    }
+    // [Changed] Emit event instead of direct DOM manipulation
+    _events_js__WEBPACK_IMPORTED_MODULE_1__/* .bus */ .j.emit(_events_js__WEBPACK_IMPORTED_MODULE_1__/* .EVENTS */ .q.UI_UPDATE_STATUS, msg);
+    
+    // Check for "Resume Button" trigger logic inside msg?
+    // The previous logic for resume button was inside downloader's UI manipulation or logger?
+    // Actually the resume button check was inside tokiDownloaderSingle's pause logic, 
+    // but ui.js's renderStatus creates the button hidden.
+    
     // Strip HTML tags for console log
     log(msg.replace(/<[^>]*>/g, ''));
 }
@@ -813,9 +875,10 @@ function setListItemStatus(li, message, bgColor = '#fff9c4', textColor = '#d32f2
 (__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) {
 
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   initWorker: () => (/* binding */ initWorker),
 /* harmony export */   startWorker: () => (/* binding */ startWorker)
 /* harmony export */ });
-/* unused harmony exports initWorker, isWorkerAlive */
+/* unused harmony export isWorkerAlive */
 /* harmony import */ var _queue_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(302);
 /* harmony import */ var _downloader_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(414);
 /* harmony import */ var _logger_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(569);
@@ -887,6 +950,32 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 /***/ },
 
+/***/ 892
+(__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) {
+
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   wb: () => (/* binding */ setState)
+/* harmony export */ });
+/* unused harmony exports getState, getSiteInfo, getGM */
+let state = {
+    siteInfo: null, // { site, workId, detectedCategory, fullTitle, ... }
+    gmContext: null,
+    workerMode: 'idle', // idle, shared, dedicated
+};
+
+const getState = () => state;
+
+const setState = (newState) => {
+    state = { ...state, ...newState };
+};
+
+// Shortcuts
+const getSiteInfo = () => state.siteInfo;
+const getGM = () => state.gmContext;
+
+
+/***/ },
+
 /***/ 899
 (__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) {
 
@@ -895,14 +984,14 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 /* harmony export */   CY: () => (/* binding */ migrateConfig),
 /* harmony export */   Up: () => (/* binding */ toggleDebug),
 /* harmony export */   V$: () => (/* binding */ CFG_URL_KEY),
+/* harmony export */   ZE: () => (/* binding */ CFG_DEBUG_KEY),
 /* harmony export */   fZ: () => (/* binding */ CLIENT_VERSION),
 /* harmony export */   mt: () => (/* binding */ CFG_FOLDER_ID),
 /* harmony export */   pw: () => (/* binding */ initConfig),
 /* harmony export */   ql: () => (/* binding */ saveConfig),
-/* harmony export */   sX: () => (/* binding */ MIN_LOADER_VERSION),
 /* harmony export */   zj: () => (/* binding */ getConfig)
 /* harmony export */ });
-/* unused harmony exports SCRIPT_NAME, PROTOCOL_VERSION, CFG_DEBUG_KEY, CFG_AUTO_SYNC_KEY, CFG_CONFIG_VER */
+/* unused harmony exports SCRIPT_NAME, MIN_LOADER_VERSION, PROTOCOL_VERSION, CFG_AUTO_SYNC_KEY, CFG_CONFIG_VER */
 const SCRIPT_NAME = "TokiSync Core";
 const CLIENT_VERSION = "v1.1.3"; // Imp: Version Check & Whitelist
 const MIN_LOADER_VERSION = "v1.1.3";
@@ -974,9 +1063,14 @@ function toggleDebug() {
 /* harmony export */   cj: () => (/* binding */ injectDashboard),
 /* harmony export */   xY: () => (/* binding */ initUI)
 /* harmony export */ });
+/* unused harmony export updateStatusUI */
 /* harmony import */ var _config_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(899);
 /* harmony import */ var _logger_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(569);
-/* harmony import */ var _network_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(391);
+/* harmony import */ var _parser_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(126);
+/* harmony import */ var _network_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(391);
+/* harmony import */ var _events_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(292);
+
+
 
 
 
@@ -984,6 +1078,32 @@ function toggleDebug() {
 let GM = null;
 function initUI(gmContext) {
     GM = gmContext;
+    // Register Event Listeners
+    _events_js__WEBPACK_IMPORTED_MODULE_4__/* .bus */ .j.on(_events_js__WEBPACK_IMPORTED_MODULE_4__/* .EVENTS */ .q.UI_UPDATE_STATUS, (msg) => updateStatusUI(msg));
+    
+    // Listen for task completion to update button
+    _events_js__WEBPACK_IMPORTED_MODULE_4__/* .bus */ .j.on(_events_js__WEBPACK_IMPORTED_MODULE_4__/* .EVENTS */ .q.TASK_COMPLETE, (taskId) => {
+        // ... (Existing logic for button update)
+        // Extract wrNum from taskId
+        const parts = taskId.split('_');
+        const targetNum = parts[parts.length - 1]; 
+        
+        if (!targetNum) return;
+        
+        const lis = document.querySelectorAll('.list-body > li, .list-item');
+        lis.forEach(li => {
+            const numEl = li.querySelector('.wr-num');
+            if (numEl && numEl.innerText.trim() === targetNum) {
+                const btn = li.querySelector('.toki-down-btn');
+                if (btn) {
+                    btn.innerText = '✅';
+                    btn.title = "방금 완료됨";
+                    btn.style.cssText = "display: inline-block; vertical-align: middle; margin-left: 5px; padding: 1px 5px; font-size: 11px; cursor: default; border: 1px solid #4CAF50; background: #E8F5E9; color: #2E7D32; border-radius: 3px;";
+                    btn.onclick = null;
+                }
+            }
+        });
+    });
 }
 
 function initStatusUI() {
@@ -1011,6 +1131,19 @@ function renderStatus(el, msg) {
     const closeBtn = el.querySelector('#tokiCloseBtn');
     if(closeBtn) closeBtn.onclick = () => el.remove();
 }
+
+function updateStatusUI(msg) {
+    const el = document.getElementById('tokiStatusText');
+    if (el) {
+        // Preserve debug badge if exists or re-render
+        // Simplest: just update text if structure allows, or check config again
+        const config = (0,_config_js__WEBPACK_IMPORTED_MODULE_0__/* .getConfig */ .zj)();
+        const debugBadge = config.debug ? '<span style="color:yellow; font-weight:bold;">[DEBUG]</span> ' : '';
+        el.innerHTML = debugBadge + msg;
+    }
+}
+
+// ... (openSettings, openDashboard, injectDashboard remain mostly the same, strict UI logic)
 
 async function openSettings() {
     const currentConfig = (0,_config_js__WEBPACK_IMPORTED_MODULE_0__/* .getConfig */ .zj)();
@@ -1087,75 +1220,46 @@ function injectDashboard() {
     document.body.appendChild(overlay);
 }
 
-
-
-
-
 function injectDownloadButtons(siteInfo) {
     const listItems = document.querySelectorAll('.list-body > li, .list-item'); 
     
     if (listItems.length === 0) {
         (0,_logger_js__WEBPACK_IMPORTED_MODULE_1__/* .log */ .Rm)(`[UI] No list items found. Selectors: .list-body > li, .list-item`);
-        updateStatus("⚠️ 목록을 찾을 수 없습니다 (뷰어 페이지일 수 있음)");
+        _events_js__WEBPACK_IMPORTED_MODULE_4__/* .bus */ .j.emit(_events_js__WEBPACK_IMPORTED_MODULE_4__/* .EVENTS */ .q.UI_UPDATE_STATUS, "⚠️ 목록을 찾을 수 없습니다 (뷰어 페이지일 수 있음)");
         return;
     }
 
-    updateStatus(`⏳ 히스토리 확인 중... (${listItems.length}개 항목)`);
+    _events_js__WEBPACK_IMPORTED_MODULE_4__/* .bus */ .j.emit(_events_js__WEBPACK_IMPORTED_MODULE_4__/* .EVENTS */ .q.UI_UPDATE_STATUS, `⏳ 히스토리 확인 중... (${listItems.length}개 항목)`);
 
     // Fetch History
-    (0,_network_js__WEBPACK_IMPORTED_MODULE_2__/* .fetchHistoryFromCloud */ .al)(siteInfo).then(history => {
+    (0,_network_js__WEBPACK_IMPORTED_MODULE_3__/* .fetchHistoryFromCloud */ .al)(siteInfo).then(history => {
         (0,_logger_js__WEBPACK_IMPORTED_MODULE_1__/* .log */ .Rm)(`[UI] Cloud History Loaded: ${history.length} items`);
         
         let downloadedCount = 0;
         
         listItems.forEach((li, index) => {
-            const link = li.querySelector('a');
-            if (!link) return;
+            const taskData = (0,_parser_js__WEBPACK_IMPORTED_MODULE_2__/* .parseListItem */ .V)(li, siteInfo);
+            const { title, wrNum, url } = taskData;
             
-            // Clean Title Extraction (remove date/count spans)
-            // Clone node to safely manipulate
-            const linkClone = link.cloneNode(true);
-            Array.from(linkClone.children).forEach(child => child.remove());
-            const title = linkClone.innerText.trim();
+            if (!url) return;
             
-            // Simple fuzzy check: checks if title is in history list (assuming history contains titles or partials)
-            // history returns array of { title: "..." } usually or just strings depending on GAS.
-            // Looking at network.js, it returns `json.body`. Assuming body is array of Objects or Strings.
-            // Let's assume Objects with `title` property or `name`.
-            // But usually history cloud returns list of folder names or similar.
-            // Let's assume strict title match or includes.
-            
-            // Strategy: Match based on Board Number (wr-num)
-            // Downloader saves as: "0123 - Title.cbz" (padded to 4 digits usually)
-            
-            const numEl = li.querySelector('.wr-num');
-            const numText = numEl ? numEl.innerText.trim() : null;
+            // History Checking (Logic preserved)
             let isDownloaded = false;
             let matchedName = "";
+            const numText = wrNum;
 
             if (numText && /^\d+$/.test(numText)) {
-                // Pad to match commonly saved format, but also check raw number
                 const num = parseInt(numText); 
-                // Possible prefixes in Drive: "123 -", "0123 -", "123.cbz"
-                
                 isDownloaded = history.some(h => {
                     const hName = String((typeof h === 'object' && h.name) ? h.name : h).trim();
-                    // Check if file starts with the number
-                    // e.g. hName="0123 - Title.cbz", numText="123"
-                    
-                    // Simple regex: Starts with number followed by non-digit or end
-                    // But we must handle padding. "0123" vs "123"
                     const hMatch = hName.match(/^(\d+)/);
                     if (hMatch) {
-                        const hNum = parseInt(hMatch[1]);
-                        return hNum === num;
+                        return parseInt(hMatch[1]) === num;
                     }
                     return false;
                 });
                 if (isDownloaded) matchedName = `No.${num}`;
             } else {
-                // Fallback: Title matching if no number column (e.g. mobile view sometimes hides it, or different layout)
-                // But user requested specific column usage.
                 const cleanTitle = title.replace(/\s/g, '');
                 isDownloaded = history.some(h => {
                     const hName = String((typeof h === 'object' && h.name) ? h.name : h).trim();
@@ -1171,55 +1275,47 @@ function injectDownloadButtons(siteInfo) {
             
             if (isDownloaded) {
                 btn.innerText = '✅';
-                btn.style.cssText = "margin-left: 10px; padding: 2px 8px; cursor: default; border: 1px solid #4CAF50; background: #E8F5E9; color: #2E7D32;";
+                btn.style.cssText = "display: inline-block; vertical-align: middle; margin-left: 5px; padding: 1px 5px; font-size: 11px; cursor: default; border: 1px solid #4CAF50; background: #E8F5E9; color: #2E7D32; border-radius: 3px;";
                 btn.title = `이미 다운로드됨 (${matchedName || numText || "Found"})`;
                 downloadedCount++;
             } else {
                 btn.innerText = '⬇️';
-                btn.style.cssText = "margin-left: 10px; padding: 2px 8px; cursor: pointer; border: 1px solid #ccc; background: #fff;";
-                btn.innerText = '⬇️';
-                btn.style.cssText = "margin-left: 10px; padding: 2px 8px; cursor: pointer; border: 1px solid #ccc; background: #fff;";
+                btn.style.cssText = "display: inline-block; vertical-align: middle; margin-left: 5px; padding: 1px 5px; font-size: 11px; cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 3px;";
                 btn.onclick = (e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     if(confirm(`[${title}] 다운로드 대기열에 추가하시겠습니까?`)) {
-                        Promise.resolve(/* import() */).then(__webpack_require__.bind(__webpack_require__, 302)).then(q => {
-                            // Prepare Metadata
-                            const info = siteInfo; 
-                            const folderName = `[${info.workId}] ${info.cleanTitle}`;
-                            
-                            q.enqueueTask({
-                                id: siteInfo.site + "_" + siteInfo.workId + "_" + numText, 
-                                title: title,
-                                url: link.href,
-                                site: siteInfo.site,
-                                category: siteInfo.detectedCategory,
-                                folderName: folderName, 
-                                seriesTitle: info.cleanTitle,
-                                wrNum: numText 
-                            });
-                             const btnEl = e.target;
-                             btnEl.innerText = "⏳";
-                             btnEl.disabled = true;
-
+                        // [CHANGED] Use EventBus instead of direct import
+                        _events_js__WEBPACK_IMPORTED_MODULE_4__/* .bus */ .j.emit(_events_js__WEBPACK_IMPORTED_MODULE_4__/* .EVENTS */ .q.CMD_ENQUEUE_TASK, { 
+                            tasks: [{ task: taskData, li: li }], 
+                            siteInfo: siteInfo 
                         });
+                        
+                        const btnEl = e.target;
+                        btnEl.innerText = "⏳";
+                        btnEl.disabled = true;
                     }
                 };
             }
 
-            const targetContainer = li.querySelector('.wr-subject') || li;
-            targetContainer.appendChild(btn);
+            // Inject Button
+            const wrNumEl = li.querySelector('.wr-num');
+            if (wrNumEl) {
+                 wrNumEl.appendChild(btn);
+            } else {
+                 const targetContainer = li.querySelector('.wr-subject') || li;
+                 targetContainer.appendChild(btn);
+            }
         });
 
-        updateStatus(`✅ 준비 완료: ${siteInfo.site} (총 ${listItems.length}개, 다운로드됨 ${downloadedCount}개)`);
+        _events_js__WEBPACK_IMPORTED_MODULE_4__/* .bus */ .j.emit(_events_js__WEBPACK_IMPORTED_MODULE_4__/* .EVENTS */ .q.UI_UPDATE_STATUS, `✅ 준비 완료: ${siteInfo.site} (총 ${listItems.length}개, 다운로드됨 ${downloadedCount}개)`);
     });
 }
 
-function updateStatus(msg) {
-    const el = document.getElementById('tokiStatusText');
-    if (el) el.innerText = msg;
-    (0,_logger_js__WEBPACK_IMPORTED_MODULE_1__/* .log */ .Rm)(msg);
-}
+
+
+
+
 
 
 /***/ }
@@ -1270,14 +1366,25 @@ function updateStatus(msg) {
 /******/ 	
 /************************************************************************/
 var __webpack_exports__ = {};
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "default": () => (core_main)
-/* harmony export */ });
-/* harmony import */ var _config_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(899);
-/* harmony import */ var _network_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(391);
-/* harmony import */ var _ui_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(963);
-/* harmony import */ var _parser_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(126);
-/* harmony import */ var _downloader_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(414);
+
+// EXTERNAL MODULE: ./src/core/config.js
+var config = __webpack_require__(899);
+// EXTERNAL MODULE: ./src/core/network.js
+var network = __webpack_require__(391);
+// EXTERNAL MODULE: ./src/core/ui.js
+var ui = __webpack_require__(963);
+// EXTERNAL MODULE: ./src/core/parser.js
+var parser = __webpack_require__(126);
+// EXTERNAL MODULE: ./src/core/downloader.js
+var downloader = __webpack_require__(414);
+// EXTERNAL MODULE: ./src/core/queue.js
+var queue = __webpack_require__(302);
+// EXTERNAL MODULE: ./src/core/events.js
+var events = __webpack_require__(292);
+// EXTERNAL MODULE: ./src/core/state.js
+var state = __webpack_require__(892);
+;// ./src/core/main.js
+
 
 
 
@@ -1289,59 +1396,22 @@ var __webpack_exports__ = {};
 
 
 // Entry Point
-function main(GM_context) {
+function main(GM) {
     'use strict';
     
-    // 0. Init Modules with GM Context
-    // Normalize GM Interface (Adapter)
-    const GM = {
-        ...GM_context,
-        getValue: GM_context.GM_getValue,
-        setValue: GM_context.GM_setValue,
-        deleteValue: GM_context.GM_deleteValue,
-        xmlhttpRequest: GM_context.GM_xmlhttpRequest,
-        registerMenuCommand: GM_context.GM_registerMenuCommand
-    };
+    // 0. Init Modules
+    (0,config/* initConfig */.pw)(GM);
+    (0,network/* initNetwork */.t9)(GM);
+    (0,ui/* initUI */.xY)(GM);
+    (0,downloader/* initDownloader */.aM)(GM);
+    (0,queue/* initQueue */.C$)(GM);
 
-    (0,_config_js__WEBPACK_IMPORTED_MODULE_0__/* .initConfig */ .pw)(GM);
-    (0,_network_js__WEBPACK_IMPORTED_MODULE_1__/* .initNetwork */ .t9)(GM);
-    (0,_ui_js__WEBPACK_IMPORTED_MODULE_2__/* .initUI */ .xY)(GM);
-    (0,_downloader_js__WEBPACK_IMPORTED_MODULE_4__/* .initDownloader */ .aM)(GM);
+    console.log(`🚀 TokiSync ${config/* CLIENT_VERSION */.fZ} Loaded (Modular Single Script)`);
 
-    // 1. Version Check (Major Version Backwards Compatibility)
-    // "Maintain backward compatibility until major version bump"
-    const currentLoaderVer = GM_context.loaderVersion || "1.0.0"; 
-    
-    const getMajor = (v) => {
-        const parts = String(v).replace(/^v/i, '').trim().split('.');
-        return parseInt(parts[0]) || 0;
-    };
+    // 1. Migration
+    (0,config/* migrateConfig */.CY)();
 
-    const loaderMajor = getMajor(currentLoaderVer);
-    const requiredMajor = getMajor(_config_js__WEBPACK_IMPORTED_MODULE_0__/* .MIN_LOADER_VERSION */ .sX);
-
-    // Only Fail if Loader is OLDER Major version (e.g. Loader v1 vs Core v2)
-    // If Loader is v2 and Core is v1, that's usually fine (forward compat?). 
-    // Usually Core requires Loader features.
-    if (loaderMajor < requiredMajor) {
-        const msg = `❌ Loader is outdated! (Current: ${currentLoaderVer}, Required Major: v${requiredMajor}.x)`;
-        console.error(msg);
-        alert(`⚠️ 로더(Tampermonkey 스크립트) 업데이트가 필요합니다.\n필수 버전: v${requiredMajor}.x 이상\n현재 버전: ${currentLoaderVer}\n\nGitHub에서 최신 버전을 설치해주세요.`);
-        return; 
-    }
-    
-    // Log warning for Minor mismatch but proceed (Normalize 'v' prefix first)
-    const normalizeVer = (v) => String(v).replace(/^v/i, '').trim();
-    if (normalizeVer(currentLoaderVer) !== normalizeVer(_config_js__WEBPACK_IMPORTED_MODULE_0__/* .MIN_LOADER_VERSION */ .sX)) {
-        console.warn(`⚠️ Version Mismatch (Soft): Loader ${currentLoaderVer} / Core wants ${_config_js__WEBPACK_IMPORTED_MODULE_0__/* .MIN_LOADER_VERSION */ .sX}. Proceeding due to Major match.`);
-    }
-
-    console.log(`🚀 TokiSync ${_config_js__WEBPACK_IMPORTED_MODULE_0__/* .CLIENT_VERSION */ .fZ} Loaded (Modular)`);
-
-    // 2. Migration
-    (0,_config_js__WEBPACK_IMPORTED_MODULE_0__/* .migrateConfig */ .CY)();
-
-    // 3. Site Detection
+    // 2. Site Detection
     const currentURL = document.URL;
     let site = 'Unknown';
     let detectedCategory = 'Webtoon';
@@ -1352,52 +1422,38 @@ function main(GM_context) {
     else if (currentURL.match(/manatoki/)) { site = "마나토끼"; detectedCategory = "Manga"; }
 
     // Try to extract Work/Series ID
-    // Patterns:
-    // /webtoon/12345/title...
-    // /comic/123456
-    // /novel/123
     const idMatch = currentURL.match(/\/(?:webtoon|comic|novel)\/([0-9]+)/);
     if (idMatch) workId = idMatch[1];
     
-    // Parse Full Series Info (Title, etc.)
-    const parsedSeries = (0,_parser_js__WEBPACK_IMPORTED_MODULE_3__/* .getSeriesInfo */ .Y)(workId, detectedCategory);
+    // Parse Full Series Info
+    const parsedSeries = (0,parser/* getSeriesInfo */.Y)(workId, detectedCategory);
 
-    // Merge basic info with parsed details
+    // Merge info
     const siteInfo = { 
         site, 
         workId, 
         detectedCategory,
-        ...parsedSeries // includes fullTitle, cleanTitle, etc.
+        ...parsedSeries 
     };
 
-    console.log(`[TokiSync] Info: ${siteInfo.cleanTitle} (ID: ${siteInfo.workId})`);
+    // [New] Save Info to Central State
+    (0,state/* setState */.wb)({ siteInfo, gmContext: GM });
 
-    // 4. UI Injection (Menu Command) - Handled by Loader via returned API
-    // GM_context.GM_registerMenuCommand("⚙️ 설정 열기", openSettings);
+    if(site !== 'Unknown') {
+        console.log(`[TokiSync] Info: ${siteInfo.cleanTitle} (ID: ${siteInfo.workId})`);
+    }
 
-    // 5. Auto Start Logic
-    (0,_ui_js__WEBPACK_IMPORTED_MODULE_2__/* .initStatusUI */ .Vt)();
+    // 3. Define Managers (Glue Logic) & Event Wiring
     
-    // Check Content
-    if (site !== 'Unknown') {
-         console.log(`[TokiSync] Site detected: ${site}. Checking for list...`);
-         (0,_ui_js__WEBPACK_IMPORTED_MODULE_2__/* .injectDownloadButtons */ .Dr)(siteInfo);
-         // Start Worker in Background (Optional: User can trigger it manually via UI if needed)
-         // import('./worker.js').then(module => module.startWorker(false));
-    }
+    // [New] Event Wiring
+    events/* bus */.j.on(events/* EVENTS */.q.CMD_ENQUEUE_TASK, (data) => {
+        // data: { tasks: [{task, li}], siteInfo }
+        (0,downloader/* addTasksToQueue */._3)(data.tasks, data.siteInfo);
+    });
 
-    // Check if I am a Dedicated Worker (Popup)
-    if (window.name === 'TOKI_WORKER' || window.location.hash === '#toki_worker') {
-        // Dedicated worker logic might differ (e.g. strict focus)
-        Promise.resolve(/* import() eager */).then(__webpack_require__.bind(__webpack_require__, 835)).then(module => {
-            module.startWorker(true); // Dedicated mode
-        });
-    }
-
-    // 6. Define Managers (Glue Logic)
     const autoSyncDownloadManager = () => {
         if(confirm(`[${siteInfo.site}] 전체 다운로드를 시작하시겠습니까?\n(이미 다운로드된 항목은 건너뛰거나 덮어쓸 수 있습니다)`)) {
-            (0,_downloader_js__WEBPACK_IMPORTED_MODULE_4__/* .tokiDownload */ .qc)(null, null, null, siteInfo);
+            (0,downloader/* tokiDownload */.qc)(null, null, null, siteInfo);
         }
     };
 
@@ -1405,20 +1461,15 @@ function main(GM_context) {
         const input = prompt("다운로드할 범위를 입력하세요 (예: 1-10 또는 5,7,9):");
         if (!input) return;
         
-        // Simple Parse
-        // Defaulting to passing range to tokiDownload if it supports it, 
-        // OR parsing here. tokiDownload supports (start, end, targetList).
-        
-        // For now, simple strict start/end or list
         if (input.includes('-')) {
             const [start, end] = input.split('-').map(Number);
-            (0,_downloader_js__WEBPACK_IMPORTED_MODULE_4__/* .tokiDownload */ .qc)(start, end, null, siteInfo);
+            (0,downloader/* tokiDownload */.qc)(start, end, null, siteInfo);
         } else if (input.includes(',')) {
             const targets = input.split(',').map(Number);
-            (0,_downloader_js__WEBPACK_IMPORTED_MODULE_4__/* .tokiDownload */ .qc)(null, null, targets, siteInfo);
+            (0,downloader/* tokiDownload */.qc)(null, null, targets, siteInfo);
         } else {
             const num = parseInt(input);
-            if(num) (0,_downloader_js__WEBPACK_IMPORTED_MODULE_4__/* .tokiDownload */ .qc)(null, null, [num], siteInfo);
+            if(num) (0,downloader/* tokiDownload */.qc)(null, null, [num], siteInfo);
         }
     };
 
@@ -1426,24 +1477,125 @@ function main(GM_context) {
         const url = prompt("다운로드할 에피소드 URL을 입력하세요:");
         if (url) {
             Promise.resolve(/* import() */).then(__webpack_require__.bind(__webpack_require__, 414)).then(m => m.tokiDownloadSingle({
-                url, title: "Manual Download", id: "manual", category: siteInfo.detectedCategory
+                url, title: "Manual Download", id: "manual", category: siteInfo.detectedCategory, site: siteInfo.site
             }));
         }
     };
 
-    // Return API for Loader
-    return {
-        autoSyncDownloadManager,
-        openDashboard: _ui_js__WEBPACK_IMPORTED_MODULE_2__/* .openDashboard */ .Nb,
-        openSettings: _ui_js__WEBPACK_IMPORTED_MODULE_2__/* .openSettings */ .Ow,
-        batchDownloadManager,
-        toggleDebugMode: _config_js__WEBPACK_IMPORTED_MODULE_0__/* .toggleDebug */ .Up,
-        manualDownloadManager
-    };
+    // 4. Register Menus (Directly)
+    if (GM.GM_registerMenuCommand) {
+        GM.GM_registerMenuCommand('☁️ 자동 동기화', autoSyncDownloadManager);
+        GM.GM_registerMenuCommand('📊 서재 열기', ui/* openDashboard */.Nb);
+        GM.GM_registerMenuCommand('🔢 범위 다운로드', batchDownloadManager);
+        GM.GM_registerMenuCommand('⚙️ 설정 (URL/FolderID)', ui/* openSettings */.Ow);
+        GM.GM_registerMenuCommand('🐞 디버그 모드', config/* toggleDebug */.Up);
+
+        if (GM.GM_getValue(config/* CFG_DEBUG_KEY */.ZE, false)) {
+            GM.GM_registerMenuCommand('🧪 1회성 다운로드', manualDownloadManager);
+        }
+    }
+
+    // 5. Auto Start Logic
+    (0,ui/* initStatusUI */.Vt)();
+    
+    // Check Content
+    if (site !== 'Unknown') {
+         console.log(`[TokiSync] Site detected: ${site}. Checking for list...`);
+         (0,ui/* injectDownloadButtons */.Dr)(siteInfo);
+    }
+
+    // Check if I am a Dedicated Worker (Popup)
+    if (window.name === 'TOKI_WORKER' || window.location.hash === '#toki_worker') {
+        Promise.resolve(/* import() eager */).then(__webpack_require__.bind(__webpack_require__, 835)).then(module => {
+            module.initWorker(GM);
+            module.startWorker(true); // Dedicated mode
+            (0,state/* setState */.wb)({ workerMode: 'dedicated' });
+        });
+    } else if (site !== 'Unknown') {
+        // [New] Start Shared/Background Worker on Main Page to process Queue
+        Promise.resolve(/* import() eager */).then(__webpack_require__.bind(__webpack_require__, 835)).then(module => {
+            module.initWorker(GM);
+            module.startWorker(false); // Non-dedicated mode
+            (0,state/* setState */.wb)({ workerMode: 'shared' });
+        });
+    }
 }
 
 /* harmony default export */ const core_main = (main);
 
-window.TokiSyncCore = __webpack_exports__["default"];
+;// ./src/index.js
+
+
+
+// Metadata handled by Webpack BannerPlugin
+
+(function () {
+    'use strict';
+    
+    console.log("🚀 TokiSync Initialized (Bundled Single Script)");
+
+    // 1. GM Context Setup (Adapter)
+    // 1. GM Context Setup (Adapter)
+    const GM = {
+        // Core Interface
+        getValue: GM_getValue,
+        setValue: GM_setValue,
+        deleteValue: GM_deleteValue,
+        xmlhttpRequest: GM_xmlhttpRequest,
+        registerMenuCommand: GM_registerMenuCommand,
+        
+        // Native Interface (for direct access if needed)
+        GM_getValue,
+        GM_setValue,
+        GM_deleteValue,
+        GM_xmlhttpRequest,
+        GM_registerMenuCommand,
+
+        // Optional safe check for event listener
+        GM_addValueChangeListener: typeof GM_addValueChangeListener !== 'undefined' ? GM_addValueChangeListener : undefined,
+        
+        // Libraries
+        JSZip: window.JSZip,
+        
+        loaderVersion: "1.2.0" // Self-reference
+    };
+
+    // 2. GitHub Pages / Frontend Bridge (Config Injection)
+    const CFG_FOLDER_ID = 'TOKI_FOLDER_ID';
+    if (location.hostname.includes('github.io') || location.hostname.includes('localhost') || location.hostname.includes('127.0.0.1')) {
+        console.log("📂 TokiView (Frontend) detected. Injecting Config...");
+
+        const folderId = GM.GM_getValue(CFG_FOLDER_ID);
+        const customDeployId = GM.GM_getValue("TOKI_DEPLOY_ID", ""); 
+        
+        let derivedId = "";
+        const savedGasUrl = GM.GM_getValue("TOKI_GAS_URL", "");
+        if (!customDeployId && savedGasUrl) {
+            const match = savedGasUrl.match(/\/s\/([^\/]+)\/exec/);
+            if (match) derivedId = match[1];
+        }
+
+        const DEFAULT_ID = ""; 
+        const targetId = customDeployId || derivedId || DEFAULT_ID;
+        const apiUrl = `https://script.google.com/macros/s/${targetId}/exec`;
+
+        if (folderId) {
+            setTimeout(() => {
+                window.postMessage({ 
+                    type: 'TOKI_CONFIG', 
+                    url: apiUrl, 
+                    folderId: folderId,
+                    deployId: targetId
+                }, '*');
+                console.log("✅ Config Injected to Frontend:", targetId);
+            }, 500);
+        }
+    }
+
+    // 3. Run Core
+    core_main(GM);
+
+})();
+
 /******/ })()
 ;

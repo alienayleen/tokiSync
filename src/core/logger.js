@@ -1,4 +1,5 @@
 import { getConfig } from './config.js';
+import { bus, EVENTS } from './events.js';
 
 export function log(msg, type = 'info') {
     const config = getConfig();
@@ -8,12 +9,14 @@ export function log(msg, type = 'info') {
 }
 
 export function updateStatus(msg) {
-    const el = document.getElementById('tokiStatusText');
-    if (el) {
-        const config = getConfig();
-        const debugBadge = config.debug ? '<span style="color:yellow; font-weight:bold;">[DEBUG]</span> ' : '';
-        el.innerHTML = debugBadge + msg;
-    }
+    // [Changed] Emit event instead of direct DOM manipulation
+    bus.emit(EVENTS.UI_UPDATE_STATUS, msg);
+    
+    // Check for "Resume Button" trigger logic inside msg?
+    // The previous logic for resume button was inside downloader's UI manipulation or logger?
+    // Actually the resume button check was inside tokiDownloaderSingle's pause logic, 
+    // but ui.js's renderStatus creates the button hidden.
+    
     // Strip HTML tags for console log
     log(msg.replace(/<[^>]*>/g, ''));
 }

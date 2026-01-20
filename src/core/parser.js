@@ -30,3 +30,40 @@ function getDetailInfo() {
     } catch (e) { }
     return { author, category, status, thumbnail };
 }
+
+export function parseListItem(li, siteInfo) {
+    // 1. Extract Number
+    const numEl = li.querySelector('.wr-num');
+    let numText = "0";
+    if (numEl) {
+        const numClone = numEl.cloneNode(true);
+        Array.from(numClone.querySelectorAll('.toki-down-btn')).forEach(el => el.remove());
+        numText = numClone.innerText.trim();
+    }
+
+    // 2. Extract Title & URL
+    const linkEl = li.querySelector('a');
+    let epFullTitle = "Unknown";
+    let url = "";
+    if (linkEl) {
+        url = linkEl.href;
+        const linkClone = linkEl.cloneNode(true);
+        Array.from(linkClone.querySelectorAll('.toki-down-btn, span, div')).forEach(el => el.remove());
+        epFullTitle = linkClone.innerText.trim();
+    }
+
+    // Construct Task Object
+    // siteInfo must contain { id, cleanTitle, site, detectedCategory }
+    const folderName = `[${siteInfo.id}] ${siteInfo.cleanTitle}`;
+
+    return {
+        id: `${siteInfo.site}_${siteInfo.id}_${numText}`,
+        title: epFullTitle,
+        url: url,
+        site: siteInfo.site,
+        category: siteInfo.detectedCategory,
+        folderName: folderName,
+        seriesTitle: siteInfo.cleanTitle,
+        wrNum: numText
+    };
+}

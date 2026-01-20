@@ -1,10 +1,38 @@
 import { getConfig, CFG_FOLDER_ID, CFG_URL_KEY, CFG_DASH_KEY, CFG_DEBUG_KEY, switchDebug, saveConfig } from './config.js';
 import { log } from './logger.js';
-import { tokiDownloadSingle } from './downloader.js';
+import { parseListItem } from './parser.js';
+import { fetchHistoryFromCloud } from './network.js';
+import { bus, EVENTS } from './events.js';
 
 let GM = null;
 export function initUI(gmContext) {
     GM = gmContext;
+    // Register Event Listeners
+    bus.on(EVENTS.UI_UPDATE_STATUS, (msg) => updateStatusUI(msg));
+    
+    // Listen for task completion to update button
+    bus.on(EVENTS.TASK_COMPLETE, (taskId) => {
+        // ... (Existing logic for button update)
+        // Extract wrNum from taskId
+        const parts = taskId.split('_');
+        const targetNum = parts[parts.length - 1]; 
+        
+        if (!targetNum) return;
+        
+        const lis = document.querySelectorAll('.list-body > li, .list-item');
+        lis.forEach(li => {
+            const numEl = li.querySelector('.wr-num');
+            if (numEl && numEl.innerText.trim() === targetNum) {
+                const btn = li.querySelector('.toki-down-btn');
+                if (btn) {
+                    btn.innerText = '✅';
+                    btn.title = "방금 완료됨";
+                    btn.style.cssText = "display: inline-block; vertical-align: middle; margin-left: 5px; padding: 1px 5px; font-size: 11px; cursor: default; border: 1px solid #4CAF50; background: #E8F5E9; color: #2E7D32; border-radius: 3px;";
+                    btn.onclick = null;
+                }
+            }
+        });
+    });
 }
 
 export function initStatusUI() {
@@ -32,6 +60,19 @@ function renderStatus(el, msg) {
     const closeBtn = el.querySelector('#tokiCloseBtn');
     if(closeBtn) closeBtn.onclick = () => el.remove();
 }
+
+export function updateStatusUI(msg) {
+    const el = document.getElementById('tokiStatusText');
+    if (el) {
+        // Preserve debug badge if exists or re-render
+        // Simplest: just update text if structure allows, or check config again
+        const config = getConfig();
+        const debugBadge = config.debug ? '<span style="color:yellow; font-weight:bold;">[DEBUG]</span> ' : '';
+        el.innerHTML = debugBadge + msg;
+    }
+}
+
+// ... (openSettings, openDashboard, injectDashboard remain mostly the same, strict UI logic)
 
 export async function openSettings() {
     const currentConfig = getConfig();
@@ -108,20 +149,16 @@ export function injectDashboard() {
     document.body.appendChild(overlay);
 }
 
-
-
-import { fetchHistoryFromCloud } from './network.js';
-
 export function injectDownloadButtons(siteInfo) {
     const listItems = document.querySelectorAll('.list-body > li, .list-item'); 
     
     if (listItems.length === 0) {
         log(`[UI] No list items found. Selectors: .list-body > li, .list-item`);
-        updateStatus("⚠️ 목록을 찾을 수 없습니다 (뷰어 페이지일 수 있음)");
+        bus.emit(EVENTS.UI_UPDATE_STATUS, "⚠️ 목록을 찾을 수 없습니다 (뷰어 페이지일 수 있음)");
         return;
     }
 
-    updateStatus(`⏳ 히스토리 확인 중... (${listItems.length}개 항목)`);
+    bus.emit(EVENTS.UI_UPDATE_STATUS, `⏳ 히스토리 확인 중... (${listItems.length}개 항목)`);
 
     // Fetch History
     fetchHistoryFromCloud(siteInfo).then(history => {
@@ -130,53 +167,28 @@ export function injectDownloadButtons(siteInfo) {
         let downloadedCount = 0;
         
         listItems.forEach((li, index) => {
-            const link = li.querySelector('a');
-            if (!link) return;
+            const taskData = parseListItem(li, siteInfo);
+            const { title, wrNum, url } = taskData;
             
-            // Clean Title Extraction (remove date/count spans)
-            // Clone node to safely manipulate
-            const linkClone = link.cloneNode(true);
-            Array.from(linkClone.children).forEach(child => child.remove());
-            const title = linkClone.innerText.trim();
+            if (!url) return;
             
-            // Simple fuzzy check: checks if title is in history list (assuming history contains titles or partials)
-            // history returns array of { title: "..." } usually or just strings depending on GAS.
-            // Looking at network.js, it returns `json.body`. Assuming body is array of Objects or Strings.
-            // Let's assume Objects with `title` property or `name`.
-            // But usually history cloud returns list of folder names or similar.
-            // Let's assume strict title match or includes.
-            
-            // Strategy: Match based on Board Number (wr-num)
-            // Downloader saves as: "0123 - Title.cbz" (padded to 4 digits usually)
-            
-            const numEl = li.querySelector('.wr-num');
-            const numText = numEl ? numEl.innerText.trim() : null;
+            // History Checking (Logic preserved)
             let isDownloaded = false;
             let matchedName = "";
+            const numText = wrNum;
 
             if (numText && /^\d+$/.test(numText)) {
-                // Pad to match commonly saved format, but also check raw number
                 const num = parseInt(numText); 
-                // Possible prefixes in Drive: "123 -", "0123 -", "123.cbz"
-                
                 isDownloaded = history.some(h => {
                     const hName = String((typeof h === 'object' && h.name) ? h.name : h).trim();
-                    // Check if file starts with the number
-                    // e.g. hName="0123 - Title.cbz", numText="123"
-                    
-                    // Simple regex: Starts with number followed by non-digit or end
-                    // But we must handle padding. "0123" vs "123"
                     const hMatch = hName.match(/^(\d+)/);
                     if (hMatch) {
-                        const hNum = parseInt(hMatch[1]);
-                        return hNum === num;
+                        return parseInt(hMatch[1]) === num;
                     }
                     return false;
                 });
                 if (isDownloaded) matchedName = `No.${num}`;
             } else {
-                // Fallback: Title matching if no number column (e.g. mobile view sometimes hides it, or different layout)
-                // But user requested specific column usage.
                 const cleanTitle = title.replace(/\s/g, '');
                 isDownloaded = history.some(h => {
                     const hName = String((typeof h === 'object' && h.name) ? h.name : h).trim();
@@ -192,52 +204,44 @@ export function injectDownloadButtons(siteInfo) {
             
             if (isDownloaded) {
                 btn.innerText = '✅';
-                btn.style.cssText = "margin-left: 10px; padding: 2px 8px; cursor: default; border: 1px solid #4CAF50; background: #E8F5E9; color: #2E7D32;";
+                btn.style.cssText = "display: inline-block; vertical-align: middle; margin-left: 5px; padding: 1px 5px; font-size: 11px; cursor: default; border: 1px solid #4CAF50; background: #E8F5E9; color: #2E7D32; border-radius: 3px;";
                 btn.title = `이미 다운로드됨 (${matchedName || numText || "Found"})`;
                 downloadedCount++;
             } else {
                 btn.innerText = '⬇️';
-                btn.style.cssText = "margin-left: 10px; padding: 2px 8px; cursor: pointer; border: 1px solid #ccc; background: #fff;";
-                btn.innerText = '⬇️';
-                btn.style.cssText = "margin-left: 10px; padding: 2px 8px; cursor: pointer; border: 1px solid #ccc; background: #fff;";
+                btn.style.cssText = "display: inline-block; vertical-align: middle; margin-left: 5px; padding: 1px 5px; font-size: 11px; cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 3px;";
                 btn.onclick = (e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     if(confirm(`[${title}] 다운로드 대기열에 추가하시겠습니까?`)) {
-                        import('./queue.js').then(q => {
-                            // Prepare Metadata
-                            const info = siteInfo; 
-                            const folderName = `[${info.workId}] ${info.cleanTitle}`;
-                            
-                            q.enqueueTask({
-                                id: siteInfo.site + "_" + siteInfo.workId + "_" + numText, 
-                                title: title,
-                                url: link.href,
-                                site: siteInfo.site,
-                                category: siteInfo.detectedCategory,
-                                folderName: folderName, 
-                                seriesTitle: info.cleanTitle,
-                                wrNum: numText 
-                            });
-                             const btnEl = e.target;
-                             btnEl.innerText = "⏳";
-                             btnEl.disabled = true;
-
+                        // [CHANGED] Use EventBus instead of direct import
+                        bus.emit(EVENTS.CMD_ENQUEUE_TASK, { 
+                            tasks: [{ task: taskData, li: li }], 
+                            siteInfo: siteInfo 
                         });
+                        
+                        const btnEl = e.target;
+                        btnEl.innerText = "⏳";
+                        btnEl.disabled = true;
                     }
                 };
             }
 
-            const targetContainer = li.querySelector('.wr-subject') || li;
-            targetContainer.appendChild(btn);
+            // Inject Button
+            const wrNumEl = li.querySelector('.wr-num');
+            if (wrNumEl) {
+                 wrNumEl.appendChild(btn);
+            } else {
+                 const targetContainer = li.querySelector('.wr-subject') || li;
+                 targetContainer.appendChild(btn);
+            }
         });
 
-        updateStatus(`✅ 준비 완료: ${siteInfo.site} (총 ${listItems.length}개, 다운로드됨 ${downloadedCount}개)`);
+        bus.emit(EVENTS.UI_UPDATE_STATUS, `✅ 준비 완료: ${siteInfo.site} (총 ${listItems.length}개, 다운로드됨 ${downloadedCount}개)`);
     });
 }
 
-function updateStatus(msg) {
-    const el = document.getElementById('tokiStatusText');
-    if (el) el.innerText = msg;
-    log(msg);
-}
+
+
+
+

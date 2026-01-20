@@ -61,7 +61,15 @@ export function claimNextTask(workerId) {
         }
     });
 
-    // 2. Find pending
+    // 2. Global Concurrency Check
+    // If ANY task is currently working, we must wait.
+    // This enforces 1 global download at a time across all tabs.
+    const isAnyWorking = q.some(t => t.status === 'working');
+    if (isAnyWorking) {
+        return null; // Busy
+    }
+
+    // 3. Find pending
     const candidate = q.find(t => t.status === 'pending');
     if (candidate) {
         candidate.status = 'working';
@@ -83,6 +91,7 @@ export function completeTask(taskId) {
     if (q.length !== initialLen) {
         setQueue(q);
         log(`Task Completed & Removed: ${taskId}`);
+        window.dispatchEvent(new CustomEvent('toki-task-complete', { detail: { id: taskId } }));
         return true;
     }
     return false;
