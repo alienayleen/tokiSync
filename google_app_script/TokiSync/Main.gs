@@ -1,7 +1,7 @@
-// ⚙️ TokiSync API Server v3.1.0-beta.251216.0001 (Stateless)
+// ⚙️ TokiSync API Server v1.0.0 (Stateless)
 // -----------------------------------------------------
 // 🤝 Compatibility:
-//    - Client v3.0.0-beta.251211+ (User Execution Mode)
+//    - Client v1.0.0+ (User Execution Mode)
 // -----------------------------------------------------
 
 // [GET] 서버 상태 확인용
@@ -14,7 +14,7 @@
  */
 function doGet(e) {
   return ContentService.createTextOutput(
-    "✅ TokiSync API Server v3.0.0-beta.251211 (Stateless) is Running..."
+    "✅ TokiSync API Server v1.2.0 (Stateless) is Running...",
   );
 }
 
@@ -33,12 +33,26 @@ function doGet(e) {
  * @returns {TextOutput} JSON 응답
  */
 // [CONSTANTS]
-const SERVER_VERSION = "v3.1.0-beta.251218.0004"; // Server Logic Update (Viewer Opt + Upload/Cache)
+const SERVER_VERSION = "v1.2.0"; // API Key Enforcement for All Requests (including viewer)
+// API Key stored in Script Properties (Project Settings > Script Properties)
+// Set property: API_KEY = your_secret_key
+const API_KEY = PropertiesService.getScriptProperties().getProperty("API_KEY");
 
 function doPost(e) {
   Debug.start(); // 🐞 디버그 시작
   try {
     const data = JSON.parse(e.postData.contents);
+
+    // 0. API Key Validation (Security) - All Requests Including Viewer
+    if (!API_KEY) {
+      return createRes(
+        "error",
+        "Server Configuration Error: API_KEY not set in Script Properties",
+      );
+    }
+    if (!data.apiKey || data.apiKey !== API_KEY) {
+      return createRes("error", "Unauthorized: Invalid API Key");
+    }
 
     // 1. 필수 파라미터 검증 (folderId)
     // Stateless 방식이므로 클라이언트가 반드시 folderId를 보내야 함

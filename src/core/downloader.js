@@ -1,282 +1,266 @@
-import { saveInfoJson, uploadResumable } from './network.js';
-import { updateStatus, setListItemStatus, log } from './logger.js';
-import { getSeriesInfo, parseListItem } from './parser.js';
-import { getConfig } from './config.js';
-import { enqueueTask } from './queue.js';
-import { setState, getGM } from './state.js';
+import { sleep, waitIframeLoad, saveFile, getCommonPrefix } from './utils.js';
+import { getListItems, parseListItem, getNovelContent, getImageList } from './parser.js';
+import { detectSite } from './detector.js';
+import { EpubBuilder } from './epub.js';
+import { CbzBuilder } from './cbz.js';
+import { LogBox, Notifier } from './ui.js';
 
-let GM = null; 
-let JSZip = null;
+// Processing Loop에 해당되는 로직을 분리 한다.
+export async function processItem(item, builder, siteInfo, iframe, seriesTitle = "") {
+    const { site, protocolDomain } = siteInfo;
+    const isNovel = (site === "북토끼");
 
-export function initDownloader(gmContext) {
-    GM = gmContext;
-    JSZip = gmContext.JSZip;
-    setState({ gmContext }); // Sync to State
-}
-
-// Helper: Fetch Blob (using GM)
-function fetchBlob(url, listener) {
-    return new Promise((resolve) => {
-        GM.xmlhttpRequest({
-            method: "GET",
-            url: url,
-            responseType: "arraybuffer", // Use arraybuffer for robustness
-            timeout: 20000,
-            headers: { "Referer": document.URL },
-            onload: (res) => {
-                if (res.status === 200) resolve(res.response);
-                else resolve(null);
-            },
-            onprogress: (e) => {
-                 // Optional: listener(e.loaded, e.total);
-            },
-            onerror: () => resolve(null),
-            ontimeout: () => resolve(null)
-        });
-    });
-}
-
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-function getDynamicWait(base) { return Math.floor(Math.random() * (base * 0.2 + 1)) + base; }
-
-const WAIT_WEBTOON_MS = 3000; 
-const WAIT_NOVEL_MS = 8000;   
-
-export async function createEpub(zip, title, author, textContent) {
-    // Basic EPUB Creation Logic
-    zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
-    zip.file("META-INF/container.xml", `<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`);
+    await waitIframeLoad(iframe, item.src);
     
-    const escapedText = textContent.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const htmlBody = escapedText.split('\n').map(line => `<p>${line}</p>`).join('');
+    // Apply Random Sleep: 1000ms + (0~3000ms random)
+    await sleep(1000, 3000);
     
-    zip.file("OEBPS/Text/chapter.xhtml", `<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><title>${title}</title></head><body><h1>${title}</h1>${htmlBody}</body></html>`);
-    
-    const opf = `<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookId" version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf"><dc:title>${title}</dc:title><dc:creator opf:role="aut">${author}</dc:creator><dc:language>ko</dc:language></metadata><manifest><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="chapter" href="Text/chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine toc="ncx"><itemref idref="chapter"/></spine></package>`;
-    zip.file("OEBPS/content.opf", opf);
-    
-    const ncx = `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN" "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd"><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head><meta name="dtb:uid" content="urn:uuid:12345"/></head><docTitle><text>${title}</text></docTitle><navMap><navPoint id="navPoint-1" playOrder="1"><navLabel><text>${title}</text></navLabel><content src="Text/chapter.xhtml"/></navPoint></navMap></ncx>`;
-    zip.file("OEBPS/toc.ncx", ncx);
-}
+    const iframeDoc = iframe.contentWindow.document;
 
-// ...
+    if (isNovel) {
+        const text = getNovelContent(iframeDoc);
+        // Add chapter to existing builder instance
+        builder.addChapter(item.title, text);
+    } 
+    else {
+        // Webtoon / Manga
+        const imageUrls = getImageList(iframeDoc, protocolDomain);
+        console.log(`이미지 ${imageUrls.length}개 감지`);
 
-export async function addTasksToQueue(taskItems, seriesInfo) {
-    if (!taskItems || taskItems.length === 0) return 0;
-
-    // 1. Ensure Series Info is saved (Once per batch/single)
-    // This fixes the missing info.json issue for single downloads
-    await saveInfoJson(seriesInfo, 0, 0, true); 
-
-    let addedCount = 0;
-    taskItems.forEach(({ task, li }) => {
-        if(enqueueTask(task)) {
-            addedCount++;
-            if(li) setListItemStatus(li, "⏳ 대기 중", "#fff9c4", "#fbc02d");
-        } else {
-            if(li) setListItemStatus(li, "⚠️ 중복/대기", "#eeeeee", "#9e9e9e");
+        // Fetch Images Parallel
+        const images = await fetchImages(imageUrls);
+        
+        // Add chapter to builder
+        // Clean the title if seriesTitle exists
+        let chapterTitleOnly = item.title;
+        if (seriesTitle && chapterTitleOnly.startsWith(seriesTitle)) {
+            chapterTitleOnly = chapterTitleOnly.replace(seriesTitle, '').trim();
         }
-    });
-    return addedCount;
+
+        // Construct clean folder name: "0001 1화"
+        const cleanChapterTitle = `${item.num} ${chapterTitleOnly}`;
+        builder.addChapter(cleanChapterTitle, images);
+    }
 }
 
-// [Unified Logic] tokiDownload now behaves as a Batch Enqueuer
-export async function tokiDownload(startIndex, lastIndex, targetNumbers, siteInfo) {
-    const { site, workId, detectedCategory } = siteInfo;
-    const config = getConfig();
+
+export async function tokiDownload(startIndex, lastIndex, policy = 'folderInCbz') {
+    const logger = LogBox.getInstance();
+    logger.init();
+    logger.show();
+    logger.log(`다운로드 시작 (정책: ${policy})...`);
+
+    const siteInfo = detectSite();
+    if (!siteInfo) {
+        alert("지원하지 않는 사이트이거나 다운로드 페이지가 아닙니다.");
+        return;
+    }
+    const { site, protocolDomain } = siteInfo;
+    const isNovel = (site === "북토끼");
 
     try {
-        let list = Array.from(document.querySelector('.list-body').querySelectorAll('li')).reverse();
-        if (targetNumbers) list = list.filter(li => targetNumbers.includes(parseInt(li.querySelector('.wr-num').innerText)));
-        else {
-            if (startIndex) { while (list.length > 0 && parseInt(list[0].querySelector('.wr-num').innerText) < startIndex) list.shift(); }
-            if (lastIndex) { while (list.length > 0 && parseInt(list.at(-1).querySelector('.wr-num').innerText) > lastIndex) list.pop(); }
+        // Prepare Strategy Variables
+        let mainBuilder = null;
+        let masterZip = null;
+        let extension = 'zip';
+        let destination = 'local';
+        
+        let buildingPolicy = policy; 
+        if (policy === 'gasUpload') {
+            buildingPolicy = 'individual';
+            destination = 'drive';
         }
+        
+        // Determine Category for GAS
+        let category = 'Webtoon';
+        if (site === '북토끼') category = 'Novel';
+        else if (site === '마나토끼') category = 'Manga';
+
+        if (buildingPolicy === 'folderInCbz') {
+            if (isNovel) {
+                mainBuilder = new EpubBuilder();
+                extension = 'epub';
+            } else {
+                mainBuilder = new CbzBuilder();
+                extension = 'cbz';
+            }
+        } else if (buildingPolicy === 'zipOfCbzs') {
+            masterZip = new JSZip(); // Master Container
+            extension = isNovel ? 'epub' : 'cbz';
+        } else {
+            // Individual (or gasUpload): No shared builder or master zip needed initially
+            extension = isNovel ? 'epub' : 'cbz';
+        }
+
+        // Get List
+        let list = getListItems();
+
+        // Filter Logic
+        if (startIndex) {
+            list = list.filter(li => {
+                const num = parseInt(li.querySelector('.wr-num').innerText);
+                return num >= startIndex;
+            });
+        }
+        if (lastIndex) {
+            list = list.filter(li => {
+                const num = parseInt(li.querySelector('.wr-num').innerText);
+                return num <= lastIndex;
+            });
+        }
+        
+        logger.log(`총 ${list.length}개 항목 처리 예정.`);
+
         if (list.length === 0) {
-            updateStatus("⚠️ 다운로드할 항목이 없습니다.");
+            alert("다운로드할 항목이 없습니다.");
             return;
         }
 
-        // Get Series Info
-        const info = getSeriesInfo(workId, detectedCategory);
+        // Folder Name (Title) & Common Title Extraction
+        const first = parseListItem(list[0]);
+        const last = parseListItem(list[list.length - 1]);
         
-        updateStatus(`🚀 ${list.length}개 항목을 대기열에 추가합니다...`);
+        // Extract Series ID from URL
+        // https://.../webtoon/123456?page=...
+        // Pattern: /novel/(\d+) or /webtoon/(\d+) or /comic/(\d+)
+        const idMatch = document.URL.match(/\/(novel|webtoon|comic)\/([0-9]+)/);
+        const seriesId = idMatch ? idMatch[2] : "0000";
 
-        // Prepare Task Items
-        const taskItems = list.map(li => {
-            const task = parseListItem(li, info);
-            return { task, li };
-        });
+        let seriesTitle = "";
+        let rootFolder = "";
 
-        // Add to Queue (Centralized)
-        const addedCount = await addTasksToQueue(taskItems, info);
-        
-        updateStatus(`✅ 총 ${addedCount}개 작업이 대기열에 추가되었습니다. (백그라운드에서 진행됨)`);
-
-    } catch (error) {
-        console.error(error);
-        updateStatus(`❌ 일괄 추가 실패: ${error.message}`);
-    }
-}
-
-
-export async function tokiDownloadSingle(task) {
-    // Task object is well-formed by parser.js and contains { site, category, ... }
-    const { url, title, id, category, folderName, seriesTitle, site } = task; 
-    const config = getConfig();
-    
-    // No redundant site detection here. We trust the task.
-    // However, if we need 'site' for logic switches (like image selectors):
-    // const effectiveSite = site || '뉴토끼'; // Fallback if missing
-    
-    // Pass seriesTitle if available for better cleaning
-    // If category is missing, derive it from site (fallback)
-    const effectiveCategory = category || (site === '북토끼' ? 'Novel' : 'Webtoon');
-    
-    const info = { id, cleanTitle: title, fullTitle: seriesTitle, category: effectiveCategory };
-    const targetFolderName = folderName || `[${id}] ${title}`;
-
-    updateStatus(`🚀 작업 시작: ${title}`);
-
-    // Create or Reuse Iframe (Hidden)
-    let iframe = document.getElementById('tokiDownloaderIframe');
-    if (!iframe) {
-        iframe = document.createElement('iframe');
-        iframe.id = 'tokiDownloaderIframe';
-        iframe.style.cssText = "position:absolute; top:-9999px; left:-9999px; width:600px; height:600px;";
-        document.querySelector('.content').prepend(iframe);
-    }
-
-    const waitIframeLoad = (u) => new Promise(r => { iframe.src = u; iframe.onload = () => r(); });
-    const pauseForCaptcha = (iframe) => {
-        return new Promise(resolve => {
-            updateStatus("<strong>🤖 캡차/차단 감지!</strong><br>해결 후 버튼 클릭");
-            iframe.style.cssText = "position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); width:80vw; height:80vh; background:white; z-index:99998;";
-            const btn = document.getElementById('tokiResumeButton');
-            if (btn) {
-                btn.style.display = 'block';
-                btn.onclick = () => {
-                    iframe.style.cssText = "position:absolute; top:-9999px; left:-9999px; width:600px; height:600px;";
-                    btn.style.display = 'none';
-                    resolve();
-                };
-            } else resolve();
-        });
-    };
-
-    try {
-        await waitIframeLoad(url);
-        
-        // Dynamic Wait based on Category
-        const delayBase = (site === "북토끼" || category === "Novel") ? WAIT_NOVEL_MS : WAIT_WEBTOON_MS;
-        await sleep(getDynamicWait(delayBase));
-
-        let iframeDocument = iframe.contentWindow.document;
-
-        // Captcha / Cloudflare / Error Checks
-        const checkObstacles = async () => {
-             const isCaptcha = iframeDocument.querySelector('iframe[src*="hcaptcha"]') || iframeDocument.querySelector('.g-recaptcha') || iframeDocument.querySelector('#kcaptcha_image');
-             const isCloudflare = iframeDocument.title.includes('Just a moment') || iframeDocument.getElementById('cf-challenge-running');
-             const noContent = (site === "북토끼") ? !iframeDocument.querySelector('#novel_content') : false;
-             const pageTitle = iframeDocument.title.toLowerCase();
-             const bodyText = iframeDocument.body ? iframeDocument.body.innerText.toLowerCase() : "";
-             const isError = pageTitle.includes("403") || pageTitle.includes("forbidden") || bodyText.includes("access denied");
-
-             if (isCaptcha || isCloudflare || noContent || isError) {
-                 await pauseForCaptcha(iframe);
-                 await sleep(3000);
-                 iframeDocument = iframe.contentWindow.document; // Refresh ref
-                 return true; // Retried
-             }
-             return false;
-        };
-        await checkObstacles();
-
-        // [Logic] Novel vs Images
-        const zip = new JSZip();
-        let zipFileName = `${(task.wrNum || "0000").toString().padStart(4,'0')} - ${title.replace(/[\\/:*?"<>|]/g, '')}`;
-        let finalFileName = "";
-
-        if (site === '북토끼' || category === 'Novel') {
-            const contentEl = iframeDocument.querySelector('#novel_content');
-            if (!contentEl) throw new Error("Novel Content Not Found");
-            const textContent = contentEl.innerText;
-            
-            await createEpub(zip, title, "Unknown", textContent);
-            finalFileName = `${zipFileName}.epub`;
-
+        if (list.length > 1) {
+            seriesTitle = getCommonPrefix(first.title, last.title);
+            if (seriesTitle.length > 2) {
+                // If common prefix exists, use it as series title
+                 rootFolder = `[${seriesId}] ${seriesTitle}`;
+            } else {
+                 // Fallback format if no clear prefix found (rare)
+                 rootFolder = `[${seriesId}] ${first.title} ~ ${last.title}`;
+            }
         } else {
-            // Image Logic
-            let imgLists = Array.from(iframeDocument.querySelectorAll('.view-padding div img'));
-            // Visibility Filter
-            for (let j = 0; j < imgLists.length;) { 
-                if (imgLists[j].checkVisibility() === false) imgLists.splice(j, 1); 
-                else j++; 
-            }
-
-            if (imgLists.length === 0) {
-                 // Retry once
-                 await sleep(2000);
-                 imgLists = Array.from(iframeDocument.querySelectorAll('.view-padding div img'));
-                 // Re-filter
-                 for (let j = 0; j < imgLists.length;) { 
-                    if (imgLists[j].checkVisibility() === false) imgLists.splice(j, 1); 
-                    else j++; 
-                }
-                 if (imgLists.length === 0) throw new Error("이미지 0개 발견 (Skip)");
-            }
-
-            updateStatus(`[${targetFolderName}]<br><strong>${title}</strong><br>이미지 ${imgLists.length}장 수집 중...`);
-
-            // Download Images
-            let downloaded = 0;
-            // Parallel Download (Batch of 3)
-            let p = 0;
-            while(p < imgLists.length) {
-                const batch = imgLists.slice(p, p+3); 
-                await Promise.all(batch.map(async (img, idx) => {
-                     const src = img.getAttribute('data-original') || img.src;
-                     if(!src) return;
-                     
-                     // Retry 3 times
-                     let blob = null;
-                     for(let r=0; r<3; r++) {
-                         blob = await fetchBlob(src);
-                         if(blob) break;
-                         await sleep(1000);
-                     }
-
-                     if (blob) {
-                         const ext = src.match(/\.(jpg|jpeg|png|webp|gif)/i)?.[1] || 'jpg';
-                         zip.file(`${String(p + idx + 1).padStart(3, '0')}.${ext}`, blob);
-                         downloaded++;
-                     } else {
-                         console.warn(`[Image Fail] ${src}`);
-                     }
-                }));
-                p += 3;
-            }
-
-            if (downloaded === 0) throw new Error("All images failed to download");
-            
-            finalFileName = `${zipFileName}.cbz`;
+             // Single item, use its title but try to guess series title? 
+             // Without extraction logic, we just use the item title for now, 
+             // but user wants [ID] Folder.
+             rootFolder = `[${seriesId}] ${first.title}`;
         }
 
-        // Upload Logic
-        updateStatus(`📦 압축 & 업로드 준비...`);
-        const zipBlob = await zip.generateAsync({type:"blob"});
-        
-        await uploadResumable(zipBlob, targetFolderName, finalFileName, category, (pct) => {
-             updateStatus(`☁️ 업로드: ${pct}%`);
-        });
+        // Create IFrame
+        const iframe = document.createElement('iframe');
+        iframe.width = 600; iframe.height = 600;
+        iframe.style.position = 'fixed'; iframe.style.top = '-9999px'; // Hide it
+        document.body.appendChild(iframe);
+
+        // --- Processing Loop ---
+        for (let i = 0; i < list.length; i++) {
+            const item = parseListItem(list[i].element || list[i]); 
+            console.clear();
+            logger.log(`[${i + 1}/${list.length}] 처리 중: ${item.title}`);
+
+            // Decision based on Policy
+            let currentBuilder = null;
+
+            if (buildingPolicy === 'folderInCbz') {
+                currentBuilder = mainBuilder;
+            } else {
+                // For 'zipOfCbzs' and 'individual', we need a FRESH builder per item
+                if (isNovel) currentBuilder = new EpubBuilder();
+                else currentBuilder = new CbzBuilder();
+            }
+
+            // Process Item
+            try {
+                await processItem(item, currentBuilder, siteInfo, iframe, seriesTitle);
+            } catch (err) {
+                console.error(err);
+                logger.error(`항목 실패 (${item.title}): ${err.message}`);
+                continue; // Skip faulty item but continue loop
+            }
+
+            // Post-Process for Non-Default Policies
+            if (buildingPolicy !== 'folderInCbz') {
+                // Build the individual chapter file
+                // Title for file: Cleaned title used in folder structure is best, 
+                // but processItem adds to builder internal structure. 
+                // The filename should be: "{seriesTitle} {num} {chapterTitle}" or just "{num} {chapterTitle}" inside zip
+                // Let's use item.title for filename for now to be safe, or construct it.
+                
+                let fileTitle = item.title;
+                if (seriesTitle && fileTitle.startsWith(seriesTitle)) {
+                    fileTitle = fileTitle.replace(seriesTitle, '').trim();
+                }
+                const fullFilename = `${item.num} ${fileTitle}`;
+
+                const innerZip = await currentBuilder.build({ title: fullFilename, author: site });
+                const blob = await innerZip.generateAsync({ type: "blob" });
+
+                if (buildingPolicy === 'zipOfCbzs') {
+                    console.log(`[MasterZip] 추가 중: ${fullFilename}.${extension}`);
+                    masterZip.file(`${fullFilename}.${extension}`, blob);
+                } else if (buildingPolicy === 'individual') {
+                    // Immediate Save (Local or Drive based on destination)
+                    // Pass metadata for GAS: folderName (Series Title) and Category
+                    await saveFile(blob, fullFilename, destination, extension, {
+                        folderName: rootFolder,
+                        category: category
+                    }); 
+                }
+            }
+        }
 
         // Cleanup
         iframe.remove();
-        return true;
 
-    } catch (e) {
-        console.error(`[Download Error] ${title}:`, e);
-        if(iframe) iframe.remove();
-        throw e;
+        // Finalize Build
+        // Finalize Build
+        if (buildingPolicy === 'folderInCbz' && mainBuilder) {
+            logger.log("통합 파일 생성 및 저장 중...");
+            const zip = await mainBuilder.build({ title: rootFolder, author: site });
+            await saveFile(zip, rootFolder, destination, extension, { category });
+        } else if (buildingPolicy === 'zipOfCbzs' && masterZip) {
+            logger.log("Master ZIP 파일 생성 및 저장 중...");
+            await saveFile(masterZip, rootFolder, 'local', 'zip', { category }); 
+        }
+
+        logger.success("모든 작업 완료!");
+        Notifier.notify("다운로드 완료", `${rootFolder} (${list.length} 항목)`);
+
+    } catch (error) {
+        console.error(error);
+        alert(`오류 발생: ${error.message}`);
+        LogBox.getInstance().error(error.message);
     }
+}
+
+async function fetchImages(imageUrls) {
+    const promises = imageUrls.map(async (src) => {
+        try {
+            const response = await fetch(src);
+            const blob = await response.blob();
+            
+            // Metadata Extraction
+            let ext = '.jpg';
+            const extMatch = src.match(/\.[a-zA-Z]+$/);
+            
+            if (extMatch) {
+                ext = extMatch[0];
+            } else {
+                // Fallback: Infer from Content-Type
+                const type = response.headers.get('content-type');
+                if (type) {
+                    if (type.includes('png')) ext = '.png';
+                    else if (type.includes('gif')) ext = '.gif';
+                    else if (type.includes('webp')) ext = '.webp';
+                    else if (type.includes('jpeg') || type.includes('jpg')) ext = '.jpg';
+                }
+            }
+
+            return { src, blob, ext };
+        } catch (e) {
+            console.error(`이미지 다운로드 실패: ${src}`, e);
+            return null;
+        }
+    });
+
+    return await Promise.all(promises);
 }

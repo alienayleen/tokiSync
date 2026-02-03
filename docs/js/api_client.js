@@ -6,21 +6,47 @@
 
 class TokiApiClient {
     /**
-     * 초기화: 로컬 스토리지에서 저장된 설정(URL, API Key)을 로드합니다.
+     * 초기화: 메모리 기반 설정 (UserScript 우선, localStorage 폴백)
      */
     constructor() {
-        this.baseUrl = localStorage.getItem('TOKI_API_URL') || '';
-        this.folderId = localStorage.getItem('TOKI_ROOT_ID') || '';
+        // In-memory storage (우선순위 1: UserScript에서 주입)
+        this._config = {
+            baseUrl: '',
+            folderId: '',
+            apiKey: ''
+        };
+        
+        // Fallback: localStorage (단독 실행 시)
+        this._loadFromLocalStorage();
     }
 
     /**
-     * API 설정 저장
+     * localStorage에서 설정 로드 (폴백용)
      */
-    setConfig(url, id) {
-        this.baseUrl = url;
-        this.folderId = id;
+    _loadFromLocalStorage() {
+        this._config.baseUrl = localStorage.getItem('TOKI_API_URL') || '';
+        this._config.folderId = localStorage.getItem('TOKI_ROOT_ID') || '';
+        this._config.apiKey = localStorage.getItem('TOKI_API_KEY') || '';
+        
+        if (this._config.baseUrl) {
+            console.log('📦 Config loaded from localStorage (fallback)');
+        }
+    }
+
+    /**
+     * API 설정 저장 (UserScript에서 주입받음)
+     */
+    setConfig(url, id, apiKey) {
+        this._config.baseUrl = url;
+        this._config.folderId = id;
+        this._config.apiKey = apiKey;
+        
+        // localStorage에도 저장 (다음 번 단독 실행 시 사용)
         localStorage.setItem('TOKI_API_URL', url);
         localStorage.setItem('TOKI_ROOT_ID', id);
+        localStorage.setItem('TOKI_API_KEY', apiKey);
+        
+        console.log('✅ Config set from UserScript (priority)');
     }
 
     /**
@@ -28,7 +54,7 @@ class TokiApiClient {
      * @returns {boolean} 설정 완료 여부
      */
     isConfigured() {
-        return this.baseUrl && this.folderId;
+        return this._config.baseUrl && this._config.folderId;
     }
 
     /**
@@ -37,13 +63,14 @@ class TokiApiClient {
      * @param {object} payload - 추가 데이터
      */
     async request(type, payload = {}) {
-        if (!this.baseUrl) throw new Error("API URL이 설정되지 않았습니다.");
+        if (!this._config.baseUrl) throw new Error("API URL이 설정되지 않았습니다.");
 
         // 기본 Payload 구성
         const bodyData = {
             ...payload,
             type: type,
-            folderId: this.folderId, // 기본적으로 Root ID 전송 (필요 시 오버라이드 가능)
+            folderId: this._config.folderId,
+            apiKey: this._config.apiKey,  // ✅ API Key 포함
             protocolVersion: 3
         };
 
@@ -51,7 +78,7 @@ class TokiApiClient {
             // [CORS Workaround] GAS는 application/json preflight를 거절하는 경우가 많음.
             // text/plain으로 보내면 브라우저가 preflight를 생략하고 보냄.
             // GAS 서버에서는 e.postData.contents로 파싱 가능.
-            const response = await fetch(this.baseUrl, {
+            const response = await fetch(this._config.baseUrl, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'text/plain;charset=utf-8', 

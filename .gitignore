@@ -1,11 +1,16 @@
 node_modules/
-북토끼/
-뉴토끼/
-마나토끼/
+.DS_Store
+*.sw*
+.idea/
+*.iml
+.vscode/
 
-# Clasp Settings (Contains Script ID)
+# Sensitive files
 .clasp.json
+*.env
 
+# Google Apps Script Old Files
+google_app_script/old/
 # Analysis Files (Local only)
 old_*
 docs/js/backup/*

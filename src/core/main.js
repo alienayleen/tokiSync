@@ -1,138 +1,122 @@
+import { tokiDownload } from './downloader.js';
+import { detectSite } from './detector.js';
+import { showConfigModal, getConfig } from './config.js';
+import { LogBox, markDownloadedItems } from './ui.js';
+import { fetchHistory } from './gas.js';
+import { getListItems, parseListItem } from './parser.js';
+import { getCommonPrefix } from './utils.js';
 
-import { initConfig, migrateConfig, toggleDebug, CFG_DEBUG_KEY } from './config.js';
-import { initNetwork } from './network.js';
-import { initUI, initStatusUI, openDashboard, openSettings, injectDownloadButtons } from './ui.js';
-import { getSeriesInfo } from './parser.js';
-import { initDownloader, tokiDownload, addTasksToQueue } from './downloader.js';
-import { initQueue } from './queue.js';
-import { CLIENT_VERSION } from './config.js';
-import { bus, EVENTS } from './events.js';
-import { setState } from './state.js';
-
-// Entry Point
-function main(GM) {
-    'use strict';
+export function main() {
+    console.log("🚀 TokiDownloader Loaded (New Core)");
     
-    // 0. Init Modules
-    initConfig(GM);
-    initNetwork(GM);
-    initUI(GM);
-    initDownloader(GM);
-    initQueue(GM);
+    // 1. Global Settings (Always available)
+    if (typeof GM_registerMenuCommand !== 'undefined') {
+        GM_registerMenuCommand('설정', () => showConfigModal());
+        GM_registerMenuCommand('로그창 토글', () => LogBox.getInstance().toggle());
+        GM_registerMenuCommand('설정 확인', () => {
+            const config = getConfig();
+            alert(`GAS URL: ${config.gasUrl}\nGoogle Drive 폴더 ID: ${config.folderId}\n다운로드 정책: ${config.policy}`);
+        });
 
-    console.log(`🚀 TokiSync ${CLIENT_VERSION} Loaded (Modular Single Script)`);
-
-    // 1. Migration
-    migrateConfig();
-
-    // 2. Site Detection
-    const currentURL = document.URL;
-    let site = 'Unknown';
-    let detectedCategory = 'Webtoon';
-    let workId = '00000';
-
-    if (currentURL.match(/booktoki/)) { site = "북토끼"; detectedCategory = "Novel"; }
-    else if (currentURL.match(/newtoki/)) { site = "뉴토끼"; detectedCategory = "Webtoon"; }
-    else if (currentURL.match(/manatoki/)) { site = "마나토끼"; detectedCategory = "Manga"; }
-
-    // Try to extract Work/Series ID
-    const idMatch = currentURL.match(/\/(?:webtoon|comic|novel)\/([0-9]+)/);
-    if (idMatch) workId = idMatch[1];
-    
-    // Parse Full Series Info
-    const parsedSeries = getSeriesInfo(workId, detectedCategory);
-
-    // Merge info
-    const siteInfo = { 
-        site, 
-        workId, 
-        detectedCategory,
-        ...parsedSeries 
-    };
-
-    // [New] Save Info to Central State
-    setState({ siteInfo, gmContext: GM });
-
-    if(site !== 'Unknown') {
-        console.log(`[TokiSync] Info: ${siteInfo.cleanTitle} (ID: ${siteInfo.workId})`);
+        GM_registerMenuCommand('Viewer 열기 (설정 전송)', () => {
+             const config = getConfig();
+             const viewerUrl = "https://pray4skylark.github.io/tokiSync/";
+             const win = window.open(viewerUrl, "_blank");
+             
+             if(win) {
+                 // Try to send config periodically until success or timeout
+                 let attempts = 0;
+                 const interval = setInterval(() => {
+                     attempts++;
+                     win.postMessage({ type: 'TOKI_CONFIG', config: config }, '*');
+                     if(attempts > 10) clearInterval(interval);
+                 }, 500);
+             } else {
+                 alert("팝업 차단을 해제해주세요.");
+             }
+        });
     }
 
-    // 3. Define Managers (Glue Logic) & Event Wiring
-    
-    // [New] Event Wiring
-    bus.on(EVENTS.CMD_ENQUEUE_TASK, (data) => {
-        // data: { tasks: [{task, li}], siteInfo }
-        addTasksToQueue(data.tasks, data.siteInfo);
-    });
+    const siteInfo = detectSite();
+    if(!siteInfo) return; // Not a target page
 
-    const autoSyncDownloadManager = () => {
-        if(confirm(`[${siteInfo.site}] 전체 다운로드를 시작하시겠습니까?\n(이미 다운로드된 항목은 건너뛰거나 덮어쓸 수 있습니다)`)) {
-            tokiDownload(null, null, null, siteInfo);
-        }
-    };
-
-    const batchDownloadManager = () => {
-        const input = prompt("다운로드할 범위를 입력하세요 (예: 1-10 또는 5,7,9):");
-        if (!input) return;
+    // 2. Site Specific Commands
+    if (typeof GM_registerMenuCommand !== 'undefined') {
+        GM_registerMenuCommand('전체 다운로드', () => {
+            const config = getConfig();
+            tokiDownload(undefined, undefined, config.policy);
+        });
         
-        if (input.includes('-')) {
-            const [start, end] = input.split('-').map(Number);
-            tokiDownload(start, end, null, siteInfo);
-        } else if (input.includes(',')) {
-            const targets = input.split(',').map(Number);
-            tokiDownload(null, null, targets, siteInfo);
-        } else {
-            const num = parseInt(input);
-            if(num) tokiDownload(null, null, [num], siteInfo);
-        }
-    };
-
-    const manualDownloadManager = () => {
-        const url = prompt("다운로드할 에피소드 URL을 입력하세요:");
-        if (url) {
-            import('./downloader.js').then(m => m.tokiDownloadSingle({
-                url, title: "Manual Download", id: "manual", category: siteInfo.detectedCategory, site: siteInfo.site
-            }));
-        }
-    };
-
-    // 4. Register Menus (Directly)
-    if (GM.GM_registerMenuCommand) {
-        GM.GM_registerMenuCommand('☁️ 자동 동기화', autoSyncDownloadManager);
-        GM.GM_registerMenuCommand('📊 서재 열기', openDashboard);
-        GM.GM_registerMenuCommand('🔢 범위 다운로드', batchDownloadManager);
-        GM.GM_registerMenuCommand('⚙️ 설정 (URL/FolderID)', openSettings);
-        GM.GM_registerMenuCommand('🐞 디버그 모드', toggleDebug);
-
-        if (GM.GM_getValue(CFG_DEBUG_KEY, false)) {
-            GM.GM_registerMenuCommand('🧪 1회성 다운로드', manualDownloadManager);
-        }
-    }
-
-    // 5. Auto Start Logic
-    initStatusUI();
-    
-    // Check Content
-    if (site !== 'Unknown') {
-         console.log(`[TokiSync] Site detected: ${site}. Checking for list...`);
-         injectDownloadButtons(siteInfo);
-    }
-
-    // Check if I am a Dedicated Worker (Popup)
-    if (window.name === 'TOKI_WORKER' || window.location.hash === '#toki_worker') {
-        import(/* webpackMode: "eager" */ './worker.js').then(module => {
-            module.initWorker(GM);
-            module.startWorker(true); // Dedicated mode
-            setState({ workerMode: 'dedicated' });
+        GM_registerMenuCommand('N번째 회차부터', () => {
+             const start = prompt('몇번째 회차부터 저장할까요?', 1);
+             if(start) {
+                 const config = getConfig();
+                 tokiDownload(parseInt(start), undefined, config.policy);
+             }
         });
-    } else if (site !== 'Unknown') {
-        // [New] Start Shared/Background Worker on Main Page to process Queue
-        import(/* webpackMode: "eager" */ './worker.js').then(module => {
-            module.initWorker(GM);
-            module.startWorker(false); // Non-dedicated mode
-            setState({ workerMode: 'shared' });
+
+        GM_registerMenuCommand('N번째 회차부터 N번째 까지', () => {
+             const start = prompt('몇번째 회차부터 저장할까요?', 1);
+             const end = prompt('몇번째 회차까지 저장할까요?', 2);
+             if(start && end) {
+                 const config = getConfig();
+                 tokiDownload(parseInt(start), parseInt(end), config.policy);
+             }
         });
     }
+
+    // 3. History Sync (Async)
+    console.log('[TokiSync] Starting history sync...');
+    (async () => {
+        try {
+            const list = getListItems();
+            console.log(`[TokiSync] Found ${list.length} list items`);
+            if (list.length === 0) {
+                console.warn('[TokiSync] No list items found, skipping history sync');
+                return;
+            }
+
+            // Replicate RootFolder Logic (Series Title Resolution)
+            const first = parseListItem(list[0]);
+            const last = parseListItem(list[list.length - 1]);
+
+            // Extract Series ID from URL
+            const idMatch = document.URL.match(/\/(novel|webtoon|comic)\/([0-9]+)/);
+            const seriesId = idMatch ? idMatch[2] : "0000";
+
+            let seriesTitle = "";
+            let rootFolder = "";
+
+            if (list.length > 1) {
+                seriesTitle = getCommonPrefix(first.title, last.title);
+                if (seriesTitle.length > 2) {
+                    rootFolder = `[${seriesId}] ${seriesTitle}`;
+                } else {
+                    rootFolder = `[${seriesId}] ${first.title} ~ ${last.title}`;
+                }
+            } else {
+                rootFolder = `[${seriesId}] ${first.title}`;
+            }
+
+            // Determine Category
+            let category = 'Webtoon';
+            if (siteInfo.site === '북토끼') category = 'Novel';
+            else if (siteInfo.site === '마나토끼') category = 'Manga';
+
+            // Fetch & Mark
+            console.log(`[TokiSync] Fetching history for: ${rootFolder} (${category})`);
+            const history = await fetchHistory(rootFolder, category);
+            console.log(`[TokiSync] Received ${history.length} history items:`, history);
+            if (history.length > 0) {
+                markDownloadedItems(history);
+            } else {
+                console.log('[TokiSync] No history items to mark');
+            }
+        } catch (e) {
+            console.warn('[TokiSync] History check failed:', e);
+        }
+    })();
 }
 
-export default main;
+// Auto-run main if imported? Or let index.js call it.
+// Since we are refactoring, likely index.js will just import and call main().

@@ -15,8 +15,9 @@ const METADATA_MAIN = `// ==UserScript==
 // @match        https://script.google.com/*
 // @match        https://*.github.io/tokiSync/*
 // @match        https://pray4skylark.github.io/tokiSync/*
-// @match        http://127.0.0.1:5500/*
-// @match        http://localhost:*
+// @match        http://localhost:*/*
+// @match        http://127.0.0.1:*/*
+// @icon         https://github.com/user-attachments/assets/99f5bb36-4ef8-40cc-8ae5-e3bf1c7952ad
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -27,6 +28,7 @@ const METADATA_MAIN = `// ==UserScript==
 // @connect      raw.githubusercontent.com
 // @connect      script.google.com
 // @connect      script.googleusercontent.com
+// @connect      pray4skylark.github.io
 // @connect      127.0.0.1
 // @connect      localhost
 // @connect      *
@@ -46,8 +48,20 @@ const METADATA_NEW_CORE = `// ==UserScript==
 // @match        https://*.com/webtoon/*
 // @match        https://*.com/novel/*
 // @match        https://*.net/comic/*
+// @match        https://pray4skylark.github.io/tokiSync/*
+// @match        http://localhost:*/*
+// @match        http://127.0.0.1:*/*
 // @icon         https://github.com/user-attachments/assets/99f5bb36-4ef8-40cc-8ae5-e3bf1c7952ad
 // @grant        GM_registerMenuCommand
+// @grant        GM_xmlhttpRequest
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_addValueChangeListener
+// @connect      script.google.com
+// @connect      script.googleusercontent.com
+// @connect      pray4skylark.github.io
+// @connect      localhost
+// @connect      127.0.0.1
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip-utils/0.1.0/jszip-utils.js
 // @run-at       document-end
@@ -55,41 +69,20 @@ const METADATA_NEW_CORE = `// ==UserScript==
 // ==/UserScript==
 `;
 
-module.exports = [
-  // Config 1: Main TokiSync
-  {
-    mode: 'production',
-    entry: './src/index.js',
-    output: {
-      filename: 'tokiSync.user.js',
-      path: path.resolve(__dirname, 'docs'),
-      clean: false,
-    },
-    optimization: { minimize: false },
-    plugins: [
-      new webpack.BannerPlugin({
-        banner: METADATA_MAIN,
-        raw: true,
-        entryOnly: true
-      })
-    ]
+module.exports = {
+  mode: 'production',
+  entry: './src/core/index.js',
+  output: {
+    filename: 'tokiSync.user.js',
+    path: path.resolve(__dirname, 'docs'),
+    clean: false,
   },
-  // Config 2: New Core (Downloader)
-  {
-    mode: 'production',
-    entry: './src/new_core/index.js',
-    output: {
-      filename: 'tokiDownloader.user.js',
-      path: path.resolve(__dirname, 'docs'),
-      clean: false, // Don't clean, otherwise parallel builds might fight or delete the other
-    },
-    optimization: { minimize: false },
-    plugins: [
-      new webpack.BannerPlugin({
-        banner: METADATA_NEW_CORE,
-        raw: true,
-        entryOnly: true
-      })
-    ]
-  }
-];
+  optimization: { minimize: false },
+  plugins: [
+    new webpack.BannerPlugin({
+      banner: METADATA_MAIN,
+      raw: true,
+      entryOnly: true
+    })
+  ]
+};

@@ -61,6 +61,13 @@
                     <label style="font-size:11px; color:#aaa; display:block; margin-bottom:3px;">GAS Deployment ID</label>
                     <input type="text" id="setting_deployId" class="config-input" placeholder="AKfycb...">
                 </div>
+                <div class="config-group" style="margin-bottom:15px;">
+                    <label style="font-size:11px; color:#aaa; display:block; margin-bottom:3px;">API Key (보안)</label>
+                    <input type="password" id="setting_apiKey" class="config-input" placeholder="API Key">
+                    <small style="color:#555; font-size:10px; display:block; margin-top:3px;">
+                        UserScript 사용 시 자동 설정
+                    </small>
+                </div>
 
                 <!-- 3. Viewer Defaults -->
                 <h3 style="margin:0 0 10px 0; font-size:14px; border-bottom:1px solid #444; padding-bottom:5px;">👁️ 뷰어 기본 설정</h3>
@@ -116,10 +123,16 @@
                     <label class="config-label">GAS 웹 앱 URL</label>
                     <input type="text" id="configApiUrl" class="config-input" placeholder="https://script.google.com/macros/s/.../exec">
                 </div>
-                </div>
                 <div class="config-group">
                     <label class="config-label">루트 폴더 ID</label>
                     <input type="text" id="configFolderId" class="config-input" placeholder="Google Drive Folder ID">
+                </div>
+                <div class="config-group">
+                    <label class="config-label">API Key (보안)</label>
+                    <input type="password" id="configApiKey" class="config-input" placeholder="API Key (선택사항)">
+                    <small style="color:#777; font-size:11px; display:block; margin-top:5px;">
+                        UserScript 사용 시 자동으로 주입됩니다.
+                    </small>
                 </div>
                 <button class="btn btn-save" onclick="saveManualConfig()">설정 저장</button>
             </div>

@@ -64,10 +64,10 @@ window.addEventListener('DOMContentLoaded', () => {
  */
 function handleMessage(event) {
     if (event.data.type === 'TOKI_CONFIG') {
-        const { url, folderId, deployId } = event.data;
+        const { url, folderId, apiKey } = event.data;
         if (url && folderId) {
-            console.log("⚡️ Auto-Config Injected:", { url, folderId });
-            API.setConfig(url, folderId);
+            console.log("⚡️ Auto-Config Injected:", { url, folderId, apiKey: apiKey ? '***' : '(empty)' });
+            API.setConfig(url, folderId, apiKey);  // ✅ API Key 포함
             
             // UI Update
             document.getElementById('configModal').style.display = 'none';
@@ -222,7 +222,12 @@ function renderGrid(seriesList) {
 
             card.innerHTML = `
                 <div class="thumb-wrapper">
-                    <img src="${thumb}" class="thumb" onerror="this.src='${NO_IMAGE_SVG}'">
+                    <img src="${NO_IMAGE_SVG}" 
+                         data-thumb="${thumb}" 
+                         class="thumb" 
+                         loading="lazy"
+                         onerror="handleThumbnailError(this, '${NO_IMAGE_SVG}')"
+                         onload="this.dataset.loaded='true'">
                     <div class="overlay">
                         <a href="${series.id ? 'https://drive.google.com/drive/u/0/folders/' + series.id : '#'}" target="_blank" class="btn btn-drive">📂 드라이브</a>
                         <button onclick="openEpisodeList('${series.id}', '${series.name}', ${index})" class="btn" style="background:#444; color:white;">📄 목록</button>
@@ -240,7 +245,19 @@ function renderGrid(seriesList) {
                     </div>
                 </div>
             `;
+            
+            // Lazy load thumbnail after card is added to DOM
             grid.appendChild(card);
+            
+            // Load thumbnail with slight delay to avoid rate limiting
+            const img = card.querySelector('img.thumb');
+            if (thumb !== NO_IMAGE_SVG) {
+                setTimeout(() => {
+                    if (!img.dataset.loaded) {
+                        img.src = thumb;
+                    }
+                }, index * 50); // Stagger loading by 50ms per image
+            }
         } catch (err) {
             console.error("Render Error:", err);
         }
@@ -273,10 +290,11 @@ function showToast(msg, duration = 3000) {
 function saveManualConfig() {
     const url = document.getElementById('configApiUrl').value.trim();
     const id = document.getElementById('configFolderId').value.trim();
+    const apiKey = document.getElementById('configApiKey')?.value?.trim() || '';  // ✅ API Key 추가
     
-    if (!url || !id) return alert("값을 모두 입력해주세요.");
+    if (!url || !id) return alert("URL과 Folder ID를 모두 입력해주세요.");
     
-    API.setConfig(url, id);
+    API.setConfig(url, id, apiKey);  // ✅ API Key 포함
     document.getElementById('configModal').style.display = 'none';
     refreshDB();
 }
@@ -358,10 +376,11 @@ function saveActiveSettings() {
     // 2. Save Connection Settings
     const folderId = document.getElementById('setting_folderId').value.trim();
     const deployId = document.getElementById('setting_deployId').value.trim();
+    const apiKey = document.getElementById('setting_apiKey').value.trim();  // ✅ API Key 추가
     
     if (folderId && deployId) {
         const apiUrl = `https://script.google.com/macros/s/${deployId}/exec`;
-        API.setConfig(apiUrl, folderId);
+        API.setConfig(apiUrl, folderId, apiKey);  // ✅ API Key 포함
         showToast("☁️ 서버 연결 설정이 업데이트되었습니다.");
     }
 
@@ -399,12 +418,16 @@ function loadDomains() {
     // 2. Load Connection Settings
     const elFolder = document.getElementById('setting_folderId');
     const elDeploy = document.getElementById('setting_deployId');
+    const elApiKey = document.getElementById('setting_apiKey');  // ✅ API Key 추가
     
-    if (API.folderId && elFolder) elFolder.value = API.folderId;
-    if (API.baseUrl && elDeploy) {
+    if (API._config.folderId && elFolder) elFolder.value = API._config.folderId;
+    if (API._config.baseUrl && elDeploy) {
         // Extract Deployment ID from URL
-        const match = API.baseUrl.match(/\/s\/([^\/]+)\/exec/);
+        const match = API._config.baseUrl.match(/\/s\/([^\/]+)\/exec/);
         if (match && match[1]) elDeploy.value = match[1];
+    }
+    if (API._config.apiKey && elApiKey) {
+        elApiKey.value = API._config.apiKey;  // ✅ API Key 로드
     }
 
     // 3. Load Viewer Preferences
@@ -456,6 +479,32 @@ function getDynamicLink(series) {
 }
 
 /**
+ * 썸네일 로딩 에러 핸들러 (429 Too Many Requests 등)
+ * @param {HTMLImageElement} img - 이미지 엘리먼트
+ * @param {string} fallbackSvg - 폴백 SVG
+ */
+function handleThumbnailError(img, fallbackSvg) {
+    // 이미 재시도했거나 폴백 이미지면 더 이상 재시도 안 함
+    if (img.dataset.retried || img.src === fallbackSvg || img.src.startsWith('data:image/svg')) {
+        img.src = fallbackSvg;
+        return;
+    }
+    
+    // 처음 실패한 경우: 재시도 (1초 후)
+    img.dataset.retried = 'true';
+    const originalThumb = img.dataset.thumb;
+    
+    if (originalThumb && originalThumb !== fallbackSvg) {
+        console.warn(`[Thumbnail] Load failed, retrying in 1s: ${originalThumb}`);
+        setTimeout(() => {
+            img.src = originalThumb;
+        }, 1000);
+    } else {
+        img.src = fallbackSvg;
+    }
+}
+
+/**
  * 도메인 설정 패널을 토글(열기/닫기)합니다.
  */
 function toggleSettings() {
@@ -472,3 +521,4 @@ window.saveActiveSettings = saveActiveSettings;
 window.saveManualConfig = saveManualConfig;
 window.showToast = showToast; // Used by viewer?
 window.renderGrid = renderGrid; // Debugging
+window.handleThumbnailError = handleThumbnailError; // ✅ Error handler
