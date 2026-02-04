@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TokiSync (Link to Drive)
 // @namespace    http://tampermonkey.net/
-// @version      1.2.0
+// @version      1.2.1
 // @description  Toki series sites -> Google Drive syncing tool (Bundled)
 // @author       pray4skylark
 // @match        https://*.com/webtoon/*
@@ -1319,19 +1319,68 @@ function main() {
         const config = getConfig();
         
         if (config.gasUrl && config.folderId) {
-            setTimeout(() => {
+            // [Fix] Retry injection to handle timing issues (Viewer might not be ready)
+            let retryCount = 0;
+            const maxRetries = 5;
+            let injectionConfirmed = false;
+            let retryTimer = null;
+            let pollTimer = null;
+            
+            // Check localStorage to verify injection success
+            const checkInjection = () => {
+                const storedUrl = localStorage.getItem('TOKI_API_URL');
+                const storedId = localStorage.getItem('TOKI_ROOT_ID');
+                const storedKey = localStorage.getItem('TOKI_API_KEY');
+                
+                // All three values must match
+                if (storedUrl === config.gasUrl && 
+                    storedId === config.folderId && 
+                    storedKey === (config.apiKey || '')) {
+                    
+                    injectionConfirmed = true;
+                    if (retryTimer) clearTimeout(retryTimer);
+                    if (pollTimer) clearInterval(pollTimer);
+                    console.log("✅ Config injection confirmed (localStorage verified)");
+                    return true;
+                }
+                return false;
+            };
+            
+            const injectConfig = () => {
+                if (injectionConfirmed) return; // Stop if already confirmed
+                
                 window.postMessage({ 
                     type: 'TOKI_CONFIG', 
                     url: config.gasUrl,
                     folderId: config.folderId,
-                    apiKey: config.apiKey  // ✅ API Key 추가
+                    apiKey: config.apiKey
                 }, '*');
-                console.log("✅ Config Injected to Frontend:", { 
+                
+                console.log(`🚀 Config Injection Attempt ${retryCount + 1}/${maxRetries}:`, { 
                     gasUrl: config.gasUrl, 
-                    folderId: config.folderId,
                     apiKey: config.apiKey ? '***' : '(empty)'
                 });
-            }, 500);
+
+                retryCount++;
+                if (retryCount < maxRetries && !injectionConfirmed) {
+                    retryTimer = setTimeout(injectConfig, 1000);
+                }
+            };
+
+            // Start polling localStorage (check every 200ms)
+            pollTimer = setInterval(checkInjection, 200);
+            
+            // Timeout after 5 seconds
+            setTimeout(() => {
+                if (pollTimer) clearInterval(pollTimer);
+                if (!injectionConfirmed) {
+                    console.warn("⚠️ Config injection timeout (5s)");
+                }
+            }, 5000);
+
+            // Start injection loop
+            setTimeout(injectConfig, 500);
+
         } else {
             console.warn("⚠️ GAS URL or Folder ID missing. Please configure via menu.");
         }

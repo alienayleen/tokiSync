@@ -14,3 +14,7 @@ google_app_script/old/
 # Analysis Files (Local only)
 old_*
 docs/js/backup/*
+
+# Temporary build artifacts (UserScript)
+docs/*Downloader.user.js
+docs/[0-9]*.user.js

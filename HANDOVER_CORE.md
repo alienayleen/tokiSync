@@ -1,104 +1,97 @@
-# Core Module Handover Report
+# Core Module Handover Report (v1.2.0)
 
 **Role:** Core Developer
-**Scope:** `downloader.js`, `epub.js`, `cbz.js`, `gas.js`, `utils.js`
-**Status:** Stable (Refactoring Complete)
+**Scope:** `src/core/*` (Integrated `downloader.js`, `gas.js`, `ui.js`, etc.)
+**Status:** **v1.2.0 Integrated & Deployed** (Main Branch)
 
-## 1. Module Status
+---
 
-### `downloader.js` (Main Controller)
+## 🚀 Recent Major Changes (v1.2.0)
 
-- **Functions:** `tokiDownload(startIndex, lastIndex)`
-- **Dependencies:** `utils.js`, `parser.js`, `epub.js`, `cbz.js`
-- **Recent Changes:**
-  - **Refactored:** Integrated `CbzBuilder` for unified build process.
-  - **Refactored:** Added `getCommonPrefix` integration to clean redundant series titles from filenames.
-  - **Refactored:** Extracted `fetchImages` helper for better async control and metadata (extension) handling.
-  - **Refactored:** Implemented 4 Download Policies (`folderInCbz`, `zipOfCbzs`, `individual`, `gasUpload`) for flexible output structure and destination.
-- **Current Logic:**
-  1. Detects site type (Novel vs Image).
-  2. Initializes Builders based on `policy`.
-     - `folderInCbz`: Shared Builder
-     - `zipOfCbzs` / `individual` / `gasUpload`: Per-item Builder
-  3. Calculates `commonPrefix` (Series Title) and extracts `SeriesID` from URL.
-  4. Iterates list:
-     - Calls `processItem` to build content.
-     - If policy is `gasUpload`: Destination='drive', Saves to `[ID] SeriesTitle` folder.
-     - If policy is `individual`/`zipOfCbzs`: Destination='local', Handled per item/zip.
-  5. Finalizes output (Save Shared Builder OR Save Master Zip for `zipOfCbzs`).
+### 1. Core Integration
 
-### `cbz.js` (CBZ Builder)
+- **Merged:** `new_core` and `old_core` logic merged into `src/core`.
+- **Single Build:** Webpack config updated to build `tokiSync.user.js` from `src/core/index.js`.
 
-- **Role:** Handles creation of Image ZIP files (Webtoon/Manga).
-- **Recent Changes:**
-  - **New Class:** Created from scratch to replace inline `JSZip` logic.
-  - **Optimization:** Implements folder structure simplification (removes redundant series title from internal filenames).
-- **Structure:** `Series Title ~ Chapter.cbz` > `Chapter Title/` > `image0001.jpg`
+### 2. Security & Auth
 
-### `epub.js` (EPUB Builder)
+- **API Key Enforcement:** All GAS requests (Upload, History, View) require `apiKey`.
+- **Properties Service:** API Key is stored in GAS Script Properties (not hardcoded).
 
-- **Role:** Handles creation of Novel EPUB files.
-- **Status:** Ported from legacy, basic functionality active.
+### 3. Viewer Integration (Zero-Config)
 
-## Pending Feature Request: UI & Feedback System
+- **Auto-Injection:** UserScript automatically injects `GAS URL`, `FolderID`, `API Key` to the Viewer via `postMessage`.
+- **Retry Logic (Pending):** A fix for timing issues is planned (see below).
 
-**Objective:** Replace intrusive `alert()` calls and console logs with a proper UI and system notification system.
+---
 
-### 1. New Module: `src/new_core/ui.js`
+## ⚡️ Critical Next Steps (For Next Agent)
 
-The "Common Part" developer needs to implement this module.
+### 1. [Priority] API Key Injection Fix
 
-#### **Specs:**
+- **Issue:** The configuration injection (`postMessage`) from UserScript to Viewer fails due to race conditions (timing).
+- **Plan:** **Implement Retry Mechanism**
+- **Detailed Plan:** Please refer to **`implementation_plan.md`** in `~/.gemini/antigravity/brain/...`.
+- **Action:**
+  1. Read `implementation_plan.md`.
+  2. Modify `src/core/index.js` to implement the retry loop.
+  3. Build & Commit.
 
-1.  **LogBox Component:**
-    - **Visual:** Fixed overlay (bottom-right or bottom-center), semi-transparent dark background.
-    - **Content:** Scrollable list of log messages (e.g., `[Local] Processing items...`).
-    - **Controls:** Toggle visibility (Minimize/Expand), Clear logs.
-    - **API:** `LogBox.log(message)`, `LogBox.error(message)`.
+### 2. [Optimization] Thumbnail Stability
 
-2.  **Notifier Service:**
-    - **Function:** Send OS-level notifications for major events (Batch Complete, Critical Error).
-    - **Implementation:** Use `GM_notification` (Tampermonkey API) with fallback to `console.log`.
-    - **API:** `Notifier.notify(title, body)`.
+- **Issue:** The `main` branch viewer handles thumbnails more stably than `v1.2.0` despite the same GAS backend.
+- **Reference:** See `task.md` -> **Phase 4**.
+- **Action:** Compare legacy vs current viewer code and port stability fixes (e.g., caching, pre-fetching strategies).
 
-### 2. Integration Points
+---
 
-Once `ui.js` is created, refactor the following:
+## 🧹 Cleanup Required (Before Next Release)
 
-- **`downloader.js`:**
-  - Initialize `LogBox` at start of `tokiDownload`.
-  - Log progress in `processItem` loop.
-  - Call `Notifier.notify` when download completes.
-- **`utils.js`:**
-  - Modify `saveFile` to log "Upload Started/Finished" to `LogBox`.
-  - **REMOVE** `alert()` calls in `saveFile` (GAS Upload) to prevent popup spam.
-- **Status:** Stable. Uses `JSZip` to bundle XHTML OEBPS structure.
-- **Note:** Maintains internal `chapters` array and generates `content.opf`, `toc.ncx` on build.
+**Issue:** Temporary build artifacts and development folders were accidentally committed to GitHub.
 
-### `utils.js` (Shared Utilities)
+### Files/Folders to Delete:
 
-- **Role:** Common helper functions.
-- **Functions:**
-  - `sleep(ms, randomRange)`: Async delay execution.
-  - `waitIframeLoad(iframe, url)`: Promisified iframe loading.
-  - `saveFile(zip, filename, type, ext)`: Handles download triggers (Local vs Drive).
-  - `getCommonPrefix(str1, str2)`: Finds common start string (used for series title extraction).
+1. `docs/488.tokiSync.user.js` - Temporary build artifact
+2. `docs/tokiDownloader.user.js` - Legacy build (replaced by `tokiSync.user.js`)
+3. `src/new_core/` - Development folder (merged into `src/core`)
 
-### `gas.js` (Google Drive Upload)
+### Action Plan:
 
-- **Role:** Handles chunked upload to Google Apps Script.
-- **Status:** Stable.
-- **Key Logic:** `uploadToGAS` function using `GM_xmlhttpRequest`. Supports large file chunking (20MB chunks).
+```bash
+# Remove files from Git
+git rm docs/488.tokiSync.user.js
+git rm docs/tokiDownloader.user.js
+git rm -r src/new_core
 
-## 2. To-Do / Known Issues
+# Update .gitignore to prevent future accidents
+echo "docs/*Downloader.user.js" >> .gitignore
+echo "docs/[0-9]*.user.js" >> .gitignore
 
-- **None active.** All recent refactoring tasks (Builder pattern, Filename cleaning) are complete and verified.
+# Commit
+git commit -m "chore: remove temporary build artifacts and dev folders"
+git push origin main
+```
 
-## 3. Interface for Other Agents
+---
 
-- **To Parser Agent:**
-  - `downloader.js` heavily relies on `parser.js` returning correct `{ num, title, src }`.
-  - If title format changes (e.g. site UI update), `downloader.js`'s title cleaning logic might need strict validation.
+## 🛠 Module Status Overview
 
-- **To UI Agent:**
-  - `downloader` uses simple `alert` and `console.log`. Future UI improvements might require callbacks for progress bars instead of console logs.
+### `src/core/index.js` (Entry Point)
+
+- **Role:** Handshake with Viewer, Config Injection, API Proxy.
+- **Status:** **Needs Fix** (Retry logic).
+
+### `src/core/gas.js` (GAS Service)
+
+- **Role:** Handle Uploads & History Check.
+- **Status:** Stable. Enforces `apiKey`.
+
+### `src/core/ui.js` (UI System)
+
+- **Role:** `LogBox` (Overlay Logs) & `Notifier` (OS Alerts).
+- **Status:** Stable & Implemented.
+
+### `src/core/downloader.js` (Core Logic)
+
+- **Role:** Download Controller.
+- **Status:** Stable. Supports 4 policies (`folderInCbz`, `gasUpload` etc).
