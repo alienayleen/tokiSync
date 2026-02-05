@@ -1,104 +1,66 @@
-# Core Module Handover Report
+# Core Module Handover Report (v1.2.2)
 
-**Role:** Core Developer
-**Scope:** `downloader.js`, `epub.js`, `cbz.js`, `gas.js`, `utils.js`
-**Status:** Stable (Refactoring Complete)
+**Role:** Core Developer  
+**Scope:** `src/core/*` (Integrated `downloader.js`, `gas.js`, `ui.js`, etc.)  
+**Status:** **v1.2.2 Released** (Bug Fixes & Auto-Update)
 
-## 1. Module Status
+---
 
-### `downloader.js` (Main Controller)
+## 🚀 Released Changes (v1.2.2)
 
-- **Functions:** `tokiDownload(startIndex, lastIndex)`
-- **Dependencies:** `utils.js`, `parser.js`, `epub.js`, `cbz.js`
-- **Recent Changes:**
-  - **Refactored:** Integrated `CbzBuilder` for unified build process.
-  - **Refactored:** Added `getCommonPrefix` integration to clean redundant series titles from filenames.
-  - **Refactored:** Extracted `fetchImages` helper for better async control and metadata (extension) handling.
-  - **Refactored:** Implemented 4 Download Policies (`folderInCbz`, `zipOfCbzs`, `individual`, `gasUpload`) for flexible output structure and destination.
-- **Current Logic:**
-  1. Detects site type (Novel vs Image).
-  2. Initializes Builders based on `policy`.
-     - `folderInCbz`: Shared Builder
-     - `zipOfCbzs` / `individual` / `gasUpload`: Per-item Builder
-  3. Calculates `commonPrefix` (Series Title) and extracts `SeriesID` from URL.
-  4. Iterates list:
-     - Calls `processItem` to build content.
-     - If policy is `gasUpload`: Destination='drive', Saves to `[ID] SeriesTitle` folder.
-     - If policy is `individual`/`zipOfCbzs`: Destination='local', Handled per item/zip.
-  5. Finalizes output (Save Shared Builder OR Save Master Zip for `zipOfCbzs`).
+### 1. Critical Bug Fixes (Completed)
 
-### `cbz.js` (CBZ Builder)
+- **Filename Logic (Split Policy):**
+  - **Local Download:** `[ID] Title [1-100].cbz` (Added Range)
+  - **GAS Upload:** `0001 - 1화.cbz` (Removed Series Title for clean Drive structure)
+- **Title Parsing:**
+  - Fixed redundant title bug (`255 - 255 화` -> `255 화`) via improved Regex.
+- **Auto-Update:**
+  - Added `@updateURL` & `@downloadURL` pointing to GitHub `main` branch.
 
-- **Role:** Handles creation of Image ZIP files (Webtoon/Manga).
-- **Recent Changes:**
-  - **New Class:** Created from scratch to replace inline `JSZip` logic.
-  - **Optimization:** Implements folder structure simplification (removes redundant series title from internal filenames).
-- **Structure:** `Series Title ~ Chapter.cbz` > `Chapter Title/` > `image0001.jpg`
+### 2. Version Synchronization
 
-### `epub.js` (EPUB Builder)
+- **UserScript:** `v1.2.2` (Header)
+- **Internal Client:** `v1.2.2` (`gas.js` - `CLIENT_VERSION`)
+- **Package:** `v1.2.2` (`package.json`)
 
-- **Role:** Handles creation of Novel EPUB files.
-- **Status:** Ported from legacy, basic functionality active.
+---
 
-## Pending Feature Request: UI & Feedback System
+## 🚨 Ongoing / Pending Tasks
 
-**Objective:** Replace intrusive `alert()` calls and console logs with a proper UI and system notification system.
+### 1. [Optimization] Thumbnail Stability
 
-### 1. New Module: `src/new_core/ui.js`
+- **Issue:** The `main` branch viewer handles thumbnails more stably than `v1.2.0+` despite the same GAS backend.
+- **Plan:** Compare legacy vs current viewer code and port stability fixes (e.g., caching, pre-fetching strategies).
+- **Status:** **Postponed** (Focus was on critical filename bugs).
 
-The "Common Part" developer needs to implement this module.
+---
 
-#### **Specs:**
+## 🛠 Module Status Overview
 
-1.  **LogBox Component:**
-    - **Visual:** Fixed overlay (bottom-right or bottom-center), semi-transparent dark background.
-    - **Content:** Scrollable list of log messages (e.g., `[Local] Processing items...`).
-    - **Controls:** Toggle visibility (Minimize/Expand), Clear logs.
-    - **API:** `LogBox.log(message)`, `LogBox.error(message)`.
+### `src/core/downloader.js`
 
-2.  **Notifier Service:**
-    - **Function:** Send OS-level notifications for major events (Batch Complete, Critical Error).
-    - **Implementation:** Use `GM_notification` (Tampermonkey API) with fallback to `console.log`.
-    - **API:** `Notifier.notify(title, body)`.
+- **Status:** **Stable**
+- **Updates:** Implemented conditional filename logic for Local vs GAS.
 
-### 2. Integration Points
+### `src/core/parser.js`
 
-Once `ui.js` is created, refactor the following:
+- **Status:** **Stable**
+- **Updates:** Enhanced regex for cleaner title extraction.
 
-- **`downloader.js`:**
-  - Initialize `LogBox` at start of `tokiDownload`.
-  - Log progress in `processItem` loop.
-  - Call `Notifier.notify` when download completes.
-- **`utils.js`:**
-  - Modify `saveFile` to log "Upload Started/Finished" to `LogBox`.
-  - **REMOVE** `alert()` calls in `saveFile` (GAS Upload) to prevent popup spam.
-- **Status:** Stable. Uses `JSZip` to bundle XHTML OEBPS structure.
-- **Note:** Maintains internal `chapters` array and generates `content.opf`, `toc.ncx` on build.
+### `src/core/gas.js`
 
-### `utils.js` (Shared Utilities)
+- **Status:** **Stable**
+- **Updates:** Updated `CLIENT_VERSION` to match release.
 
-- **Role:** Common helper functions.
-- **Functions:**
-  - `sleep(ms, randomRange)`: Async delay execution.
-  - `waitIframeLoad(iframe, url)`: Promisified iframe loading.
-  - `saveFile(zip, filename, type, ext)`: Handles download triggers (Local vs Drive).
-  - `getCommonPrefix(str1, str2)`: Finds common start string (used for series title extraction).
+### `src/core/index.js`
 
-### `gas.js` (Google Drive Upload)
+- **Status:** **Stable**
+- **Updates:** Handshake retry logic implemented (v1.2.1).
 
-- **Role:** Handles chunked upload to Google Apps Script.
-- **Status:** Stable.
-- **Key Logic:** `uploadToGAS` function using `GM_xmlhttpRequest`. Supports large file chunking (20MB chunks).
+---
 
-## 2. To-Do / Known Issues
+## 📝 Next Steps for Reviewer
 
-- **None active.** All recent refactoring tasks (Builder pattern, Filename cleaning) are complete and verified.
-
-## 3. Interface for Other Agents
-
-- **To Parser Agent:**
-  - `downloader.js` heavily relies on `parser.js` returning correct `{ num, title, src }`.
-  - If title format changes (e.g. site UI update), `downloader.js`'s title cleaning logic might need strict validation.
-
-- **To UI Agent:**
-  - `downloader` uses simple `alert` and `console.log`. Future UI improvements might require callbacks for progress bars instead of console logs.
+1. **Verify Auto-Update:** Install v1.2.2 and check if Tampermonkey detects future updates.
+2. **Thumbnail Investigation:** Resume the postponed stability task.
