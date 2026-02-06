@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.3.5] - 2026-02-06
+
+### 🌉 Viewer Bridge (Direct Access)
+
+- **Proxy Implementation**: 뷰어에서 CORS 제약 없이 Google Drive API를 호출할 수 있도록 UserScript Bridge(`window.TokiBridge`)를 구현했습니다.
+- **Improved Thumbnail Loading**: 썸네일 로딩 시 Bridge를 통해 직접 데이터를 받아오도록 하여 429 오류를 줄이고 속도를 개선했습니다.
+
 ## [v1.3.0] - 2026-02-06
 
 ### 🚀 Direct Access (Performance)

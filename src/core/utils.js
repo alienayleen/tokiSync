@@ -1,6 +1,18 @@
 import { uploadToGAS } from './gas.js';
 import { LogBox, Notifier } from './ui.js';
 
+export async function blobToArrayBuffer(blob) {
+    if (blob.arrayBuffer) {
+        return await blob.arrayBuffer();
+    }
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(blob);
+    });
+}
+
 export function sleep(ms, randomRange) {
     if (randomRange) {
         ms = Math.floor(Math.random() * randomRange) + ms;

@@ -9,11 +9,15 @@
  * @param {string} folderId - 라이브러리 루트 폴더 ID
  * @returns {Array<Object>} 시리즈 목록 (JSON)
  */
-function View_getSeriesList(folderId, bypassCache = false) {
+function View_getSeriesList(
+  folderId,
+  bypassCache = false,
+  continuationToken = null,
+) {
   if (!folderId) throw new Error("Folder ID is required");
 
-  // 1. Check Cache (if not bypassed)
-  if (!bypassCache) {
+  // 1. Check Cache (Only if clean start)
+  if (!bypassCache && !continuationToken) {
     const root = DriveApp.getFolderById(folderId);
     const files = root.getFilesByName(INDEX_FILE_NAME);
 
@@ -28,81 +32,118 @@ function View_getSeriesList(folderId, bypassCache = false) {
     }
   }
 
-  // 2. Rebuild if missing or bypassed
-  return View_rebuildLibraryIndex(folderId);
+  // 2. Rebuild (Paged)
+  return View_rebuildLibraryIndex(folderId, continuationToken);
 }
 
 /**
- * 라이브러리 폴더 구조를 스캔하여 인덱스(시리즈 목록)를 생성합니다.
- * `info.json` 메타데이터를 우선순위로 하며, 폴더명 파싱도 지원합니다.
- * 생성된 인덱스는 `index.json` 파일로 저장됩니다.
- *
- * @param {string} folderId - 라이브러리 루트 폴더 ID
- * @returns {Array<Object>} 생성된 시리즈 목록
+ * 라이브러리 폴더 구조를 스캔하여 인덱스(시리즈 목록)를 생성합니다. (Time-Sliced Pagination)
+ * 20초 단위로 끊어서 실행하며, 클라이언트가 continuationToken을 관리합니다.
+ * 완료 시 'completed' 상태와 마지막 청크를 반환합니다. 클라이언트는 'view_save_index'로 저장해야 합니다.
  */
-/**
- * 라이브러리 폴더 구조를 스캔하여 인덱스(시리즈 목록)를 생성합니다.
- * Root > Category > Series 구조와 Legacy(Root > Series) 구조를 모두 지원합니다.
- */
-function View_rebuildLibraryIndex(folderId) {
-  if (!folderId) throw new Error("Folder ID is required");
-
+function View_rebuildLibraryIndex(folderId, continuationToken) {
   const root = DriveApp.getFolderById(folderId);
-  const folders = root.getFolders();
+  const startTime = new Date().getTime();
+  const TIME_LIMIT = 20000; // 20 Seconds
   const seriesList = [];
 
-  // Known Categories
-  const CATEGORIES = ["Webtoon", "Manga", "Novel"];
+  // State: Phases (Root -> Cats)
+  let state = continuationToken
+    ? JSON.parse(continuationToken)
+    : {
+        step: 0,
+        targets: [],
+        driveToken: null,
+      };
 
-  while (folders.hasNext()) {
-    const folder = folders.next();
-    const name = folder.getName();
+  // Phase 0: Plan Targets
+  if (state.targets.length === 0) {
+    state.targets.push({ id: folderId, category: "Uncategorized" }); // Root
 
-    if (name === INDEX_FILE_NAME) continue;
+    const CATS = ["Webtoon", "Manga", "Novel"];
+    const folders = root.getFolders();
+    while (folders.hasNext()) {
+      const f = folders.next();
+      if (CATS.includes(f.getName())) {
+        state.targets.push({ id: f.getId(), category: f.getName() });
+      }
+    }
+  }
 
-    // 1. Check if it's a Category Folder
-    if (CATEGORIES.includes(name)) {
-      const subFolders = folder.getFolders();
-      while (subFolders.hasNext()) {
+  let hasMore = false;
+
+  // Execution Loop
+  while (state.step < state.targets.length) {
+    const current = state.targets[state.step];
+    let iterator;
+
+    try {
+      if (state.driveToken) {
+        iterator = DriveApp.continueFolderIterator(state.driveToken);
+      } else {
+        iterator = DriveApp.getFolderById(current.id).getFolders();
+      }
+
+      while (iterator.hasNext()) {
+        if (new Date().getTime() - startTime > TIME_LIMIT) {
+          hasMore = true;
+          break;
+        }
+
+        const folder = iterator.next();
+        const name = folder.getName();
+
+        // Skip Index & Categories (if in Root)
+        if (name === INDEX_FILE_NAME) continue;
+        if (
+          ["Webtoon", "Manga", "Novel"].includes(name) &&
+          current.category === "Uncategorized"
+        )
+          continue;
+
         try {
-          const s = processSeriesFolder(subFolders.next(), name);
+          const s = processSeriesFolder(folder, current.category);
           if (s) seriesList.push(s);
-        } catch (e) {
-          Debug.log(`Error processing series in ${name}: ${e}`);
-        }
+        } catch (e) {}
       }
-    }
-    // 2. Otherwise/Fallback: Treat as Legacy Series in Root
-    else {
-      try {
-        // Simple check: does it look like a series? (Has [ID] or info.json)
-        // We do a full process check, if valid it returns object, else null/partial
-        // But for performance, maybe check name pattern first?
-        // [ID] pattern is strong indicator.
-        if (name.match(/^\[(\d+)\]/)) {
-          const s = processSeriesFolder(folder, "Uncategorized");
-          if (s) seriesList.push(s);
-        }
-      } catch (e) {
-        Debug.log(`Error processing legacy series: ${e}`);
+
+      if (hasMore) {
+        state.driveToken = iterator.getContinuationToken();
+        return {
+          status: "continue",
+          continuationToken: JSON.stringify(state),
+          list: seriesList,
+        };
+      } else {
+        // Step Finished
+        state.step++;
+        state.driveToken = null;
       }
+    } catch (e) {
+      Debug.log(`Error in step ${state.step}: ${e}`);
+      state.step++;
+      state.driveToken = null;
     }
   }
 
-  seriesList.sort(
-    (a, b) => new Date(b.lastModified) - new Date(a.lastModified)
-  ); // Sort by Recent
+  // All Done
+  return { status: "completed", list: seriesList };
+}
 
-  // Save Lightweight Index
-  const jsonString = JSON.stringify(seriesList);
-  const indexFiles = root.getFilesByName(INDEX_FILE_NAME);
-  if (indexFiles.hasNext()) {
-    indexFiles.next().setContent(jsonString);
-  } else {
-    root.createFile(INDEX_FILE_NAME, jsonString, MimeType.PLAIN_TEXT);
-  }
+/**
+ * 클라이언트가 업로드한 전체 인덱스를 저장합니다.
+ */
+function View_saveIndex(folderId, list) {
+  if (!list || !Array.isArray(list)) return;
 
-  return seriesList;
+  // Sort by Recent
+  list.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
+
+  const root = DriveApp.getFolderById(folderId);
+  const jsonString = JSON.stringify(list);
+  const files = root.getFilesByName(INDEX_FILE_NAME);
+  if (files.hasNext()) files.next().setContent(jsonString);
+  else root.createFile(INDEX_FILE_NAME, jsonString, MimeType.PLAIN_TEXT);
 }
 
 /**
@@ -179,7 +220,9 @@ function processSeriesFolder(folder, categoryContext) {
 
   // Refine Dual Strategy Return
   let base64Thumb = "";
-  if (thumbnailOld && thumbnailOld.startsWith("data:image")) {
+  // Optimization: Only include Base64 if we DO NOT have a Drive ID (cover.jpg)
+  // This prevents index.json from bloating with heavy strings.
+  if (!thumbnailId && thumbnailOld && thumbnailOld.startsWith("data:image")) {
     base64Thumb = thumbnailOld;
   }
   // If thumbnailOld is http url, we keep it in 'thumbnail' field anyway.

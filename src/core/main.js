@@ -4,7 +4,8 @@ import { showConfigModal, getConfig } from './config.js';
 import { LogBox, markDownloadedItems } from './ui.js';
 import { fetchHistory } from './gas.js';
 import { getListItems, parseListItem } from './parser.js';
-import { getCommonPrefix } from './utils.js';
+
+import { getCommonPrefix, blobToArrayBuffer } from './utils.js';
 
 export function main() {
     console.log("🚀 TokiDownloader Loaded (New Core)");
@@ -32,6 +33,65 @@ export function main() {
              }
         });
     }
+
+    // 1-1. Bridge Listener (New: Direct Access Proxy)
+    window.addEventListener("message", async (event) => {
+        if (event.data.type === 'TOKI_BRIDGE_REQUEST') {
+            const { requestId, url, options } = event.data;
+            const sourceWindow = event.source;
+            const origin = event.origin;
+
+            // Simple Origin Check (Allow GitHub Pages & Localhost)
+            if (!origin.includes("github.io") && !origin.includes("localhost") && !origin.includes("127.0.0.1")) {
+                console.warn("[Bridge] Blocked request from unknown origin:", origin);
+                return;
+            }
+
+            console.log(`[Bridge] Proxying request: ${url}`);
+
+            try {
+                // Execute GM_xmlhttpRequest
+                GM_xmlhttpRequest({
+                    method: options.method || 'GET',
+                    url: url,
+                    headers: options.headers,
+                    responseType: 'blob', // Always get blob for binary safety
+                    onload: async (res) => {
+                        let payload = null;
+                        
+                        // Convert Blob to ArrayBuffer for postMessage transfer
+                        if (res.response instanceof Blob) {
+                            payload = await blobToArrayBuffer(res.response);
+                        } else {
+                            // Fallback for text/json
+                            payload = res.responseText;
+                        }
+
+                        sourceWindow.postMessage({
+                            type: 'TOKI_BRIDGE_RESPONSE',
+                            requestId: requestId,
+                            payload: payload,
+                            contentType: res.responseHeaders.match(/content-type:\s*(.*)/i)?.[1]
+                        }, origin, [payload instanceof ArrayBuffer ? payload : undefined].filter(Boolean));
+                    },
+                    onerror: (err) => {
+                        sourceWindow.postMessage({
+                            type: 'TOKI_BRIDGE_RESPONSE',
+                            requestId: requestId,
+                            error: 'Network Error'
+                        }, origin);
+                    }
+                });
+            } catch (e) {
+                console.error("[Bridge] Error:", e);
+                sourceWindow.postMessage({
+                    type: 'TOKI_BRIDGE_RESPONSE',
+                    requestId: requestId,
+                    error: e.message
+                }, origin);
+            }
+        }
+    });
 
     const siteInfo = detectSite();
     if(!siteInfo) return; // Not a target page
