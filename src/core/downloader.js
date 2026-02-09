@@ -1,9 +1,18 @@
 import { sleep, waitIframeLoad, saveFile, getCommonPrefix } from './utils.js';
-import { getListItems, parseListItem, getNovelContent, getImageList } from './parser.js';
+import { getListItems, parseListItem, getNovelContent, getImageList, getThumbnailUrl } from './parser.js';
 import { detectSite } from './detector.js';
 import { EpubBuilder } from './epub.js';
 import { CbzBuilder } from './cbz.js';
 import { LogBox, Notifier } from './ui.js';
+import { getConfig } from './config.js';
+import { startSilentAudio, stopSilentAudio } from './anti_sleep.js';
+
+// Sleep Policy Presets
+const SLEEP_POLICIES = {
+    agile: { min: 1000, max: 3000 },      // 빠름 (1-3초)
+    cautious: { min: 2000, max: 5000 },   // 신중 (2-5초)
+    thorough: { min: 3000, max: 8000 }    // 철저 (3-8초)
+};
 
 // Processing Loop에 해당되는 로직을 분리 한다.
 export async function processItem(item, builder, siteInfo, iframe, seriesTitle = "") {
@@ -12,8 +21,10 @@ export async function processItem(item, builder, siteInfo, iframe, seriesTitle =
 
     await waitIframeLoad(iframe, item.src);
     
-    // Apply Random Sleep: 1000ms + (0~3000ms random)
-    await sleep(1000, 3000);
+    // Apply Dynamic Sleep based on Policy
+    const config = getConfig();
+    const policy = SLEEP_POLICIES[config.sleepMode] || SLEEP_POLICIES.agile;
+    await sleep(policy.min, policy.max);
     
     const iframeDoc = iframe.contentWindow.document;
 
@@ -37,8 +48,12 @@ export async function processItem(item, builder, siteInfo, iframe, seriesTitle =
             chapterTitleOnly = chapterTitleOnly.replace(seriesTitle, '').trim();
         }
 
-        // Construct clean folder name: "0001 1화"
-        const cleanChapterTitle = `${item.num} ${chapterTitleOnly}`;
+        // Extract chapter number from title (e.g. "12화" → "12")
+        const chapterMatch = chapterTitleOnly.match(/(\d+)화/);
+        const chapterNum = chapterMatch ? chapterMatch[1].padStart(4, '0') : item.num;
+        
+        // Construct clean folder name: "0012 12화" (using actual chapter number)
+        const cleanChapterTitle = `${chapterNum} ${chapterTitleOnly}`;
         builder.addChapter(cleanChapterTitle, images);
     }
 }
@@ -50,12 +65,21 @@ export async function tokiDownload(startIndex, lastIndex, policy = 'folderInCbz'
     logger.show();
     logger.log(`다운로드 시작 (정책: ${policy})...`);
 
+    // Auto-start Anti-Sleep mode
+    try {
+        startSilentAudio();
+        logger.success('[Anti-Sleep] 백그라운드 모드 자동 활성화');
+    } catch (e) {
+        logger.log('[Anti-Sleep] 자동 시작 실패 (사용자 상호작용 필요)', 'error');
+    }
+
     const siteInfo = detectSite();
     if (!siteInfo) {
         alert("지원하지 않는 사이트이거나 다운로드 페이지가 아닙니다.");
+        stopSilentAudio();
         return;
     }
-    const { site, protocolDomain } = siteInfo;
+    const { site, protocolDomain, category } = siteInfo;
     const isNovel = (site === "북토끼");
 
     try {
@@ -71,10 +95,7 @@ export async function tokiDownload(startIndex, lastIndex, policy = 'folderInCbz'
             destination = 'drive';
         }
         
-        // Determine Category for GAS
-        let category = 'Webtoon';
-        if (site === '북토끼') category = 'Novel';
-        else if (site === '마나토끼') category = 'Manga';
+        // Category from detectSite (Novel/Webtoon/Manga)
 
         if (buildingPolicy === 'folderInCbz') {
             if (isNovel) {
@@ -151,6 +172,31 @@ export async function tokiDownload(startIndex, lastIndex, policy = 'folderInCbz'
             rootFolder += rangeStr;
         }
 
+        // [v1.4.0] Upload Series Thumbnail (if uploading to Drive)
+        if (destination === 'drive') {
+            try {
+                const thumbnailUrl = getThumbnailUrl();
+                if (thumbnailUrl) {
+                    logger.log('📷 시리즈 썸네일 업로드 중...');
+                    const thumbResponse = await fetch(thumbnailUrl);
+                    const thumbBlob = await thumbResponse.blob();
+                    
+                    // Upload as 'cover.jpg' - network.js will auto-redirect to _Thumbnails/{ID}.jpg
+                    // saveFile(data, filename, type, extension, metadata)
+                    // → fullFileName = "cover.jpg"
+                    await saveFile(thumbBlob, 'cover', 'drive', 'jpg', { 
+                        category,
+                        folderName: rootFolder  // Target folder for upload
+                    });
+                    logger.success('✅ 썸네일 업로드 완료');
+                } else {
+                    logger.log('⚠️  썸네일을 찾을 수 없습니다 (건너뜀)', 'warn');
+                }
+            } catch (thumbError) {
+                logger.error(`썸네일 업로드 실패 (계속 진행): ${thumbError.message}`);
+            }
+        }
+
         // Create IFrame
         const iframe = document.createElement('iframe');
         iframe.width = 600; iframe.height = 600;
@@ -215,7 +261,35 @@ export async function tokiDownload(startIndex, lastIndex, policy = 'folderInCbz'
                     }); 
                 }
             }
+            
+            // [v1.4.0] Add completion badge to list item (real-time feedback)
+            if (item.element && !item.element.querySelector('.toki-badge')) {
+                const badge = document.createElement('span');
+                badge.className = 'toki-badge';
+                badge.innerText = '✅';
+                badge.style.marginLeft = '5px';
+                badge.style.fontSize = '12px';
+                
+                // Target: .wr-subject > a (link element)
+                const linkEl = item.element.querySelector('.wr-subject > a');
+                if (linkEl) {
+                    linkEl.prepend(badge);
+                } else {
+                    // Fallback
+                    const titleEl = item.element.querySelector('.wr-subject, .item-subject, .title');
+                    if (titleEl) {
+                        titleEl.prepend(badge);
+                    } else {
+                        item.element.appendChild(badge);
+                    }
+                }
+                
+                // Visual feedback
+                item.element.style.opacity = '0.6';
+                item.element.style.backgroundColor = 'rgba(0, 255, 0, 0.05)';
+            }
         }
+
 
         // Cleanup
         iframe.remove();
@@ -231,13 +305,21 @@ export async function tokiDownload(startIndex, lastIndex, policy = 'folderInCbz'
             await saveFile(masterZip, rootFolder, 'local', 'zip', { category }); 
         }
 
-        logger.success("모든 작업 완료!");
-        Notifier.notify("다운로드 완료", `${rootFolder} (${list.length} 항목)`);
+        logger.success(`✅ 다운로드 완료!`);
+        Notifier.notify('TokiSync', `다운로드 완료! (${list.length}개 항목)`);
 
     } catch (error) {
         console.error(error);
-        alert(`오류 발생: ${error.message}`);
-        LogBox.getInstance().error(error.message);
+        logger.error(`오류 발생: ${error.message}`);
+        alert(`다운로드 중 오류 발생:\n${error.message}`);
+    } finally {
+        // Auto-stop Anti-Sleep mode
+        stopSilentAudio();
+        logger.log('[Anti-Sleep] 백그라운드 모드 자동 종료');
+        
+        // Cleanup
+        const iframe = document.querySelector('iframe');
+        if (iframe) iframe.remove();
     }
 }
 

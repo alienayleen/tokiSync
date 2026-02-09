@@ -1,5 +1,10 @@
 export function getListItems() {
-    return Array.from(document.querySelector('.list-body').querySelectorAll('li')).reverse();
+    const listBody = document.querySelector('.list-body');
+    if (!listBody) {
+        console.warn('[Parser] .list-body not found - unsupported page structure');
+        return [];
+    }
+    return Array.from(listBody.querySelectorAll('li')).reverse();
 }
 
 export function parseListItem(li) {
@@ -54,4 +59,20 @@ export function getImageList(iframeDocument, protocolDomain) {
         }
         return null;
     }).filter(src => src !== null); // Remove nulls
+}
+
+/**
+ * Extract thumbnail URL from series detail page
+ * @returns {string|null} Thumbnail URL or null if not found
+ */
+export function getThumbnailUrl() {
+    // Target: <img itemprop="image" content="[ORIGINAL_URL]" src="[THUMB_URL]">
+    const img = document.querySelector('img[itemprop="image"]');
+    if (!img) {
+        console.warn('[Parser] Thumbnail image not found');
+        return null;
+    }
+    
+    // Prefer 'content' attribute (original quality), fallback to 'src' (thumbnail)
+    return img.getAttribute('content') || img.src;
 }

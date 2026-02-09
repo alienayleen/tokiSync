@@ -1,19 +1,22 @@
 // =======================================================
-// 🚀 Viewer Library Service (Isolated)
+// 🚀 Viewer Library Service (Isolated) - v1.4.0 Centralized Thumbnails
 // =======================================================
+
+const INDEX_FILE_NAME = "index.json";
+const THUMB_FOLDER_NAME = "_Thumbnails";
 
 /**
  * 해당 폴더(Libraries)의 시리즈 목록을 반환합니다.
- * 성능을 위해 `index.json` 캐시 파일을 우선 확인하고, 없으면 재구축합니다.
- *
- * @param {string} folderId - 라이브러리 루트 폴더 ID
- * @returns {Array<Object>} 시리즈 목록 (JSON)
  */
-function View_getSeriesList(folderId, bypassCache = false) {
+function View_getSeriesList(
+  folderId,
+  bypassCache = false,
+  continuationToken = null,
+) {
   if (!folderId) throw new Error("Folder ID is required");
 
-  // 1. Check Cache (if not bypassed)
-  if (!bypassCache) {
+  // 1. Check Cache (Only if clean start)
+  if (!bypassCache && !continuationToken) {
     const root = DriveApp.getFolderById(folderId);
     const files = root.getFilesByName(INDEX_FILE_NAME);
 
@@ -28,89 +31,147 @@ function View_getSeriesList(folderId, bypassCache = false) {
     }
   }
 
-  // 2. Rebuild if missing or bypassed
-  return View_rebuildLibraryIndex(folderId);
+  // 2. Rebuild (Paged)
+  return View_rebuildLibraryIndex(folderId, continuationToken);
 }
 
 /**
- * 라이브러리 폴더 구조를 스캔하여 인덱스(시리즈 목록)를 생성합니다.
- * `info.json` 메타데이터를 우선순위로 하며, 폴더명 파싱도 지원합니다.
- * 생성된 인덱스는 `index.json` 파일로 저장됩니다.
- *
- * @param {string} folderId - 라이브러리 루트 폴더 ID
- * @returns {Array<Object>} 생성된 시리즈 목록
+ * v1.4.0: Centralized Thumbnail Logic
+ * 1. Build Thumbnail Map from '_Thumbnails' folder
+ * 2. Scan Series Folders using Map (No file scan inside series)
  */
-/**
- * 라이브러리 폴더 구조를 스캔하여 인덱스(시리즈 목록)를 생성합니다.
- * Root > Category > Series 구조와 Legacy(Root > Series) 구조를 모두 지원합니다.
- */
-function View_rebuildLibraryIndex(folderId) {
-  if (!folderId) throw new Error("Folder ID is required");
-
+function View_rebuildLibraryIndex(folderId, continuationToken) {
   const root = DriveApp.getFolderById(folderId);
-  const folders = root.getFolders();
+  const startTime = new Date().getTime();
+  const TIME_LIMIT = 20000; // 20 Seconds
   const seriesList = [];
 
-  // Known Categories
-  const CATEGORIES = ["Webtoon", "Manga", "Novel"];
+  // State
+  let state = continuationToken
+    ? JSON.parse(continuationToken)
+    : {
+        step: 0,
+        targets: [],
+        driveToken: null,
+        thumbMap: {}, // { SeriesID: FileID } - Carried over pagination
+      };
 
-  while (folders.hasNext()) {
-    const folder = folders.next();
-    const name = folder.getName();
+  // Phase 0: Plan Targets & Build Thumbnail Map (Only on first run)
+  if (state.step === 0 && state.targets.length === 0) {
+    // 1. Build Thumbnail Map
+    // Assumption: _Thumbnails has reasonable count (<10k).
+    // If >10k, we might need pagination here too, but GAS iterator handles it.
+    // We try to fill it in 5s.
+    const thumbFolders = root.getFoldersByName(THUMB_FOLDER_NAME);
+    if (thumbFolders.hasNext()) {
+      const tFolder = thumbFolders.next();
+      const tFiles = tFolder.getFiles();
+      while (tFiles.hasNext()) {
+        // Safety check for time in Map building?
+        // If huge, this loop might timeout.
+        // Ideally we assume it fits. If not, we need a separate Step for Map building.
+        // Let's rely on GAS speed for listing files.
+        const tf = tFiles.next();
+        // Name: "12345.jpg" -> ID: "12345"
+        const tid = tf.getName().replace(/\.[^/.]+$/, "");
+        state.thumbMap[tid] = tf.getId();
+      }
+    }
 
-    if (name === INDEX_FILE_NAME) continue;
+    // 2. Plan Targets
+    state.targets.push({ id: folderId, category: "Uncategorized" }); // Root
+    const CATS = ["Webtoon", "Manga", "Novel"];
+    const folders = root.getFolders();
+    while (folders.hasNext()) {
+      const f = folders.next();
+      if (CATS.includes(f.getName())) {
+        state.targets.push({ id: f.getId(), category: f.getName() });
+      }
+    }
+  }
 
-    // 1. Check if it's a Category Folder
-    if (CATEGORIES.includes(name)) {
-      const subFolders = folder.getFolders();
-      while (subFolders.hasNext()) {
+  let hasMore = false;
+
+  // Execution Loop
+  while (state.step < state.targets.length) {
+    const current = state.targets[state.step];
+    let iterator;
+
+    try {
+      if (state.driveToken) {
+        iterator = DriveApp.continueFolderIterator(state.driveToken);
+      } else {
+        iterator = DriveApp.getFolderById(current.id).getFolders();
+      }
+
+      while (iterator.hasNext()) {
+        if (new Date().getTime() - startTime > TIME_LIMIT) {
+          hasMore = true;
+          break;
+        }
+
+        const folder = iterator.next();
+        const name = folder.getName();
+
+        if (name === INDEX_FILE_NAME || name === THUMB_FOLDER_NAME) continue;
+        if (
+          ["Webtoon", "Manga", "Novel"].includes(name) &&
+          current.category === "Uncategorized"
+        )
+          continue;
+
         try {
-          const s = processSeriesFolder(subFolders.next(), name);
+          // Pass thumbMap
+          const s = processSeriesFolder(
+            folder,
+            current.category,
+            state.thumbMap,
+          );
           if (s) seriesList.push(s);
-        } catch (e) {
-          Debug.log(`Error processing series in ${name}: ${e}`);
-        }
+        } catch (e) {}
       }
-    }
-    // 2. Otherwise/Fallback: Treat as Legacy Series in Root
-    else {
-      try {
-        // Simple check: does it look like a series? (Has [ID] or info.json)
-        // We do a full process check, if valid it returns object, else null/partial
-        // But for performance, maybe check name pattern first?
-        // [ID] pattern is strong indicator.
-        if (name.match(/^\[(\d+)\]/)) {
-          const s = processSeriesFolder(folder, "Uncategorized");
-          if (s) seriesList.push(s);
-        }
-      } catch (e) {
-        Debug.log(`Error processing legacy series: ${e}`);
+
+      if (hasMore) {
+        state.driveToken = iterator.getContinuationToken();
+        return {
+          status: "continue",
+          continuationToken: JSON.stringify(state),
+          list: seriesList,
+        };
+      } else {
+        state.step++;
+        state.driveToken = null;
       }
+    } catch (e) {
+      Debug.log(`Error in step ${state.step}: ${e}`);
+      state.step++;
+      state.driveToken = null;
     }
   }
 
-  seriesList.sort(
-    (a, b) => new Date(b.lastModified) - new Date(a.lastModified)
-  ); // Sort by Recent
+  return { status: "completed", list: seriesList };
+}
 
-  // Save Lightweight Index
-  const jsonString = JSON.stringify(seriesList);
-  const indexFiles = root.getFilesByName(INDEX_FILE_NAME);
-  if (indexFiles.hasNext()) {
-    indexFiles.next().setContent(jsonString);
-  } else {
-    root.createFile(INDEX_FILE_NAME, jsonString, MimeType.PLAIN_TEXT);
-  }
-
-  return seriesList;
+function View_saveIndex(folderId, list) {
+  if (!list || !Array.isArray(list)) return;
+  list.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
+  const root = DriveApp.getFolderById(folderId);
+  const jsonString = JSON.stringify(list);
+  const files = root.getFilesByName(INDEX_FILE_NAME);
+  if (files.hasNext()) files.next().setContent(jsonString);
+  else root.createFile(INDEX_FILE_NAME, jsonString, MimeType.PLAIN_TEXT);
 }
 
 /**
- * [Helper] 단일 시리즈 폴더를 처리하여 메타데이터 객체를 반환합니다.
+ * [Helper] 단일 시리즈 폴더 처리
+ *
+ * Optimization:
+ * - NO `getFilesByName('cover.jpg')`
+ * - Look up `thumbMap` for cover ID
+ * - ONLY scan for `info.json`
  */
-function processSeriesFolder(folder, categoryContext) {
+function processSeriesFolder(folder, categoryContext, thumbMap) {
   const folderName = folder.getName();
-  // Debug.log(`[Scan] Processing: ${folderName}`); // Too noisy for all, maybe enable if needed
 
   let metadata = {
     status: "ONGOING",
@@ -119,43 +180,35 @@ function processSeriesFolder(folder, categoryContext) {
     category: categoryContext,
   };
   let seriesName = folderName;
-  let thumbnailId = "";
-  let thumbnailOld = "";
   let sourceId = "";
   let booksCount = 0;
+  let thumbnailId = "";
 
-  // ID Parsing
+  // ID Parsing "[12345] Title"
   const idMatch = folderName.match(/^\[(\d+)\]/);
-  if (idMatch) sourceId = idMatch[1];
-
-  // 1. Check for 'cover.jpg'
-  // Try exact match first
-  let coverFiles = folder.getFilesByName("cover.jpg");
-  if (coverFiles.hasNext()) {
-    const f = coverFiles.next();
-    thumbnailId = f.getId();
-    // Debug.log(`  -> Found cover.jpg: ${thumbnailId}`);
-  } else {
-    // Try Case-Insensitive / Alternative names
-    const altNames = ["Cover.jpg", "cover.png", "Cover.png", "cover.jpeg"];
-    for (const alt of altNames) {
-      const alts = folder.getFilesByName(alt);
-      if (alts.hasNext()) {
-        thumbnailId = alts.next().getId();
-        break;
-      }
+  if (idMatch) {
+    sourceId = idMatch[1];
+    // Lookup Optimized Map
+    if (thumbMap && thumbMap[sourceId]) {
+      thumbnailId = thumbMap[sourceId];
     }
   }
 
-  // 2. Parse info.json
+  // Parse info.json (Still needed for name/author)
   const infoFiles = folder.getFilesByName("info.json");
+  let thumbnailOld = "";
+
   if (infoFiles.hasNext()) {
     try {
       const content = infoFiles.next().getBlob().getDataAsString();
       const parsed = JSON.parse(content);
 
       if (parsed.title) seriesName = parsed.title;
-      if (parsed.id) sourceId = parsed.id;
+      // If we didn't get ID from folder, try info.json (rare fallback)
+      if (!sourceId && parsed.id) {
+        sourceId = parsed.id;
+        if (thumbMap && thumbMap[sourceId]) thumbnailId = thumbMap[sourceId];
+      }
       if (parsed.file_count) booksCount = parsed.file_count;
 
       if (
@@ -169,20 +222,25 @@ function processSeriesFolder(folder, categoryContext) {
         metadata.authors = parsed.metadata.authors;
       else if (parsed.author) metadata.authors = [parsed.author];
 
-      // Dual Strategy: Base64 from info.json (temp store in thumbnailId if we want, but let's use separate field)
-      if (parsed.thumbnail) thumbnailOld = parsed.thumbnail; // Base64 or URL
+      // Fallback text thumb (http)
+      if (parsed.thumbnail) thumbnailOld = parsed.thumbnail;
     } catch (e) {}
   } else {
     const match = folderName.match(/^\[(\d+)\]\s*(.+)/);
     if (match) seriesName = match[2];
   }
 
-  // Refine Dual Strategy Return
-  let base64Thumb = "";
-  if (thumbnailOld && thumbnailOld.startsWith("data:image")) {
-    base64Thumb = thumbnailOld;
+  // Decide Final Thumbnail
+  // Rule: If we have thumbnailId (from Map), use it.
+  // Rule: If not, use thumbnailOld URL (but NOT base64)
+  let finalThumbnail = "";
+  if (thumbnailId) {
+    // Good.
+  } else if (thumbnailOld) {
+    if (!thumbnailOld.startsWith("data:image")) {
+      finalThumbnail = thumbnailOld;
+    }
   }
-  // If thumbnailOld is http url, we keep it in 'thumbnail' field anyway.
 
   return {
     id: folder.getId(),
@@ -190,8 +248,8 @@ function processSeriesFolder(folder, categoryContext) {
     name: seriesName,
     booksCount: booksCount,
     metadata: metadata,
-    thumbnail: base64Thumb || thumbnailOld, // Base64 or External URL
-    thumbnailId: thumbnailId, // Drive ID (cover.jpg)
+    thumbnail: finalThumbnail,
+    thumbnailId: thumbnailId,
     hasCover: !!thumbnailId,
     lastModified: folder.getLastUpdated(),
     category: metadata.category,

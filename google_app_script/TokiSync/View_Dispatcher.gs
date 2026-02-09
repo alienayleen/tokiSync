@@ -20,7 +20,12 @@ function View_Dispatcher(data) {
     if (action === "view_get_library") {
       if (!data.folderId) throw new Error("folderId is required for library");
       const bypassCache = data.bypassCache === true;
-      resultBody = View_getSeriesList(data.folderId, bypassCache);
+      const continuationToken = data.continuationToken || null;
+      resultBody = View_getSeriesList(
+        data.folderId,
+        bypassCache,
+        continuationToken,
+      );
     } else if (action === "view_get_books" || action === "view_refresh_cache") {
       if (!data.seriesId) throw new Error("seriesId is required for books");
       const bypassCache =
@@ -32,6 +37,17 @@ function View_Dispatcher(data) {
       const offset = data.offset || 0;
       const length = data.length || 10 * 1024 * 1024;
       resultBody = View_getFileChunk(data.fileId, offset, length);
+    } else if (action === "view_get_token") {
+      // Direct Drive Access: OAuth Token Provider
+      resultBody = view_get_token();
+      return resultBody; // Already wrapped by createRes in SyncService
+    } else if (action === "view_save_index") {
+      if (!data.seriesList) throw new Error("seriesList is required");
+      View_saveIndex(data.folderId, data.seriesList);
+      resultBody = { saved: true };
+    } else if (action === "view_migrate_thumbnails") {
+      // v1.4.0 Migration
+      resultBody = Migrate_MoveThumbnails(data.folderId);
     } else {
       throw new Error("Unknown Viewer Action: " + action);
     }

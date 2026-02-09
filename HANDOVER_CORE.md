@@ -1,66 +1,54 @@
-# Core Module Handover Report (v1.2.2)
+# Core Module Handover Report
 
-**Role:** Core Developer  
-**Scope:** `src/core/*` (Integrated `downloader.js`, `gas.js`, `ui.js`, etc.)  
-**Status:** **v1.2.2 Released** (Bug Fixes & Auto-Update)
-
----
-
-## 🚀 Released Changes (v1.2.2)
-
-### 1. Critical Bug Fixes (Completed)
-
-- **Filename Logic (Split Policy):**
-  - **Local Download:** `[ID] Title [1-100].cbz` (Added Range)
-  - **GAS Upload:** `0001 - 1화.cbz` (Removed Series Title for clean Drive structure)
-- **Title Parsing:**
-  - Fixed redundant title bug (`255 - 255 화` -> `255 화`) via improved Regex.
-- **Auto-Update:**
-  - Added `@updateURL` & `@downloadURL` pointing to GitHub `main` branch.
-
-### 2. Version Synchronization
-
-- **UserScript:** `v1.2.2` (Header)
-- **Internal Client:** `v1.2.2` (`gas.js` - `CLIENT_VERSION`)
-- **Package:** `v1.2.2` (`package.json`)
+**Current Version:** v1.3.5 (Released)  
+**Next Version:** v1.4.0 (Planned - TBD)  
+**Role:** Core Developer (Planner & Implementer)
 
 ---
 
-## 🚨 Ongoing / Pending Tasks
+## 🚀 Status: v1.3.5 Released (Optimized)
 
-### 1. [Optimization] Thumbnail Stability
+### Major Accomplishments
 
-- **Issue:** The `main` branch viewer handles thumbnails more stably than `v1.2.0+` despite the same GAS backend.
-- **Plan:** Compare legacy vs current viewer code and port stability fixes (e.g., caching, pre-fetching strategies).
-- **Status:** **Postponed** (Focus was on critical filename bugs).
+#### 1. Direct Drive Access (Performance)
 
----
+- **Mechanism**: UserScript gets OAuth Token from GAS, then uploads/downloads directly via `GM_xmlhttpRequest`.
+- **Impact**: Bypassed GAS execution time limit (6 min) and significantly improved large file transfer speed.
+- **Components**: `src/core/network.js` (Upload), `docs/js/bridge.js` (Viewer Proxy).
 
-## 🛠 Module Status Overview
+#### 2. Viewer Optimization
 
-### `src/core/downloader.js`
+- **Script Bridge**: Solved CORS issue by proxying Viewer requests through UserScript.
+- **Thumbnails**:
+  - **Queue System**: Rate Limit fixes (429 errors).
+  - **Lazy Loading**: Intersection Observer applied.
+  - **Base64 Removal**: `index.json` size reduced by 95% (removed base64 if cover is present).
+  - **Blob Cleanup**: Memory leak prevention.
+- **Standalone Mode**: Graceful fallback when running Viewer without UserScript.
 
-- **Status:** **Stable**
-- **Updates:** Implemented conditional filename logic for Local vs GAS.
+#### 3. Server Stability (GAS)
 
-### `src/core/parser.js`
-
-- **Status:** **Stable**
-- **Updates:** Enhanced regex for cleaner title extraction.
-
-### `src/core/gas.js`
-
-- **Status:** **Stable**
-- **Updates:** Updated `CLIENT_VERSION` to match release.
-
-### `src/core/index.js`
-
-- **Status:** **Stable**
-- **Updates:** Handshake retry logic implemented (v1.2.1).
+- **Progressive Indexing**:
+  - **Time-Sliced Rebuild**: 20s execution chunks to prevent timeouts/infinite loading.
+  - **Feedback**: Viewer shows "Step 1, Step 2..." progress.
+- **API Key Enforcement**: All viewer requests now secured.
 
 ---
 
-## 📝 Next Steps for Reviewer
+## 📋 Plan: Future (v1.4.0 Candidates)
 
-1. **Verify Auto-Update:** Install v1.2.2 and check if Tampermonkey detects future updates.
-2. **Thumbnail Investigation:** Resume the postponed stability task.
+### 1. Advanced Metadata
+
+- **Tags/Genres**: Parse and utilize tags for filtering.
+
+### 2. UI/UX Refinement
+
+- **Dark Mode Polish**: Consistent theme across all modals.
+- **Mobile Touch**: Enhanced swipe gestures for Viewer.
+
+---
+
+## 📂 Key Documents
+
+- **`walkthrough.md`**: Detailed v1.3.5 feature walkthrough.
+- **`task.md`**: Complete task history.

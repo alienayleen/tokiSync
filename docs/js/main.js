@@ -20,6 +20,20 @@ window.TOKI_VIEWER_VERSION = VIEWER_VERSION;
 
 let allSeries = [];
 
+// Thumbnail Loading Queue (Rate Limit Protection)
+const thumbnailQueue = [];
+let isLoadingThumbnail = false;
+const THUMBNAIL_DELAY_MS = 250; // 250ms between loads to avoid rate limiting
+
+// Blob URL Management (Memory Leak Prevention)
+let activeBlobUrls = [];
+
+function clearBlobUrls() {
+    activeBlobUrls.forEach(url => URL.revokeObjectURL(url));
+    activeBlobUrls = [];
+}
+
+
 // ============================================================
 // 1. Initialization & Handshake
 // ============================================================
@@ -148,6 +162,15 @@ async function refreshDB(forceId = null, silent = false, bypassCache = false) {
                     }
                 } else if (!response.status || response.status === 'completed') {
                     // Done
+                    if (step > 1 || continuationToken) {
+                         console.log("📝 Rebuild complete, saving index to server...");
+                         // Background Save
+                         API.request('view_save_index', {
+                             folderId: API.folderId,
+                             seriesList: allSeries
+                         }).then(r => console.log("📝 Index saved:", r))
+                           .catch(e => console.warn("❌ Index save failed:", e));
+                    }
                     break;
                 } else {
                     // Unknown Status?
@@ -191,12 +214,27 @@ function renderGrid(seriesList) {
         allSeries = [];
     }
     const grid = document.getElementById('grid');
+    clearBlobUrls(); // Cleanup previous blobs before re-rendering
     grid.innerHTML = '';
 
     if (!allSeries || allSeries.length === 0) {
         grid.innerHTML = '<div class="no-data">저장된 작품이 없습니다.</div>';
         return;
     }
+
+    // Lazy Load Observer
+    const observer = new IntersectionObserver((entries, obs) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const img = entry.target;
+                const url = img.dataset.thumb;
+                if (url && url !== NO_IMAGE_SVG) {
+                    queueThumbnail(img, url);
+                }
+                obs.unobserve(img);
+            }
+        });
+    }, { rootMargin: '200px' });
 
     allSeries.forEach((series, index) => {
         try {
@@ -249,14 +287,10 @@ function renderGrid(seriesList) {
             // Lazy load thumbnail after card is added to DOM
             grid.appendChild(card);
             
-            // Load thumbnail with slight delay to avoid rate limiting
+            // Load thumbnail using Intersection Observer + Queue
             const img = card.querySelector('img.thumb');
             if (thumb !== NO_IMAGE_SVG) {
-                setTimeout(() => {
-                    if (!img.dataset.loaded) {
-                        img.src = thumb;
-                    }
-                }, index * 50); // Stagger loading by 50ms per image
+                observer.observe(img);
             }
         } catch (err) {
             console.error("Render Error:", err);
@@ -476,6 +510,101 @@ function getDynamicLink(series) {
     }
 
     return contentId ? (baseUrl + path + contentId) : "#";
+}
+
+// ============================================================
+// Thumbnail Queue System (Rate Limit Protection)
+// ============================================================
+
+/**
+ * Processes the next thumbnail in the queue with rate limiting
+ */
+async function loadNextThumbnail() {
+    if (isLoadingThumbnail || thumbnailQueue.length === 0) return;
+    
+    isLoadingThumbnail = true;
+    const { img, url } = thumbnailQueue.shift();
+    
+    // Bridge (Proxy) Check
+    if (window.tokiBridge && window.tokiBridge.isConnected && window.tokiBridge.fetch && url.includes('googleusercontent.com')) {
+        try {
+            // Extract File ID from CDN URL
+            // https://lh3.googleusercontent.com/d/FILE_ID=s400
+            const fileIdMatch = url.match(/\/d\/([^=]+)/);
+            if (fileIdMatch) {
+                const fileId = fileIdMatch[1];
+                const directUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+                
+                // Fetch via Proxy
+                // Note: We need a valid OAuth token for this API!
+                // But wait... UserScript GM_xmlhttpRequest might handle it if we pass token?
+                // Actually, if we use API Key only, getting media might be restricted for some files.
+                // However, LH3 URLs are public-ish or authenticated via cookies.
+                // For Direct Drive API, we need OAuth Token.
+                
+                // Strategy:
+                // 1. If we have Token (from view_get_token via Bridge?), use it.
+                // 2. Or just try fetching the CDN URL via GM_xmlhttpRequest (bypasses CORS)
+                //    CDN URL usually works without Auth if the file allows "Anyone with link" or current session cookies.
+                //    BUT, UserScript runs in different context.
+                
+                // Correction: The `url` here is the LH3 CDN URL.
+                // Let's try fetching THAT url via Bridge first. It's fastest and simplest.
+                // This bypasses CORS issues on the Viewer page.
+                
+                const response = await window.tokiBridge.fetch(url, {
+                    method: 'GET',
+                    responseType: 'blob'
+                });
+                
+                if (response) {
+                    // Convert ArrayBuffer back to Blob
+                    const blob = new Blob([response]);
+                    const blobUrl = URL.createObjectURL(blob);
+                    activeBlobUrls.push(blobUrl); // Track for cleanup
+                    img.src = blobUrl;
+                    
+                    // Cleanup handlers
+                    img.onload = () => {
+                        img.dataset.loaded = 'true';
+                        isLoadingThumbnail = false;
+                        setTimeout(loadNextThumbnail, 50); // Faster queue for Bridge (50ms)
+                    };
+                    img.onerror = () => {
+                        isLoadingThumbnail = false;
+                        setTimeout(loadNextThumbnail, THUMBNAIL_DELAY_MS);
+                    };
+                    return; // Done with Bridge path
+                }
+            }
+        } catch (e) {
+            console.warn("[Thumbnail] Bridge fetch failed, falling back:", e);
+        }
+    }
+    
+    // Fallback: Standard Load
+    img.onload = () => {
+        img.dataset.loaded = 'true';
+        isLoadingThumbnail = false;
+        setTimeout(loadNextThumbnail, THUMBNAIL_DELAY_MS);
+    };
+    
+    img.onerror = () => {
+        isLoadingThumbnail = false;
+        setTimeout(loadNextThumbnail, THUMBNAIL_DELAY_MS);
+    };
+    
+    img.src = url;
+}
+
+/**
+ * Adds a thumbnail to the loading queue
+ * @param {HTMLImageElement} img - Image element
+ * @param {string} url - Thumbnail URL
+ */
+function queueThumbnail(img, url) {
+    thumbnailQueue.push({ img, url });
+    loadNextThumbnail(); // Start processing if not already running
 }
 
 /**
