@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TokiSync (Link to Drive)
 // @namespace    http://tampermonkey.net/
-// @version      1.4.0
+// @version      1.4.1
 // @description  Toki series sites -> Google Drive syncing tool (Bundled)
 // @author       pray4skylark
 // @updateURL    https://raw.githubusercontent.com/pray4skylark/tokiSync/main/docs/tokiSync.user.js
@@ -411,8 +411,22 @@ async function getOrCreateFolder(folderName, parentId, token, category = 'Webtoo
     }
     
     // 3. Get or create series folder in category
+    // [v1.4.0 Fix] Search by ID prefix "[12345]" instead of full name to handle title changes
+    // folderName format: "[12345] Title"
+    const idMatch = folderName.match(/^\[\d+\]/);
+    const idPrefix = idMatch ? idMatch[0] : null;
+    
+    let queryPart = "";
+    if (idPrefix) {
+        // Search for folders containing "[12345]"
+        queryPart = `name contains '${idPrefix}'`;
+    } else {
+        // Fallback: Exact match
+        queryPart = `name = '${folderName.replace(/'/g, "\\'")}'`; 
+    }
+
     const seriesSearchUrl = `https://www.googleapis.com/drive/v3/files?` +
-        `q=name='${encodeURIComponent(folderName)}' and '${categoryFolderId}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'` +
+        `q=${queryPart} and '${categoryFolderId}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'` +
         `&fields=files(id,name)`;
     
     const seriesResult = await new Promise((resolve, reject) => {
@@ -431,9 +445,20 @@ async function getOrCreateFolder(folderName, parentId, token, category = 'Webtoo
         });
     });
     
+    // Filter results to ensure it starts with the ID (double check)
+    let foundFolder = null;
     if (seriesResult.files && seriesResult.files.length > 0) {
-        console.log(`[DirectUpload] Folder found: ${folderName}`);
-        return seriesResult.files[0].id;
+        if (idPrefix) {
+            // Find the first folder that STARTS with the ID
+            foundFolder = seriesResult.files.find(f => f.name.startsWith(idPrefix));
+        } else {
+            foundFolder = seriesResult.files[0];
+        }
+    }
+
+    if (foundFolder) {
+        console.log(`[DirectUpload] Folder found: ${foundFolder.name} (ID: ${foundFolder.id})`);
+        return foundFolder.id;
     }
     
     // Create series folder
@@ -633,6 +658,9 @@ async function uploadDirect(blob, folderName, fileName, metadata = {}) {
         throw error;
     }
 }
+
+// Export helper for main.js migration
+const getOAuthToken = getToken;
 
 ;// ./src/core/gas.js
 
@@ -1512,6 +1540,53 @@ function getThumbnailUrl() {
     return img.getAttribute('content') || img.src;
 }
 
+/**
+ * Extract Series Title from metadata
+ * @returns {string|null} Series Title
+ */
+function getSeriesTitle() {
+    // 1. Try 'subject' meta tag (Cleanest, No site suffix)
+    // <meta name="subject" content="파티피플 공명(인싸 공명)">
+    const subjectMeta = document.querySelector('meta[name="subject"]');
+    if (subjectMeta && subjectMeta.content) {
+        return subjectMeta.content.trim();
+    }
+
+    // 2. Try diverse meta tags (Priority: OpenGraph > Standard > Twitter)
+    const metaSelectors = [
+        'meta[property="og:title"]',
+        'meta[name="title"]',
+        'meta[name="twitter:title"]'
+    ];
+
+    for (const selector of metaSelectors) {
+        const metaTag = document.querySelector(selector);
+        if (metaTag && metaTag.content) {
+            let title = metaTag.content;
+            // Remove site suffix " > 마나토끼 ..." or similar patterns
+            const splitIndex = title.indexOf(' >');
+            if (splitIndex > 0) {
+                return title.substring(0, splitIndex).trim();
+            }
+            return title.trim();
+        }
+    }
+
+    // 3. Try parse HTML content (broader search)
+    // <div class="view-content"><span style="..."><b>Title</b></span></div>
+    // Also check h1, strong, .view-title
+    const viewContent = document.querySelectorAll('.view-content');
+    for (const div of viewContent) {
+        // Priority: b > strong > h1 > .view-title
+        const titleEl = div.querySelector('b, strong, h1, .view-title');
+        if (titleEl && titleEl.innerText.trim().length > 0) {
+            return titleEl.innerText.trim();
+        }
+    }
+
+    return null;
+}
+
 ;// ./src/core/detector.js
 function detectSite() {
     const currentURL = document.URL;
@@ -1841,17 +1916,41 @@ async function tokiDownload(startIndex, lastIndex, policy = 'folderInCbz') {
         let seriesTitle = "";
         let rootFolder = "";
 
+        // Determine Root Folder Name
+        // [v1.4.0 Fix] Priority: Metadata Title > Common Prefix > First Item Title
+        seriesTitle = getSeriesTitle(); // Official Metadata Title
+        let listPrefixTitle = "";       // Title appearing in the list items
+
         if (list.length > 1) {
-            seriesTitle = getCommonPrefix(first.title, last.title);
-            if (seriesTitle.length > 2) {
-                // If common prefix exists, use it as series title
-                 rootFolder = `[${seriesId}] ${seriesTitle}`;
-            } else {
-                 // Fallback format if no clear prefix found (rare)
-                 rootFolder = `[${seriesId}] ${first.title} ~ ${last.title}`;
-            }
+            listPrefixTitle = getCommonPrefix(first.title, last.title);
+        }
+
+        if (seriesTitle) {
+             rootFolder = `[${seriesId}] ${seriesTitle}`;
+             // Remove invalid characters if any
+             rootFolder = rootFolder.replace(/[<>:"/\\|?*]/g, '');
         } else {
-             rootFolder = `[${seriesId}] ${first.title}`;
+             // Fallback Logic
+            if (listPrefixTitle.length > 2) {
+                seriesTitle = listPrefixTitle; // Use prefix as main title if metadata failed
+                rootFolder = `[${seriesId}] ${seriesTitle}`;
+            } else if (list.length > 1) {
+                 rootFolder = `[${seriesId}] ${first.title} ~ ${last.title}`;
+            } else {
+                 // [v1.4.0 Fix] Single Item Fallback: Try regex
+                 // "인싸 공명 19화" -> "인싸 공명"
+                 const title = first.title;
+                 // Remove " 19화", " 1화" at the end
+                 const cleanTitle = title.replace(/\s+\d+화$/, '').trim();
+                 
+                 if (cleanTitle !== title && cleanTitle.length > 0) {
+                     seriesTitle = cleanTitle; // Successfully extracted
+                     rootFolder = `[${seriesId}] ${seriesTitle}`;
+                 } else {
+                     // Last resort: Use full title
+                     rootFolder = `[${seriesId}] ${title}`;
+                 }
+            }
         }
 
         // [Fix] Append Range [Start-End] for Local Merged Files (folderInCbz / zipOfCbzs)
@@ -1925,15 +2024,28 @@ async function tokiDownload(startIndex, lastIndex, policy = 'folderInCbz') {
                 // Build the individual chapter file
              
                 // Clean Filename Logic
-                // 1. GAS Upload (Drive): Format "0001 - 1화" (Remove Series Title)
-                // 2. Local Individual: Format "0001 - SeriesTitle 1화" (Keep Full Title)
+                // [v1.4.0 Update] Standardized format: "0001 - SeriesTitle 1화" (Keep Full Title)
+                // Reason: Better identification when moving files out of folder
                 
                 let chapterTitle = item.title;
                 
+                // [v1.4.0] Title Normalization
+                // If list title text differs from official metadata title, replace it.
+                // Ex: List="Hot Manga 19", Meta="Cool Manga" -> "Cool Manga 19"
+                // Condition: We have both titles, they differ, and item starts with list prefix
+                if (seriesTitle && listPrefixTitle && seriesTitle !== listPrefixTitle && listPrefixTitle.length > 2) {
+                     if (chapterTitle.startsWith(listPrefixTitle)) {
+                         chapterTitle = chapterTitle.replace(listPrefixTitle, seriesTitle).trim();
+                     }
+                }
+                
                 // Only clean (remove series title) if uploading to Drive
+                // [Deprecated] User requested to keep series title
+                /*
                 if (destination === 'drive' && seriesTitle && chapterTitle.startsWith(seriesTitle)) {
                     chapterTitle = chapterTitle.replace(seriesTitle, '').trim();
                 }
+                */
 
                 // Final Filename: "0001 - Title"
                 const fullFilename = `${item.num} - ${chapterTitle}`;
@@ -2057,6 +2169,7 @@ async function fetchImages(imageUrls) {
 
 
 
+
 function main() {
     console.log("🚀 TokiDownloader Loaded (New Core)");
     
@@ -2108,8 +2221,8 @@ function main() {
                                 win.document.getElementById('log').innerText = logs;
                                 alert("✅ 마이그레이션이 완료되었습니다!\n이제 Viewer에서 썸네일이 정상적으로 표시됩니다.");
                             } else {
-                                win.document.getElementById('log').innerText = "Failed: " + result.error;
-                                alert("❌ 오류 발생: " + result.error);
+                                win.document.getElementById('log').innerText = "Failed: " + result.body;
+                                alert("❌ 오류 발생: " + result.body);
                             }
                         } catch (e) {
                             // GAS returned HTML error instead of JSON
@@ -2265,6 +2378,73 @@ function main() {
         } catch (e) {
             console.warn('[TokiSync] History check failed:', e);
         }
+
+        // [v1.4.0] File Name Migration Menu
+        GM_registerMenuCommand('📂 파일명 표준화 (v1.4.0)', async () => {
+            if (!confirm('현재 작품의 파일명을 표준화하시겠습니까?\n(예: "0001 - 1화.cbz" -> "0001 - 제목 1화.cbz")')) return;
+            
+            // Extract Series ID
+            const idMatch = document.URL.match(/\/(novel|webtoon|comic)\/([0-9]+)/);
+            const seriesId = idMatch ? idMatch[2] : null;
+
+            if (!seriesId) {
+                alert('시리즈 ID를 찾을 수 없습니다.');
+                return;
+            }
+
+            try {
+                const logger = LogBox.getInstance();
+                logger.show();
+                logger.log('이름 변경 작업 요청 중...');
+                
+                const token = await getOAuthToken();
+                const config = getConfig();
+                
+                if (!config.gasUrl) {
+                    alert('GAS URL이 설정되지 않았습니다.');
+                    return;
+                }
+
+                GM_xmlhttpRequest({
+                    method: "POST",
+                    url: config.gasUrl,
+                    data: JSON.stringify({
+                        type: 'view_migrate_filenames',
+                        seriesId: seriesId,
+                        folderId: config.folderId, // Required by View_Dispatcher signature
+                        apiKey: config.apiKey
+                    }),
+                    headers: {
+                        "Authorization": `Bearer ${token}`,
+                        "Content-Type": "application/json"
+                    },
+                    onload: (res) => {
+                        try {
+                            const result = JSON.parse(res.responseText);
+                            if (result.status === 'success') {
+                                console.log('[Migration] Logs:', result.body);
+                                const logsStr = Array.isArray(result.body) ? result.body.join('\n') : result.body;
+                                LogBox.getInstance().success(`작업 완료!\n로그:\n${logsStr}`);
+                                alert(`작업이 완료되었습니다.\n로그:\n${logsStr}`);
+                            } else {
+                                LogBox.getInstance().error(`작업 실패: ${result.body}`);
+                                alert(`실패: ${result.body}`);
+                            }
+                        } catch (parseErr) {
+                            LogBox.getInstance().error(`응답 파싱 실패: ${parseErr.message}`);
+                        }
+                    },
+                    onerror: (err) => {
+                        LogBox.getInstance().error(`네트워크 오류: ${err.statusText}`);
+                        alert('네트워크 오류 발생');
+                    }
+                });
+            } catch (e) {
+                alert('오류 발생: ' + e.message);
+                console.error(e);
+            }
+        });
+
     })();
 }
 

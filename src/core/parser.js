@@ -76,3 +76,50 @@ export function getThumbnailUrl() {
     // Prefer 'content' attribute (original quality), fallback to 'src' (thumbnail)
     return img.getAttribute('content') || img.src;
 }
+
+/**
+ * Extract Series Title from metadata
+ * @returns {string|null} Series Title
+ */
+export function getSeriesTitle() {
+    // 1. Try 'subject' meta tag (Cleanest, No site suffix)
+    // <meta name="subject" content="파티피플 공명(인싸 공명)">
+    const subjectMeta = document.querySelector('meta[name="subject"]');
+    if (subjectMeta && subjectMeta.content) {
+        return subjectMeta.content.trim();
+    }
+
+    // 2. Try diverse meta tags (Priority: OpenGraph > Standard > Twitter)
+    const metaSelectors = [
+        'meta[property="og:title"]',
+        'meta[name="title"]',
+        'meta[name="twitter:title"]'
+    ];
+
+    for (const selector of metaSelectors) {
+        const metaTag = document.querySelector(selector);
+        if (metaTag && metaTag.content) {
+            let title = metaTag.content;
+            // Remove site suffix " > 마나토끼 ..." or similar patterns
+            const splitIndex = title.indexOf(' >');
+            if (splitIndex > 0) {
+                return title.substring(0, splitIndex).trim();
+            }
+            return title.trim();
+        }
+    }
+
+    // 3. Try parse HTML content (broader search)
+    // <div class="view-content"><span style="..."><b>Title</b></span></div>
+    // Also check h1, strong, .view-title
+    const viewContent = document.querySelectorAll('.view-content');
+    for (const div of viewContent) {
+        // Priority: b > strong > h1 > .view-title
+        const titleEl = div.querySelector('b, strong, h1, .view-title');
+        if (titleEl && titleEl.innerText.trim().length > 0) {
+            return titleEl.innerText.trim();
+        }
+    }
+
+    return null;
+}

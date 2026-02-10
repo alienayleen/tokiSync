@@ -4,6 +4,7 @@ import { showConfigModal, getConfig } from './config.js';
 import { LogBox, markDownloadedItems } from './ui.js';
 import { fetchHistory } from './gas.js';
 import { getListItems, parseListItem } from './parser.js';
+import { getOAuthToken } from './network.js';
 
 import { getCommonPrefix, blobToArrayBuffer } from './utils.js';
 
@@ -58,8 +59,8 @@ export function main() {
                                 win.document.getElementById('log').innerText = logs;
                                 alert("✅ 마이그레이션이 완료되었습니다!\n이제 Viewer에서 썸네일이 정상적으로 표시됩니다.");
                             } else {
-                                win.document.getElementById('log').innerText = "Failed: " + result.error;
-                                alert("❌ 오류 발생: " + result.error);
+                                win.document.getElementById('log').innerText = "Failed: " + result.body;
+                                alert("❌ 오류 발생: " + result.body);
                             }
                         } catch (e) {
                             // GAS returned HTML error instead of JSON
@@ -215,6 +216,73 @@ export function main() {
         } catch (e) {
             console.warn('[TokiSync] History check failed:', e);
         }
+
+        // [v1.4.0] File Name Migration Menu
+        GM_registerMenuCommand('📂 파일명 표준화 (v1.4.0)', async () => {
+            if (!confirm('현재 작품의 파일명을 표준화하시겠습니까?\n(예: "0001 - 1화.cbz" -> "0001 - 제목 1화.cbz")')) return;
+            
+            // Extract Series ID
+            const idMatch = document.URL.match(/\/(novel|webtoon|comic)\/([0-9]+)/);
+            const seriesId = idMatch ? idMatch[2] : null;
+
+            if (!seriesId) {
+                alert('시리즈 ID를 찾을 수 없습니다.');
+                return;
+            }
+
+            try {
+                const logger = LogBox.getInstance();
+                logger.show();
+                logger.log('이름 변경 작업 요청 중...');
+                
+                const token = await getOAuthToken();
+                const config = getConfig();
+                
+                if (!config.gasUrl) {
+                    alert('GAS URL이 설정되지 않았습니다.');
+                    return;
+                }
+
+                GM_xmlhttpRequest({
+                    method: "POST",
+                    url: config.gasUrl,
+                    data: JSON.stringify({
+                        type: 'view_migrate_filenames',
+                        seriesId: seriesId,
+                        folderId: config.folderId, // Required by View_Dispatcher signature
+                        apiKey: config.apiKey
+                    }),
+                    headers: {
+                        "Authorization": `Bearer ${token}`,
+                        "Content-Type": "application/json"
+                    },
+                    onload: (res) => {
+                        try {
+                            const result = JSON.parse(res.responseText);
+                            if (result.status === 'success') {
+                                console.log('[Migration] Logs:', result.body);
+                                const logsStr = Array.isArray(result.body) ? result.body.join('\n') : result.body;
+                                LogBox.getInstance().success(`작업 완료!\n로그:\n${logsStr}`);
+                                alert(`작업이 완료되었습니다.\n로그:\n${logsStr}`);
+                            } else {
+                                LogBox.getInstance().error(`작업 실패: ${result.body}`);
+                                alert(`실패: ${result.body}`);
+                            }
+                        } catch (parseErr) {
+                            LogBox.getInstance().error(`응답 파싱 실패: ${parseErr.message}`);
+                        }
+                    },
+                    onerror: (err) => {
+                        LogBox.getInstance().error(`네트워크 오류: ${err.statusText}`);
+                        alert('네트워크 오류 발생');
+                    }
+                });
+            } catch (e) {
+                alert('오류 발생: ' + e.message);
+                console.error(e);
+            }
+        });
+
     })();
 }
 

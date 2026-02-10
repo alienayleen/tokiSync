@@ -1,41 +1,42 @@
 # Core Module Handover Report
 
-**Current Version:** v1.3.5 (Released)  
-**Next Version:** v1.4.0 (Planned - TBD)  
-**Role:** Core Developer (Planner & Implementer)
-
----
-
-## 🚀 Status: v1.3.5 Released (Optimized)
+## 🚀 Status: v1.4.0 Released (Standardized & Stabilized)
 
 ### Major Accomplishments
 
-#### 1. Direct Drive Access (Performance)
+#### 1. Naming Standardization & Migration (v1.4.0)
+
+- **Universal Naming**: All files now follow `Number - Series Title Episode` format (e.g., `0001 - Re:Zero 1.cbz`), unifying Drive and Local conventions.
+- **Title Normalization**: Automatically replaces inconsistent list titles with the official metadata title (`meta[name="subject"]` or `og:title`) to ensure clean filenames.
+- **Migration Tool**: Added `📂 파일명 표준화` menu command. Triggers server-side renaming (GAS) to update legacy files to the new standard.
+- **Robust Folder Search**: Modified upload logic (`network.js`) to search folders by `[ID]` prefix instead of exact name match, preventing duplicate folders when series titles change.
+
+#### 2. Thumbnail Optimization (v1.4.0)
+
+- **Centralized Storage**: All thumbnails moved to `_Thumbnails` folder for faster loading.
+- **Auto-Redirect**: Uploads to `cover.jpg` are automatically moved to `_Thumbnails/{SeriesID}.jpg`.
+- **Deduplication**: Checks and removes existing thumbnails before uploading new ones.
+
+#### 3. Direct Drive Access (v1.3.5)
 
 - **Mechanism**: UserScript gets OAuth Token from GAS, then uploads/downloads directly via `GM_xmlhttpRequest`.
 - **Impact**: Bypassed GAS execution time limit (6 min) and significantly improved large file transfer speed.
 - **Components**: `src/core/network.js` (Upload), `docs/js/bridge.js` (Viewer Proxy).
 
-#### 2. Viewer Optimization
+#### 4. Viewer Optimization (v1.3.5)
 
 - **Script Bridge**: Solved CORS issue by proxying Viewer requests through UserScript.
-- **Thumbnails**:
-  - **Queue System**: Rate Limit fixes (429 errors).
-  - **Lazy Loading**: Intersection Observer applied.
-  - **Base64 Removal**: `index.json` size reduced by 95% (removed base64 if cover is present).
-  - **Blob Cleanup**: Memory leak prevention.
+- **Thumbnails**: Lazy Loading, Queue System, Blob Cleanup.
 - **Standalone Mode**: Graceful fallback when running Viewer without UserScript.
 
-#### 3. Server Stability (GAS)
+#### 5. Server Stability (GAS)
 
-- **Progressive Indexing**:
-  - **Time-Sliced Rebuild**: 20s execution chunks to prevent timeouts/infinite loading.
-  - **Feedback**: Viewer shows "Step 1, Step 2..." progress.
+- **Progressive Indexing**: Time-Sliced Rebuild (20s chunks) to fix timeouts.
 - **API Key Enforcement**: All viewer requests now secured.
 
 ---
 
-## 📋 Plan: Future (v1.4.0 Candidates)
+## 📋 Plan: Future (v1.5.0 Candidates)
 
 ### 1. Advanced Metadata
 
@@ -43,8 +44,19 @@
 
 ### 2. UI/UX Refinement
 
+- **Unified Menu Modal**: Consolidate scattered menu buttons into a single, accessible modal interface.
 - **Dark Mode Polish**: Consistent theme across all modals.
 - **Mobile Touch**: Enhanced swipe gestures for Viewer.
+
+---
+
+## 🛠️ Technical Analysis for v1.5.0 (Metadata)
+
+### Parsing & Storage Gaps
+
+- **Client (`parser.js`)**: Currently only extracts `Series Title` and `Images`. Needs extension to scrape `Author`, `Genre`, `Tags`, and `Status` from the DOM.
+- **Server (`SyncService.gs`)**: The `saveSeriesInfo` function currently **ignores** `tags`. It only maps `authors`, `status`, `category`, and `publisher`.
+  - **Action Required**: Must update `infoData.metadata` object construction in `SyncService.gs` to include `tags: data.tags`.
 
 ---
 
