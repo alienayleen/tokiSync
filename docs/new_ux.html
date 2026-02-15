@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TokiSync Viewer v1.4.0 - Functional Cinematic</title>
+    <!-- Core Libraries -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/dexie/dist/dexie.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
+        
+        :root {
+            --app-bg: #0f0f10;
+            --card-bg: #1c1c1e;
+            --accent-blue: #3498db;
+            --accent-green: #00d084;
+            --text-primary: #f4f4f5;
+            --text-secondary: #a1a1aa;
+        }
+
+        body { 
+            font-family: 'Inter', -apple-system, sans-serif; 
+            background-color: var(--app-bg); 
+            color: var(--text-primary); 
+            overflow-x: hidden; 
+        }
+
+        /* UI Decorators */
+        .glass-header { background: rgba(15, 15, 16, 0.85); backdrop-filter: blur(20px); border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+        .glass-controls { background: rgba(28, 28, 30, 0.8); backdrop-filter: blur(24px); border: 1px solid rgba(255, 255, 255, 0.08); }
+        .aspect-cover { aspect-ratio: 1 / 1.45; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        
+        /* Reader Themes */
+        .theme-light { background-color: #ffffff !important; color: #1a1a1a !important; }
+        .theme-sepia { background-color: #f4ecd8 !important; color: #5b4636 !important; }
+        .theme-dark { background-color: #1a1a1a !important; color: #f4f4f5 !important; }
+
+        /* Navigation Click Zones */
+        .nav-zone { position: fixed; top: 0; bottom: 0; z-index: 45; }
+        .nav-left { left: 0; width: 15%; cursor: w-resize; }
+        .nav-right { right: 0; width: 15%; cursor: e-resize; }
+        .nav-center { left: 15%; right: 15%; cursor: pointer; }
+
+        /* Transitions */
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; }
+        
+        .slide-up-enter-active, .slide-up-leave-active { transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.5s ease; }
+        .slide-up-enter-from { transform: translateY(40px); opacity: 0; }
+
+        .card-hover:hover { transform: translateY(-12px); transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); box-shadow: 0 40px 80px -12px rgba(0, 0, 0, 0.8); }
+        
+        .shimmer {
+            background: linear-gradient(90deg, #1c1c1e 25%, #2c2c2e 50%, #1c1c1e 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+        }
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        /* 2-Page View Layout */
+        .spread-layout {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100%;
+            width: 100%;
+            gap: 2px;
+            padding: 10px;
+        }
+        .spread-image {
+            max-width: 50%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        .single-image {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+    </style>
+</head>
+<body>
+    <div id="app" class="min-h-screen flex flex-col">
+        
+        <!-- [UI] 1. Navigation & Header -->
+        <nav v-if="currentView !== 'viewer'" class="sticky top-0 z-50 glass-header px-8 py-5 flex justify-between items-center text-white">
+            <div class="flex items-center space-x-10">
+                <button v-if="currentView === 'episodes'" @click="goBackToLibrary" class="p-2 hover:bg-white/10 rounded-full transition-all">
+                    <svg class="w-6 h-6 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"></path></svg>
+                </button>
+                <div v-if="currentView === 'library'" class="flex items-center space-x-3 cursor-pointer group" @click="reloadApp">
+                    <div class="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center font-black text-white shadow-lg">TS</div>
+                    <h1 class="text-2xl font-black tracking-tighter uppercase group-hover:text-blue-400 transition-colors italic text-white">TokiSync <span class="text-yellow-400">⚡️</span></h1>
+                </div>
+            </div>
+            <div class="flex items-center space-x-6">
+                <div v-if="isSyncing" class="flex items-center text-[10px] font-black text-blue-500 uppercase tracking-[0.3em]">
+                    <svg class="w-3.5 h-3.5 animate-spin mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                    Syncing
+                </div>
+                <button @click="showSettings = !showSettings" class="p-2 text-zinc-500 hover:text-white transition-colors" :class="{'text-white': showSettings}">⚙️</button>
+                <button @click="isAddModalOpen = true" class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-2.5 rounded-full text-[11px] font-black shadow-xl tracking-widest">+ ADD NEW</button>
+            </div>
+        </nav>
+
+        <!-- [UI] 1.2. Settings Panel -->
+        <transition name="fade">
+            <div v-if="showSettings && currentView !== 'viewer'" class="bg-[#1c1c1e] p-12 border-b border-white/5 text-white shadow-2xl">
+                <div class="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-16">
+                    <div class="space-y-6 text-white">
+                        <h3 class="text-[10px] font-black text-[#00d084] uppercase tracking-[0.4em] mb-8 text-center md:text-left">Cloud Gateway</h3>
+                        <div class="space-y-4">
+                            <input v-model="config.deploymentId" placeholder="GAS App ID" class="w-full bg-black/40 border border-white/5 p-4 rounded-2xl text-xs outline-none focus:ring-1 focus:ring-blue-500 transition-all text-white">
+                            <input v-model="config.apiKey" placeholder="Security Key" class="w-full bg-black/40 border border-white/5 p-4 rounded-2xl text-xs outline-none focus:ring-1 focus:ring-blue-500 transition-all text-white">
+                        </div>
+                    </div>
+                    <div class="space-y-6 text-center md:text-left">
+                        <h3 class="text-[10px] font-black text-blue-500 uppercase tracking-[0.4em] mb-8">Preference</h3>
+                        <div class="grid grid-cols-1 gap-4 text-xs text-zinc-400 font-bold uppercase tracking-tight">
+                            <label class="flex items-center space-x-4 cursor-pointer bg-black/20 p-5 rounded-2xl border border-white/5 hover:border-blue-500/50 transition-all">
+                                <input type="checkbox" v-model="viewerDefaults.spread" class="w-4 h-4 rounded accent-blue-600"> <span>Double Page View</span>
+                            </label>
+                            <label class="flex items-center space-x-4 cursor-pointer bg-black/20 p-5 rounded-2xl border border-white/5 hover:border-blue-500/50 transition-all">
+                                <input type="checkbox" v-model="viewerDefaults.rtl" class="w-4 h-4 rounded accent-blue-600"> <span>RTL Reading (Japan)</span>
+                            </label>
+                            <label class="flex items-center space-x-4 cursor-pointer bg-black/20 p-5 rounded-2xl border border-white/5 hover:border-blue-500/50 transition-all">
+                                <input type="checkbox" v-model="viewerDefaults.coverFirst" class="w-4 h-4 rounded accent-blue-600"> <span>Cover First</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="space-y-6 text-center md:text-left">
+                        <h3 class="text-[10px] font-black text-zinc-500 uppercase tracking-[0.4em] mb-8">Data Control</h3>
+                        <button @click="forceCloudSync" class="w-full bg-zinc-800 hover:bg-zinc-700 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all">Force Push Backup</button>
+                    </div>
+                </div>
+            </div>
+        </transition>
+
+        <transition name="fade" mode="out-in">
+            <!-- [VIEW 1] Library Main -->
+            <main v-if="currentView === 'library'" key="library" class="max-w-7xl mx-auto w-full p-10 md:p-16">
+                <div class="flex flex-col md:flex-row justify-between items-end mb-16 gap-10">
+                    <div>
+                        <h2 class="text-4xl font-black tracking-tighter mb-4 italic text-white font-black italic">My Collections</h2>
+                        <div class="flex space-x-2">
+                            <button v-for="tab in tabs" :key="tab.value" @click="currentTab = tab.value"
+                                    :class="currentTab === tab.value ? 'bg-blue-600 text-white' : 'bg-white/5 text-zinc-500'"
+                                    class="px-6 py-2.5 rounded-xl text-[10px] font-black transition-all uppercase tracking-widest">{{ tab.label }}</button>
+                        </div>
+                    </div>
+                    <div class="relative w-full md:w-[400px] group">
+                        <input v-model="searchQuery" type="text" placeholder="Search..." class="w-full bg-white/5 border border-white/5 rounded-[24px] px-8 py-5 pl-16 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 transition-all text-white">
+                        <svg class="w-6 h-6 absolute left-6 top-4.5 text-zinc-700 group-focus-within:text-blue-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" stroke-width="3"></path></svg>
+                    </div>
+                </div>
+
+                <div v-if="isInitialLoading" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-10">
+                    <div v-for="i in 12" :key="i" class="space-y-4"><div class="aspect-cover rounded-[32px] shimmer shadow-2xl"></div></div>
+                </div>
+                
+                <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-10">
+                    <div v-for="item in filteredLibrary" :key="item.id" @click="openSeries(item)" class="group cursor-pointer">
+                        <div class="relative aspect-cover rounded-[36px] overflow-hidden card-hover bg-zinc-900 shadow-2xl border border-white/5 transition-all">
+                            <img :src="item.cover" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700">
+                        </div>
+                        <div class="mt-6 px-2 text-white">
+                            <h4 class="font-black text-sm truncate tracking-tighter group-hover:text-blue-400 transition-colors uppercase italic font-black italic">{{ item.title }}</h4>
+                            <div class="flex justify-between items-center mt-2">
+                                <span class="text-[9px] font-black text-zinc-600 uppercase">{{ item.type }}</span>
+                                <span class="text-[9px] font-bold text-blue-500">{{ item.episodeCount }} EPs</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <!-- [VIEW 2] Episodes Cinematic -->
+            <main v-else-if="currentView === 'episodes'" key="episodes" class="w-full min-h-screen bg-[#0f0f10]">
+                <div class="relative w-full h-[550px] md:h-[750px] overflow-hidden">
+                    <img :src="selectedItem?.cover" class="absolute inset-0 w-full h-full object-cover blur-[100px] opacity-20 scale-150">
+                    <div class="absolute inset-0 bg-gradient-to-b from-transparent via-black/60 to-[#0f0f10]"></div>
+                    <div class="relative max-w-6xl mx-auto h-full flex flex-col md:flex-row items-end p-12 md:p-24 gap-20 text-white">
+                        <div class="hidden md:block w-80 shadow-2xl rounded-[50px] overflow-hidden aspect-cover border border-white/10 ring-[25px] ring-white/5 transform -rotate-3">
+                            <img :src="selectedItem?.cover" class="w-full h-full object-cover">
+                        </div>
+                        <div class="pb-12 flex-grow text-white">
+                            <h2 class="text-7xl md:text-9xl font-black mb-12 tracking-tighter leading-[0.85] uppercase italic font-black italic">{{ selectedItem?.title }}</h2>
+                            <div class="flex gap-8">
+                                <button @click="startReading(episodes[0])" class="bg-white text-black px-20 py-6 rounded-[32px] font-black shadow-2xl transition-all hover:bg-blue-500 hover:text-white hover:scale-105 active:scale-95 tracking-[0.2em] text-sm uppercase text-black font-black uppercase tracking-[0.2em]">Read Now</button>
+                                <button @click="deleteItem(selectedItem.id)" class="bg-white/5 text-zinc-600 px-12 py-6 rounded-[32px] font-black border border-white/5 transition-all hover:bg-red-600/20 hover:text-red-500 tracking-widest text-xs uppercase">Discard</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="max-w-6xl mx-auto p-12 md:p-24 pt-0">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        <div v-for="ep in episodes" :key="ep.id" @click="startReading(ep)" class="flex items-center p-8 rounded-[40px] bg-white/5 hover:bg-white/10 border border-white/5 hover:border-blue-500/50 transition-all cursor-pointer group">
+                            <div class="w-40 md:w-60 aspect-video rounded-[24px] overflow-hidden bg-zinc-900 relative shadow-2xl flex-shrink-0">
+                                <img :src="ep.thumbnail" class="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-all duration-700">
+                                <div v-if="ep.isRead" class="absolute inset-0 bg-blue-900/40 flex items-center justify-center text-[11px] font-black tracking-[0.5em] text-white uppercase backdrop-blur-[2px]">Read</div>
+                            </div>
+                            <div class="ml-10 flex-grow overflow-hidden text-white">
+                                <h5 class="font-black text-2xl group-hover:text-blue-400 transition-colors uppercase italic truncate tracking-tighter font-black italic truncate">{{ ep.title }}</h5>
+                                <p class="text-[10px] text-zinc-600 font-black uppercase tracking-[0.3em] mt-3">{{ ep.date }}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <!-- [VIEW 3] Integrated Reader (Functional Engine) -->
+            <main v-else-if="currentView === 'viewer'" key="viewer" class="fixed inset-0 z-[3000] bg-black overflow-hidden flex flex-col items-center">
+                
+                <!-- Floating Header: 에피소드 네비 버튼 추가 -->
+                <transition name="fade">
+                    <div v-if="showViewerControls" class="fixed top-8 inset-x-8 z-[100] glass-controls p-4 md:p-6 rounded-[32px] flex justify-between items-center text-white shadow-2xl">
+                        <button @click="exitViewer" class="w-12 h-12 flex items-center justify-center hover:bg-white/10 rounded-full transition-all">
+                            <svg class="w-7 h-7 text-zinc-400 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M15 19l-7-7 7-7"></path></svg>
+                        </button>
+                        
+                        <div class="text-center flex-1 px-4 flex items-center justify-center space-x-6">
+                            <!-- 이전 에피소드 버튼 -->
+                            <button @click.stop="goToPrevEpisode" :disabled="!hasPrevEpisode" 
+                                    class="p-2 hover:bg-white/10 rounded-full transition-all disabled:opacity-20" title="이전 화">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M15 19l-7-7 7-7"></path></svg>
+                            </button>
+                            
+                            <div class="overflow-hidden">
+                                <p class="text-[9px] font-black tracking-[0.5em] uppercase text-blue-500 mb-1 truncate">{{ selectedItem?.title }}</p>
+                                <p class="text-sm font-black text-zinc-200 uppercase tracking-tighter truncate">{{ currentEpisode?.title }}</p>
+                            </div>
+
+                            <!-- 다음 에피소드 버튼 -->
+                            <button @click.stop="goToNextEpisode" :disabled="!hasNextEpisode" 
+                                    class="p-2 hover:bg-white/10 rounded-full transition-all disabled:opacity-20" title="다음 화">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 5l7 7-7 7"></path></svg>
+                            </button>
+                        </div>
+
+                        <!-- 설정 버튼: 에피소드 목록 토글로 변경 -->
+                        <button @click.stop="showEpisodeModal = true" class="w-12 h-12 flex items-center justify-center bg-white/5 hover:bg-white/10 rounded-[20px] transition-all" title="에피소드 목록">
+                            <svg class="w-6 h-6 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                        </button>
+                    </div>
+                </transition>
+
+                <!-- Navigation Interaction Zones -->
+                <div class="fixed inset-0 z-40 pointer-events-none" @wheel.passive="handleWheel">
+                    <div @click="handlePrev" class="nav-zone nav-left pointer-events-auto"></div>
+                    <div @click="toggleViewerUI" class="nav-zone nav-center pointer-events-auto"></div>
+                    <div @click="handleNext" class="nav-zone nav-right pointer-events-auto"></div>
+                </div>
+
+                <!-- Engine Viewport -->
+                <div id="viewer-container" class="viewer-content w-full h-full overflow-y-auto no-scrollbar flex flex-col items-center" 
+                     :class="[viewerData.mode === 'scroll' ? 'overflow-y-auto' : 'overflow-hidden', selectedItem?.type === 'novel' ? `theme-${novelSettings.theme}` : 'bg-black']">
+                    
+                    <div v-if="viewerData.mode === 'scroll'" class="max-w-4xl w-full" :class="selectedItem?.type === 'novel' ? 'py-64 px-16' : ''">
+                        <template v-if="selectedItem?.type !== 'novel'">
+                            <img v-for="i in 10" :key="i" :src="`https://picsum.photos/seed/${currentEpisode?.id}_${i}/1200/1800`" class="w-full h-auto block select-none shadow-2xl border-b border-white/5" loading="lazy">
+                        </template>
+                        <template v-else>
+                            <h1 class="text-5xl font-black mb-24 opacity-80 border-b-8 border-blue-600 pb-16 tracking-tighter italic uppercase leading-none text-current italic uppercase leading-none">{{ currentEpisode?.title }}</h1>
+                            <div class="leading-[2.8] opacity-90 space-y-16 tracking-tight font-medium" :style="{ fontSize: novelSettings.fontSize + 'px' }">
+                                {{ fullNovelContent }}
+                            </div>
+                        </template>
+                    </div>
+
+                    <div v-else class="h-full w-full flex items-center justify-center overflow-hidden">
+                        <div v-if="selectedItem?.type !== 'novel'" class="spread-layout" :dir="viewerDefaults.rtl ? 'rtl' : 'ltr'">
+                            <template v-if="!viewerDefaults.spread || (currentPage === 1 && viewerDefaults.coverFirst)">
+                                <img :key="'p'+currentPage" :src="`https://picsum.photos/seed/${currentEpisode?.id}_${currentPage}/1200/1800`" class="single-image shadow-2xl">
+                            </template>
+                            <template v-else>
+                                <img :key="'p'+currentPage" :src="`https://picsum.photos/seed/${currentEpisode?.id}_${currentPage}/1200/1800`" class="spread-image shadow-2xl">
+                                <img v-if="currentPage < 10" :key="'p'+(currentPage+1)" :src="`https://picsum.photos/seed/${currentEpisode?.id}_${currentPage+1}/1200/1800`" class="spread-image shadow-2xl">
+                            </template>
+                        </div>
+                        <div v-else class="max-w-3xl w-full py-20 px-16 text-justify">
+                            <div class="leading-[2.8] opacity-90 text-current" :style="{ fontSize: novelSettings.fontSize + 'px' }">
+                                {{ paginatedNovelData[currentPage - 1] || '콘텐츠를 불러오는 중이거나 끝에 도달했습니다.' }}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Floating Footer -->
+                <transition name="slide-up">
+                    <div v-if="showViewerControls" class="fixed bottom-8 inset-x-8 z-[100] glass-controls p-10 rounded-[40px] flex flex-col space-y-10 shadow-2xl text-white">
+                        <div class="flex items-center space-x-10 text-white">
+                            <button @click="handlePrev" class="text-zinc-600 hover:text-white transition-colors text-2xl">◀</button>
+                            <input type="range" class="flex-grow accent-[#3498db] h-1 rounded-full bg-zinc-800 appearance-none cursor-pointer" v-model.number="currentPage" min="1" max="10">
+                            <button @click="handleNext" class="text-zinc-600 hover:text-white transition-colors text-2xl">▶</button>
+                        </div>
+                        <div class="flex flex-wrap justify-center gap-16 text-[10px] font-black uppercase tracking-[0.5em] text-zinc-600">
+                            <button @click="viewerDefaults.spread = !viewerDefaults.spread" :class="{'text-white underline decoration-blue-600 underline-offset-8': viewerDefaults.spread}">Double Spread</button>
+                            <button @click="setViewerMode(viewerData.mode === 'scroll' ? 'page' : 'scroll')" :class="{'text-white underline decoration-blue-600 underline-offset-8': viewerData.mode === 'scroll'}">Continuous Scroll</button>
+                            <button @click="viewerDefaults.rtl = !viewerDefaults.rtl" :class="{'text-white underline decoration-blue-600 underline-offset-8': viewerDefaults.rtl}">Manga RTL</button>
+                            <span class="text-blue-500 font-black">PAGE {{currentPage}} / 10</span>
+                        </div>
+                    </div>
+                </transition>
+            </main>
+        </transition>
+
+        <!-- [UI] Episode List Overlay (전역 모달 재사용) -->
+        <transition name="fade">
+            <div v-if="showEpisodeModal" class="fixed inset-0 z-[4000] flex items-center justify-center p-6 bg-black/95 backdrop-blur-xl">
+                <div class="bg-[#1c1c1e] w-full max-w-xl rounded-[40px] border border-white/5 shadow-2xl overflow-hidden text-white">
+                    <div class="p-8 border-b border-white/5 flex justify-between items-center bg-white/5">
+                        <div>
+                            <h3 class="font-black text-2xl tracking-tighter uppercase italic">{{ selectedItem?.title }}</h3>
+                            <p class="text-[10px] font-black text-zinc-500 uppercase tracking-widest mt-1">Episodes List</p>
+                        </div>
+                        <button @click="showEpisodeModal = false" class="w-12 h-12 flex items-center justify-center bg-white/5 hover:bg-white/10 rounded-full transition-all">&times;</button>
+                    </div>
+                    <div class="max-h-[60vh] overflow-y-auto p-4 no-scrollbar space-y-3">
+                        <div v-for="ep in episodes" :key="ep.id" @click="startReading(ep)" 
+                             class="flex items-center p-5 rounded-3xl bg-white/5 hover:bg-blue-600 transition-all cursor-pointer group"
+                             :class="{'ring-2 ring-blue-500': currentEpisode?.id === ep.id}">
+                            <div class="w-24 aspect-video rounded-xl overflow-hidden bg-zinc-900 mr-6">
+                                <img :src="ep.thumbnail" class="w-full h-full object-cover">
+                            </div>
+                            <div class="flex-grow">
+                                <p class="text-base font-black tracking-tight group-hover:text-white">{{ ep.title }}</p>
+                                <p class="text-[10px] text-zinc-500 group-hover:text-blue-200 uppercase mt-1">{{ ep.date }}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </transition>
+
+        <!-- [UI] Cloud Register Modal -->
+        <transition name="fade">
+            <div v-if="isAddModalOpen" class="fixed inset-0 z-[4000] flex items-center justify-center p-8 bg-black/98 backdrop-blur-xl text-white text-center">
+                <div class="bg-[#1c1c1e] w-full max-w-xl p-16 rounded-[60px] border border-white/5 shadow-2xl animate-in zoom-in-95 duration-500 text-white shadow-2xl animate-in zoom-in-95 duration-500">
+                    <h2 class="text-5xl font-black mb-16 uppercase tracking-tighter italic underline decoration-blue-600 decoration-[16px] underline-offset-[20px] font-black uppercase tracking-tighter italic underline decoration-blue-600 decoration-[16px] underline-offset-[20px]">Register</h2>
+                    <div class="space-y-8 mb-16 text-left">
+                        <div class="space-y-3 text-white">
+                            <label class="text-[10px] font-black text-zinc-600 uppercase tracking-widest ml-2">Series Metadata</label>
+                            <input v-model="newItem.title" placeholder="Entry title..." class="w-full bg-black/50 border border-white/5 p-6 rounded-3xl outline-none focus:ring-2 focus:ring-blue-600 transition-all font-black text-lg italic text-white">
+                        </div>
+                        <div class="grid grid-cols-3 gap-3">
+                            <button v-for="t in ['webtoon', 'manga', 'novel']" :key="t" @click="newItem.type = t"
+                                    :class="newItem.type === t ? 'bg-blue-600 text-white shadow-2xl scale-105' : 'bg-white/5 text-zinc-500'"
+                                    class="py-5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all">{{ t }}</button>
+                        </div>
+                        <div class="space-y-3">
+                            <label class="text-[10px] font-black text-zinc-600 uppercase tracking-widest ml-2">Drive Resource Identifier</label>
+                            <input v-model="newItem.fileId" placeholder="Google Drive ID" class="w-full bg-black/50 border border-white/5 p-6 rounded-3xl outline-none focus:ring-2 focus:ring-blue-600 transition-all font-mono text-xs tracking-tighter text-zinc-400">
+                        </div>
+                    </div>
+                    <button @click="addNewItem" class="w-full bg-white text-black py-7 rounded-[40px] font-black uppercase shadow-2xl hover:bg-blue-600 hover:text-white active:scale-95 transition-all tracking-[0.5em] text-sm text-black font-black uppercase tracking-[0.5em]">Deploy to Cloud</button>
+                    <button @click="isAddModalOpen = false" class="mt-10 text-[11px] text-zinc-800 uppercase font-black tracking-[0.6em] hover:text-zinc-500 transition-colors">Abort Mission</button>
+                </div>
+            </div>
+        </transition>
+
+        <!-- Notifications -->
+        <transition name="slide-up">
+            <div v-if="notification" class="fixed bottom-16 left-1/2 -translate-x-1/2 z-[5000] bg-blue-600 text-white px-12 py-5 rounded-[32px] shadow-2xl font-black text-[10px] uppercase tracking-[0.4em] shadow-blue-900/40 border border-white/10">
+                {{ notification }}
+            </div>
+        </transition>
+
+    </div>
+
+    <script>
+        const { createApp, ref, reactive, computed, onMounted, watch } = Vue;
+
+        const db = new Dexie('ViewerHubDB');
+        db.version(1).stores({ library: '++id, title, type, fileId, progress' });
+
+        createApp({
+            setup() {
+                const currentView = ref('library');
+                const showSettings = ref(false);
+                const showViewerControls = ref(false);
+                const isAddModalOpen = ref(false);
+                const showEpisodeModal = ref(false); // 에피소드 목록 토글용
+                const isInitialLoading = ref(true);
+                const isSyncing = ref(false);
+                const notification = ref('');
+
+                const config = reactive({ deploymentId: '', apiKey: '', folderId: '' });
+                const viewerDefaults = reactive({ spread: true, rtl: false, coverFirst: true });
+                const viewerData = reactive({ mode: 'page' });
+                const novelSettings = reactive({ theme: 'dark', fontSize: 26, lastMode: 'scroll' });
+                
+                const searchQuery = ref('');
+                const currentTab = ref('all');
+                const tabs = [{ label: 'TOTAL', value: 'all' }, { label: 'Webtoon', value: 'webtoon' }, { label: 'Manga', value: 'manga' }, { label: 'Novel', value: 'novel' }];
+
+                const libraryItems = ref([]);
+                const selectedItem = ref(null);
+                const currentEpisode = ref(null);
+                const currentPage = ref(1);
+
+                const episodes = ref([
+                    { id: 'EP1', title: 'Chapter 001: Ascension of the King', thumbnail: 'https://picsum.photos/seed/1/800/450', date: 'JAN 01 2026', isRead: true },
+                    { id: 'EP2', title: 'Chapter 002: Hidden Dungeon Quest', thumbnail: 'https://picsum.photos/seed/2/800/450', date: 'JAN 08 2026', isRead: false },
+                    { id: 'EP3', title: 'Chapter 003: The Blood-Stained Sword', thumbnail: 'https://picsum.photos/seed/3/800/450', date: 'JAN 15 2026', isRead: false },
+                    { id: 'EP4', title: 'Chapter 004: Shadow Realm Unlocked', thumbnail: 'https://picsum.photos/seed/4/800/450', date: 'JAN 22 2026', isRead: false },
+                    { id: 'EP5', title: 'Chapter 005: A New Companion', thumbnail: 'https://picsum.photos/seed/5/800/450', date: 'JAN 29 2026', isRead: false },
+                ]);
+
+                // --- Computed Properties for Episode Navigation ---
+                const currentEpisodeIndex = computed(() => {
+                    return episodes.value.findIndex(ep => ep.id === currentEpisode.value?.id);
+                });
+                const hasNextEpisode = computed(() => currentEpisodeIndex.value < episodes.value.length - 1);
+                const hasPrevEpisode = computed(() => currentEpisodeIndex.value > 0);
+
+                // --- Methods ---
+
+                const initApp = async () => {
+                    isInitialLoading.value = true;
+                    setTimeout(async () => {
+                        const items = await db.library.toArray();
+                        if (items.length === 0) {
+                            await db.library.bulkAdd([
+                                { title: 'Solo Leveling', type: 'webtoon', cover: 'https://picsum.photos/seed/lev/800/1200', progress: 85, episodeCount: 179 },
+                                { title: 'One Piece (V105)', type: 'manga', cover: 'https://picsum.photos/seed/op/800/1200', progress: 10, episodeCount: 1100 },
+                                { title: 'Omniscient Reader', type: 'novel', cover: 'https://picsum.photos/seed/read/800/1200', progress: 42, episodeCount: 550 },
+                                { title: 'Berserk', type: 'manga', cover: 'https://picsum.photos/seed/ber/800/1200', progress: 5, episodeCount: 364 },
+                            ]);
+                        }
+                        libraryItems.value = await db.library.toArray();
+                        isInitialLoading.value = false;
+                    }, 1500);
+                };
+
+                const startReading = (ep) => {
+                    currentEpisode.value = ep;
+                    currentPage.value = 1;
+                    const type = selectedItem.value.type;
+                    
+                    if (type === 'webtoon') viewerData.mode = 'scroll';
+                    else if (type === 'manga') viewerData.mode = 'page';
+                    else viewerData.mode = novelSettings.lastMode;
+
+                    currentView.value = 'viewer';
+                    showViewerControls.value = false;
+                    showEpisodeModal.value = false; // 목록 창 닫기
+                    window.scrollTo(0, 0);
+                };
+
+                // 화차 이동 로직
+                const goToNextEpisode = () => {
+                    if (hasNextEpisode.value) {
+                        const nextEp = episodes.value[currentEpisodeIndex.value + 1];
+                        startReading(nextEp);
+                        notify(`Moved to ${nextEp.title}`);
+                        forceCloudSync();
+                    }
+                };
+
+                const goToPrevEpisode = () => {
+                    if (hasPrevEpisode.value) {
+                        const prevEp = episodes.value[currentEpisodeIndex.value - 1];
+                        startReading(prevEp);
+                        notify(`Moved to ${prevEp.title}`);
+                        forceCloudSync();
+                    }
+                };
+
+                const handleWheel = (e) => {
+                    if (viewerData.mode === 'scroll') {
+                        const container = document.getElementById('viewer-container');
+                        if (container) {
+                            container.scrollTop += e.deltaY;
+                        }
+                    }
+                };
+
+                const handleNext = () => {
+                    if (viewerDefaults.rtl) { prev(); return; }
+                    next();
+                };
+
+                const handlePrev = () => {
+                    if (viewerDefaults.rtl) { next(); return; }
+                    prev();
+                };
+
+                const next = () => {
+                    if (viewerData.mode === 'scroll') {
+                        const container = document.getElementById('viewer-container');
+                        container.scrollBy({ top: window.innerHeight * 0.8, behavior: 'smooth' });
+                    } else {
+                        let step = 1;
+                        if (viewerDefaults.spread) {
+                            if (currentPage.value === 1 && viewerDefaults.coverFirst) {
+                                step = 1;
+                            } else {
+                                step = 2;
+                            }
+                        }
+                        if (currentPage.value + step <= 10) currentPage.value += step;
+                        else notify("Last page reached.");
+                    }
+                };
+
+                const prev = () => {
+                    if (viewerData.mode === 'scroll') {
+                        const container = document.getElementById('viewer-container');
+                        container.scrollBy({ top: -window.innerHeight * 0.8, behavior: 'smooth' });
+                    } else {
+                        let step = 1;
+                        if (viewerDefaults.spread) {
+                            if (currentPage.value === 2 && viewerDefaults.coverFirst) {
+                                step = 1;
+                            } else {
+                                step = 2;
+                            }
+                        }
+                        if (currentPage.value - step >= 1) currentPage.value -= step;
+                        else notify("First page reached.");
+                    }
+                };
+
+                const setViewerMode = (mode) => {
+                    viewerData.mode = mode;
+                    if (selectedItem.value?.type === 'novel') novelSettings.lastMode = mode;
+                };
+
+                const toggleViewerUI = () => { showViewerControls.value = !showViewerControls.value; };
+                const exitViewer = () => { currentView.value = 'episodes'; forceCloudSync(); };
+                const goBackToLibrary = () => { currentView.value = 'library'; forceCloudSync(); };
+                const openSeries = (item) => { selectedItem.value = item; currentView.value = 'episodes'; window.scrollTo(0, 0); };
+                const notify = (msg) => { notification.value = msg; setTimeout(() => notification.value = '', 3000); };
+                const forceCloudSync = () => { isSyncing.value = true; setTimeout(() => isSyncing.value = false, 2000); };
+                const reloadApp = () => window.location.reload();
+                const addNewItem = () => { isAddModalOpen.value = false; notify("Deployment to Cloud Successful"); };
+                const deleteItem = () => { currentView.value = 'library'; notify("Collection Removed"); };
+
+                const filteredLibrary = computed(() => libraryItems.value.filter(item => {
+                    const matchTab = currentTab.value === 'all' || item.type === currentTab.value;
+                    return matchTab && item.title.toLowerCase().includes(searchQuery.value.toLowerCase());
+                }));
+
+                const novelContentBase = `안티그래비티 v1.4.0 리더 엔진의 통합 렌더링 시스템입니다. \n\n이 본문은 사용자가 선택한 모드(스크롤/페이지)에 관계없이 동일한 원본 데이터를 공유합니다. 스크롤 모드에서는 전체 내용을 한 번에 보여주며, 페이지 모드에서는 내용을 적절히 분할하여 쪽 단위로 보여줍니다. \n\n현재 이 기능은 GAS v90 라이브러리와 연동될 준비가 되어 있으며, 모든 독서 진행률은 실시간으로 클라우드에 백업됩니다.`;
+                const fullNovelContent = computed(() => novelContentBase);
+                const paginatedNovelData = computed(() => {
+                    const words = novelContentBase.split(' ');
+                    const pages = [];
+                    const wordsPerPage = 20;
+                    for (let i = 0; i < words.length; i += wordsPerPage) {
+                        pages.push(words.slice(i, i + wordsPerPage).join(' '));
+                    }
+                    return pages;
+                });
+
+                onMounted(initApp);
+
+                return {
+                    currentView, currentTab, searchQuery, tabs, showSettings, showViewerControls, isAddModalOpen, showEpisodeModal,
+                    config, viewerDefaults, viewerData, novelSettings, libraryItems, filteredLibrary, selectedItem, episodes, currentEpisode, currentPage,
+                    isSyncing, isInitialLoading, notification, newItem: reactive({ title: '', type: 'webtoon', fileId: '' }),
+                    openSeries, startReading, exitViewer, goBackToLibrary, forceCloudSync, toggleViewerUI, reloadApp, initApp, addNewItem, setViewerMode, deleteItem,
+                    handleNext, handlePrev, handleWheel, fullNovelContent, paginatedNovelData,
+                    goToNextEpisode, goToPrevEpisode, hasNextEpisode, hasPrevEpisode
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
