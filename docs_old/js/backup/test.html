@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>전환형 소설 뷰어</title>
+    <style>
+        :root {
+            --view-width: 700px;
+            --view-height: 850px;
+            --bg-color: #fdfaf2;
+        }
+
+        body {
+            background-color: #e5e5e5;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-family: 'Apple SD Gothic Neo', sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+
+        /* 상단 모드 컨트롤러 */
+        .mode-selector {
+            margin-bottom: 15px;
+            background: #fff;
+            padding: 5px;
+            border-radius: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .mode-selector button {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 15px;
+            cursor: pointer;
+            background: transparent;
+            transition: 0.3s;
+        }
+        .mode-selector button.active {
+            background: #333;
+            color: #fff;
+        }
+
+        /* 뷰어 메인 프레임 */
+        .book-container {
+            width: var(--view-width);
+            height: var(--view-height);
+            background-color: var(--bg-color);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+            position: relative;
+            border-radius: 8px;
+            transition: all 0.3s;
+        }
+
+        /* 페이지 모드일 때의 오버플로우 처리 */
+        .book-container.page-mode { overflow: hidden; }
+        /* 스크롤 모드일 때의 오버플로우 처리 */
+        .book-container.scroll-mode { overflow-y: auto; scroll-behavior: smooth; }
+
+        /* 본문 레이아웃 */
+        .text-body {
+            width: 100%;
+            height: 100%;
+            transition: transform 0.5s cubic-bezier(0.2, 0, 0.2, 1);
+        }
+
+        /* 페이지 모드 전용 클래스 */
+        .page-mode .text-body {
+            column-width: var(--view-width);
+            column-gap: 0;
+        }
+
+        /* 스크롤 모드 전용 클래스 */
+        .scroll-mode .text-body {
+            column-width: auto;
+            transform: none !important; /* 스크롤 모드에선 이동 무시 */
+        }
+
+        .inner-content {
+            padding: 70px;
+            line-height: 1.9;
+            font-size: 1.15rem;
+            color: #333;
+            text-align: justify;
+            box-sizing: border-box;
+        }
+
+        /* 하단 컨트롤 (페이지 모드에서만 노출) */
+        .floating-controls {
+            position: absolute;
+            bottom: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.8);
+            padding: 5px 15px;
+            border-radius: 30px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            backdrop-filter: blur(5px);
+            gap: 10px;
+            z-index: 10;
+        }
+        .scroll-mode .floating-controls { display: none; }
+
+        .nav-btn { background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #555; }
+        .nav-btn:disabled { color: #ccc; }
+
+        .page-indicator { font-size: 0.8rem; font-weight: bold; color: #666; min-width: 60px; text-align: center; }
+    </style>
+</head>
+<body>
+
+    <div class="mode-selector">
+        <button id="btnPageMode" class="active" onclick="setMode('page')">페이지 모드</button>
+        <button id="btnScrollMode" onclick="setMode('scroll')">스크롤 모드</button>
+    </div>
+
+    <div class="book-container page-mode" id="mainContainer">
+        <div class="text-body" id="textBody">
+            <div class="inner-content">
+<h1>0001 - 001. 능력 각성</h1>
+<p>작품 : 창작물 속으로</p><p></p><p>작가 : 제울</p><p></p><p>〈 1화 〉 001. 능력 각성</p><p></p><p>나는 이불에 누워 멍하니 천장을 쳐다보다가 스마트폰으로 시간을 확인했다.</p><p></p><p>오전 11시.</p><p></p><p>생각했던 대로 너무 늦게 일어났다.</p><p></p><p>‘오늘이… 박 교수 강의였나. 또 나중에 지랄하겠군.’</p><p></p><p>국천대학교 헌터과.</p><p></p><p>내가 다니는 대학교이자 학과다. 웃기는 이름의 학과지만 의외로 인기가 있는 학과다.</p><p></p><p>현대 사회에서 특수한 능력을 가지고 있는 헌터는 거의 영웅 취급이고, 헌터가 벌어들이는 평균 수익이 대기업 사원 뺨칠 정도다. 거기다 실력이 좋으면 연예인급의 스타까지 될 수 있다.</p><p></p><p>그러니 일반 사람들이 보기에는 헌터과는 꿈과 희망이 가득한 곳이다.</p><p></p><p>다만 헌터과는 일반인이 지원한다고 갈 수 있는 학과가 아니다.</p><p></p><p>두 가지 조건이 있다.</p><p></p><p>하나는 능력을 가지고 있을 것. 이 세상에선 능력을 사용하는 사람만이 헌터가 될 수 있다. 헌터는 다른 말로 초능력자였다.</p><p></p><p>다른 하나는 능력을 개화할 잠재력을 가질 것. 내가 바로 이 케이스다. 나는 헌터과에 다니는 헌터 지망생이다.</p><p></p><p>‘시발. 난 도대체 언제 각성하는 거야?’</p><p></p><p>잠재력은 있다. 국가가 직접 인증했다. 혹시 몰라 서로 다른 병원을 찾아 3번이나 신체검사를 받았고 모두 판단은 똑같았다.</p><p></p><p>그러나 21살인 지금. 학과 내에서 유일하게 나 혼자 비각성자다.</p><p></p><p>당연히 학교 다닐 맛이 나지 않았다. 선배들은 불쌍하다는 눈으로 보고, 동기들은 멸시하고, 후배들은 무시한다.</p><p></p><p>‘각성! 각성! 각성!’</p><p></p><p>혼자서 몸을 꿈틀거렸다.</p><p></p><p>각성이 너무 하고 싶었다. 다른 사람들은 어느 순간 각성한다는데 자신은 왜 그 어느 순간이 안 찾아오는지 모르겠다.</p><p></p><p>‘으아아아아악!’</p><p></p><p>마음속으로 소리를 지른다.</p><p></p><p>이 원룸의 방음이 시원찮다는 걸 알기 때문이다. 금요일 밤마다 옆집 남자의 여친의 신음소리로 확인했다.</p><p></p><p>‘나도 각성해서! 잘나가고 싶다! 클럽에 가서! 원나잇 하고 싶다고!’</p><p></p><p>헌터는 인기가 좋다. 단지 헌터라는 이유만으로 여자를 꼬시기 쉬어지는 것이다. 실제로 나는 동기 놈이 헌터라며 손쉽게 여자를 꼬시는 걸 보았다. F급인 주제에 잘도 여자를 꼬셨다.</p><p></p><p>‘제엔장!’</p><p></p><p>생각할수록 좆같다.</p><p></p><p>그렇게 한참을 지랄하며 이불 위에서 꿈틀거릴 때였다.</p><p></p><p>내 몸 전체가 하얗게 빛났다.</p><p></p><p>“각성!”</p><p></p><p>나는 벌떡 자리에서 일어났다. 각성의 전조. 그것이 지금 내 몸에서 발현하고 있었다.</p><p></p><p>꿀꺽.</p><p></p><p>몸은 한동안 빛나더니 이윽고 사그라들었다.</p><p></p><p>나는 즉시 두 눈을 감았다.</p><p></p><p>각성자는 각성하는 즉시 머릿속으로 자연히 자신의 능력을 알게 된다.</p><p></p><p>‘내 능력은….’</p><p></p><p>머릿속으로 무언가가 들어온다. 강제로 주입되고 있는 느낌은 빈말로도 좋지 않았다. 그러나 참았다. 참아야 했다.</p><p></p><p>‘유희생활(遊?生活)! …놀고 즐기는 삶? 뭐야 이게!’</p><p></p><p>머릿속에선 계속해서 능력에 대한 정보가 주입된다.</p><p></p><p>‘자세한 건 어플을 확인하세요. ……뭐? 시발! 이건 뭐야.’</p><p></p><p>나는 어이가 없어 욕을 내뱉으면서도 서둘러 스마트폰을 확인했다.</p><p></p><p>기존에 존재하지 않았던, ‘유희생활’이란 어플이 있었다. 어플 아이콘은 빨간 하트 모양이었다. 뭐 이딴 게 다 있나 싶었다.</p><p></p><p>‘뭐지. 원래 능력을 이런 식으로 각성하나…? 시발! 그럴 리가 없잖아. 불을 내뿜거나! 신체가 강해지거나! 투시가 되거나! 대부분 그런 능력이잖아! 나만 왜 이래?!’</p><p></p><p>투덜거리면서도 손은 움직였다.</p><p></p><p>유희생활 어플을 눌렀다.</p><p></p><p>솔직히 내 능력이지만 자세한 능력은 잘 모르겠다. ‘자세한 건 어플을 확인하세요.’는 개뿔.</p><p></p><p>어쩌면 정말 대단한 능력일지도 모른다. 나는 기대감을 담았다.</p><p></p><p>[유희생활을 시작합니다.]</p><p></p><p>화면에는 나를 그대로 옮긴 듯한 캐릭터가 있었다.</p><p></p><p>3D로 된 캐릭터였다.</p><p></p><p>적당히 근육이 있는 몸뚱어리와 평범에 가까운 얼굴. 거기다 알몸이다. 사타구니 사이에 달려 있는 성기까지 현실의 나와 동일했다.</p><p></p><p>순간 소름이 끼쳤으나, 내 능력으로 만들어진 어플이라 생각하니 그러려니 했다. 세상에는 이해할 수 없는 일이 투성이란 걸 알고 있다.</p><p></p><p>[성유진</p><p></p><p>레벨: 1</p><p></p><p>근력: 4 체력: 2 민첩: 3 지능: 1 정력 2</p><p></p><p>보유 포인트: 10]</p><p></p><p>“지능 1? 시발놈이! 내가 좀 멍청하긴 해도 1은 아니지! 1은! 그리고 내 정력은 왜? 나 정도면 평균인데. …아. 2가 평균이구나. 그럼 이해가 가지.”</p><p></p><p>나는 스스로를 위안했다.</p><p></p><p>사실은 내 정력이 쓰레기란 걸 알고 있었다. 옛날에는 이러지 않았는데 요즘은 딸딸이를 쳐도 영 시원찮게 사정한다.</p><p></p><p>화면 속에 있는 내 캐릭터의 가슴을 클릭해봤다.</p><p></p><p>[포인트를 투자해 문신을 새기거나 형태를 바꿀 수 있습니다.]</p><p></p><p>머리를 눌러봤다.</p><p></p><p>[포인트를 투자해 문신을 새기거나 형태를 바꿀 수 있습니다.]</p><p></p><p>포인트로 성형 할 수 있는 모양이다.</p><p></p><p>나는 야리꾸리한 기분으로 성기를 터치했다.</p><p></p><p>[포인트를 투자해 문신을 새기거나 형태를 바꿀 수 있습니다.]</p><p></p><p>성기를 한 번 더 클릭하자 확대되었다. 남의 꼬추였다면 당장 욕을 내뱉었을 테지만, 내 꼬추라 생각하니 사랑스럽게 느껴졌다.</p><p></p><p>“혹시 늘릴 수도 있나?”</p><p></p><p>꼬추를 드래그하자 늘어났다.</p><p></p><p>[1포인트당 1cm를 늘리거나 줄일 수 있습니다.]</p><p></p><p>길이뿐만이 아니라 두께도 마찬가지로 늘릴 수 있다.</p><p></p><p>나는 고민에 빠졌다.</p><p></p><p>‘솔직히 내 거기가 좀 작긴 해. 어디까지나 평균보다 아주 약간. 아주 약간 작지만.’</p><p></p><p>물론 길이만 그렇다는 거다. 나는 두께에 자신 있었다.</p><p></p><p>나는 고민하다가 5포인트를 투자해 성기의 길이를 눌렸다.</p><p></p><p>반응은 바로 왔다. 성기가 간질간질 거린 것이다.</p><p></p><p>나는 잠옷 바지를 벗고 팬티를 내렸다. 성기가 커졌다.</p><p></p><p>“오오오…!”</p><p></p><p>쪼물락 쪼물락.</p><p></p><p>몇 번 주물러 보지만 발기가 되지 않았다. 이참에 정력에 나머지 5포인트를 투자했다.</p><p></p><p>[성유진</p><p></p><p>레벨: 1</p><p></p><p>근력: 4 체력: 2 민첩: 3 지능: 1 정력 7]</p><p></p><p>이번에도 반응은 곧바로 일어났다. 아무 반응 없이 축 늘어져 있던 그곳에 힘이 들어가는 걸 느꼈다. 조금 만지작거리자 훌륭하게 발기했다. 대충 봐도 16cm는 되는 길이다.</p><p></p><p>한 손으로 잡을 수 없는 길이. 대한민국 평균을 아득히 넘는 길이.</p><p></p><p>‘이렇게 보니 두께에도 더 투자하고 싶은데… 그건 차차 하면 될 일이고.’</p><p></p><p>나는 성기에서 손을 뗐다. 지금 해야 할 일은 딸딸이가 아니라 능력을 파악하는 것이다.</p><p></p><p>화면 아래에 있는 메뉴를 눌렀다.</p><p></p><p>[보유 특성 목록]</p><p></p><p>[보유 스킬 목록]</p><p></p><p>[보유 소지품 목록]</p><p></p><p>[랜덤 뽑기]</p><p></p><p>[캐릭터 소환]</p><p></p><p>[유희 시작]</p><p></p><p>[유희 관리]</p><p></p><p>총 7개의 메뉴 창이 있었다. 나는 차례대로 다 눌러볼 생각이었다.</p><p></p><p>특성과 스킬에는 비어있었다. 기본 특성이나 스킬은 없는 모양이다.</p><p></p><p>소지품 목록은 총 3개의 칸이 있었는데 마찬가지로 비어 있었다. 나는 칸을 보다가 고개를 갸웃거렸다. 감이라고 할까. 뭔가 느낌이 이상했다.</p><p></p><p>‘…정말 말도 안 되는 일이지만.’</p><p></p><p>나는 설마설마 하는 심정으로 이불 옆에 있는 물통을 들었다. 그리고 혹시나 하는 마음으로 화면에 가져다 댔다.</p><p></p><p>그러자 물통이 화면 속으로 빨려 들어갔다. 비어 있는 칸에 물통이 하나 그려졌다.</p><p></p><p>“와우…. 내 능력 개쩌는 거 같은데.”</p><p></p><p>꺼내기도 쉬웠다. 화면 속의 물통을 두 번 클릭하니 자연스레 꺼내졌다.</p><p></p><p>나는 웃으며 물통과 철검, 운동복을 집어넣었다.</p><p></p><p>헌터과는 종종 실습을 한다. 고블린 같은 하급의 몬스터를 상대로 전투를 벌이는 것이다.</p><p></p><p>비능력자였던 나는 이것들을 들고 대학교에 가는 게 힘들었다. 그렇다고 철검을 대학교에 놔둘 수는 없다. 무려 70만 원이 넘는 물건으로 누군가가 훔쳐 갈 수도 있었으니까.</p><p></p><p>“이제 가볍게 학교에 갈 수 있겠군.”</p><p></p><p>[랜덤 뽑기]</p><p></p><p>물음표가 그려진 박스가 나타났다.</p><p></p><p>1포인트로 뽑기 1번을 할 수 있었다.</p><p></p><p>[초회 한정 무료 3 뽑기!]</p><p></p><p>“거참, 존나 고맙구만.”</p><p></p><p>나는 망설임 없이 랜덤 박스를 눌러 뽑기를 시작했다.</p><p></p><p>나는 참는 걸 잘 못 했다. 이런 걸 보면 그냥 확 지른다.</p><p></p><p>화면 속의 박스가 흔들리며 빛을 냈다. 그 안에서 동그란 무언가가 나왔다.</p><p></p><p>[소환단.</p><p></p><p>모든 능력치가 1 증가합니다.]</p><p></p><p>“좋은 아이템인가? 애초에 뭐가 나오는지 전혀 모르니까 좋은 건지 안 좋은 건지 모르겠어.”</p><p></p><p>나는 화면을 클릭했다.</p><p></p><p>[소지품 목록이 가득 찼습니다. 자동으로 현물화합니다.]</p><p></p><p>스마트폰에서 동그란 알약이 툭 하고 나왔다. 나는 그걸 들고 이리저리 살펴봤다. 그냥 봤을 땐 검은색 알약으로 토끼 똥 같았다.</p><p></p><p>“음. 그냥 먹자. 내 능력인데 뭐.”</p><p></p><p>입안에 그냥 넣었다. 소환단은 혀에 닿자마자 스르륵 녹았다.</p><p></p><p>나는 몸을 부르르 떨었다. 몸이 시원해지고, 활력이 돌았다. 능력치를 확인하니 1씩 올라 있었다.</p><p></p><p>[성유진</p><p></p><p>레벨: 1</p><p></p><p>근력: 5 체력: 3 민첩: 4 지능: 2 정력 8]</p><p></p><p>“오. 좋네. 그럼 다음 뽑기다.”</p><p></p><p>[하얀 손목 보호대</p><p></p><p>자위를 하면 기분이 더 좋아진다.]</p><p></p><p>“씨발.”</p><p></p><p>확신할 수 있었다. 꽝이다.</p><p></p><p>나는 현물화 된 손목 보호대를 이리저리 둘러보다가 벽을 향해 내던졌다.</p><p></p><p>“소환단이 좋은 거였어! 제발 소환단 같은 거 떠라!”</p><p></p><p>마지막 뽑기를 시작했다.</p><p></p><p>[스킬, 완전 회복을 획득합니다!]</p><p></p><p>[완전 회복 Lv.1</p><p></p><p>완전히 회복합니다. 모든 상태 이상이 풀리고 상처가 회복됩니다.</p><p></p><p>쿨타임: 24시간]</p><p></p><p>나는 두 눈을 부릅떴다. 머릿속으로 스킬의 사용법이 들어왔다.</p><p></p><p>잠시간 고민하던 나는 실험정신을 발휘했다.</p><p></p><p>사용법은 간단했다. 내가 스킬을 사용하려고 생각하면 된다.</p><p></p><p>“완전 회복!”</p><p></p><p>나는 내 몸을 쳐다봤다. 게임 속 스킬처럼 화려한 이펙트는 없었다. 그러나 내 몸의 변화는 있었다.</p><p></p><p>“내 몸에 있던 흉터가 전부 사라졌어….”</p><p></p><p>배꼽 위에 있던 작은 화상 자국. 모기 물린 곳이 그대로 흉터가 된 종아리. 얼굴에 남아 있던 여드름 흉터까지 전부 사라진 것이다.</p><p></p><p>“거기다 피부까지 좋아졌다. 아, 상태 이상을 완전히 회복한다는 게 이런 건가?”</p><p></p><p>추측건대 몸속의 내장 상태가 좋아진 것일 거다. 이전에 신체검사에서 간이 좋지 않다고 했는데 이번에 회복된 것이 아닐까.</p><p></p><p>그 때문인지 내 얼굴이 좀 잘생겨졌다. 이전에는 그냥 평범한 얼굴이었는데 지금은 좀 훈남이 된 것 같았다.</p><p></p><p>여드름 흉터와 깨끗한 피부는 그만큼 악질적이었다.</p><p></p><p>“개쩐다. 이거 회복 능력이잖아! 헌터 중에서도 가장 귀한 회복 능력을 가진 헌터…! 나도 귀족이…….”</p><p></p><p>나는 입을 다물었다.</p><p></p><p>완전 회복 능력은 자신에게만 통용되는 능력이었다. 게다가 24시간에 한 번 밖에 못 쓴다. 이래서는 헌터의 능력치곤 무척 초라했다.</p><p></p><p>나는 안타까움의 한숨을 쉬며 다음 메뉴로 넘어갔다.</p><p></p><p>[캐릭터 소환]</p><p></p><p>소환 할 수 있는 캐릭터가 존재하지 않았다. 그냥 넘어갔다.</p><p></p><p>[유희 시작]</p><p></p><p>[현재 하나의 유희를 진행할 수 있습니다.]</p><p></p><p>[20레벨마다 진행할 수 있는 유희의 수가 늘어납니다.]</p><p></p><p>[선택한 창작물의 세계로 들어갈 수 있습니다.]</p><p></p><p>[레벨에 따라 선택할 수 있는 창작물이 한정됩니다.]</p><p></p><p>[선택 가능한 창작물 목록]</p><p></p><p>-비바람을 피해서 (소설)</p><p></p><p>-1999년의 어느 날 (드라마)</p><p></p><p>-내 눈에는 보이지 않는다. (소설)</p><p></p><p>-악마가 있었다. (영화)</p><p></p><p>-슈퍼 정력의 흥부와 놀부 (소설)</p><p></p><p>-백설공주 (동화)</p><p></p><p>-SV-7495 (AV)</p><p></p><p>-서바이벌 제로 (만화)</p><p></p><p>-애마여인 5 (영화)</p><p></p><p>-너를 보았어 (드라마)</p><p></p><p>-여대괴담 (영화)</p><p></p><p>-꼴릿꼴릿 3화 (애니메이션)</p><p></p><p>-페일드 전기 (소설)</p><p></p><p>-얼어붙은 왕국 (영화)</p><p></p><p>…….</p><p></p><p>선택 가능한 창작물은 수십 개가 넘었다.</p><p></p><p>하지만 내 눈을 끄는 건 단 하나의 창작물뿐이다.</p><p></p><p>그것은 일주일 전에 보았던 영상. 그걸 보고 나는 얼마나 감탄했던가.</p><p></p><p>“…이, 이건.”</p><p></p><p>나는 내 능력이 무엇인지 감을 잡았다. 그러나 확신을 가질 수 없었다. 확신을 가지기 위해선 실험이 필요하다.</p><p></p><p>그리고 딱 맞는 실험물이 여기에 있었다.</p><p></p><p>나는 SV-7495를 눌렸다.</p><p></p><p>[SV-7495를 선택했습니다.]</p><p></p><p>[아바타가 생성됩니다.]</p><p></p><p>[유희를 시작합니다.]</p><p></p><p>스마트폰이 강렬한 빛을 냈고, 나는 스마트폰 안으로 정신이 빨려 들어가는 느낌을 받았다.</p><p></p><p>???</p><p></p><p>내 눈앞에는 하얀 벽의 2층 주택이 있었다.</p><p></p><p>나는 가로등 뒤에서 멍하니 입을 벌리고 주택을 보았다. 그러다 몸을 부르르 떨었다. 눈앞에 있는 주택이 무엇인지 잘 알고 있었기 때문이다.</p><p></p><p>SV-7495는 AV다.</p><p></p><p>Adult video.</p><p></p><p>간단히 말해서 일본의 야동이다.</p><p></p><p>나는 지금 야동 속에 들어와 있다. 눈앞에 있는 이 주택이야말로 증거다.</p><p></p><p>SV-7495의 타이틀 명은 ‘괴한, 유부녀 집에 침입하다!’로 AV 배우인 쿠토모리 레아의 작품이다.</p><p></p><p>‘지, 진정해라, 성유진! 아직 여기가 현실이라 생각할 수는 없어!’</p><p></p><p>나는 심호흡을 했다. 그러지 않으면 심장이 터져 죽을 것 같았다.</p><p></p><p>그때, 주택의 현관문이 열리고 한 명의 여성이 쓰레기봉투를 한 손에 들고나왔다.</p><p></p><p>‘허억!’</p><p></p><p>나는 경악했다.</p><p></p><p>몸에 쫙 달라붙는 청바지와 셔츠를 입고 앞치마를 걸친 유부녀가 나왔다.</p><p></p><p>오뚝한 코와 붉은 입술. 새하얀 피부. 흑갈색 머리카락을 뒤로 한데 묶은 헤어 스타일. 풍만한 엉덩이와 가슴.</p><p></p><p>모니터로만 보았던 AV배우가 눈앞에 있었다.</p><p></p><p>‘지, 진짜 쿠토모리 레아다…!’</p><p></p><p>나는 주위를 두리번거렸다. 혹시 여긴 AV 촬영 장소일지도 모른다는 생각이 스쳐 지나갔다.</p><p></p><p>그러다 한 남자를 발견하고 뜨거웠던 머리가 싸늘하게 식었다.</p><p></p><p>담벼락 뒤쪽에 숨어서 유부녀를 훔쳐보고 있는 아저씨를 발견했다.</p><p></p><p>‘AV에 자주 나오는 아저씨!’</p><p></p><p>나는 이를 악물었다.</p><p></p><p>이 전개.</p><p></p><p>모를 리가 없었다.</p><p></p><p>‘야동에선 저 아저씨가 집에 쳐들어가 유부녀를…. 젠장!’</p><p></p><p>집 앞에 쓰레기를 버린 유부녀는 집 안으로 들어가기 시작했다.</p><p></p><p>전개는 뻔했다. 그녀는 문을 잠그지 않을 것이고, 아저씨는 집안으로 침입할 것이다.</p><p></p><p>‘……정했다.’</p><p></p><p>나는 짧은 시간 아주 깊게 고민하고 결론을 내렸다.</p><p></p><p>아저씨가 움직이기 시작했다.</p><p></p><p>그리고 나는 아저씨를 향해 달려가.</p><p></p><p>‘아저씨. 그동안 고마웠습니다!’</p><p></p><p>드롭킥을 날렸다.</p>
+            </div>
+        </div>
+
+        <div class="floating-controls">
+            <button class="nav-btn" id="prevBtn" onclick="movePage(-1)">‹</button>
+            <div class="page-indicator" id="pageIndicator">1 / 1</div>
+            <button class="nav-btn" id="nextBtn" onclick="movePage(1)">›</button>
+        </div>
+    </div>
+
+    <script>
+        let currentPage = 0;
+        let totalPages = 0;
+        let isPageMode = true;
+
+        function setMode(mode) {
+            const container = document.getElementById('mainContainer');
+            const btnPage = document.getElementById('btnPageMode');
+            const btnScroll = document.getElementById('btnScrollMode');
+
+            if (mode === 'page') {
+                isPageMode = true;
+                container.className = 'book-container page-mode';
+                btnPage.classList.add('active');
+                btnScroll.classList.remove('active');
+                initViewer(); // 페이지 수 재계산
+            } else {
+                isPageMode = false;
+                container.className = 'book-container scroll-mode';
+                btnScroll.classList.add('active');
+                btnPage.classList.remove('active');
+                document.getElementById('textBody').style.transform = 'none';
+            }
+        }
+
+        function updateUI() {
+            if (!isPageMode) return;
+            const textBody = document.getElementById('textBody');
+            const indicator = document.getElementById('pageIndicator');
+            
+            textBody.style.transform = `translateX(-${currentPage * 100}%)`;
+            indicator.innerText = `${currentPage + 1} / ${totalPages}`;
+            
+            document.getElementById('prevBtn').disabled = (currentPage === 0);
+            document.getElementById('nextBtn').disabled = (currentPage === totalPages - 1);
+        }
+
+        function movePage(direction) {
+            if (!isPageMode) return;
+            const newPage = currentPage + direction;
+            if (newPage >= 0 && newPage < totalPages) {
+                currentPage = newPage;
+                updateUI();
+            }
+        }
+
+        function initViewer() {
+            if (!isPageMode) return;
+            const textBody = document.getElementById('textBody');
+            const container = document.getElementById('mainContainer');
+
+            // 렌더링 후 정확한 너비 계산을 위해 약간의 지연
+            setTimeout(() => {
+                const totalWidth = textBody.scrollWidth;
+                const viewWidth = container.clientWidth;
+                totalPages = Math.max(1, Math.round(totalWidth / viewWidth));
+                updateUI();
+            }, 50);
+        }
+
+        window.addEventListener('load', initViewer);
+        window.addEventListener('resize', initViewer);
+
+        window.addEventListener('keydown', (e) => {
+            if (!isPageMode) return;
+            if (e.key === "ArrowLeft") movePage(-1);
+            if (e.key === "ArrowRight") movePage(1);
+        });
+    </script>
+</body>
+</html>
+
