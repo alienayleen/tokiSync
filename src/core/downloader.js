@@ -1,5 +1,5 @@
 import { sleep, waitIframeLoad, saveFile, getCommonPrefix } from './utils.js';
-import { getListItems, parseListItem, getNovelContent, getImageList, getThumbnailUrl } from './parser.js';
+import { getListItems, parseListItem, getNovelContent, getImageList, getThumbnailUrl, getSeriesTitle } from './parser.js';
 import { detectSite } from './detector.js';
 import { EpubBuilder } from './epub.js';
 import { CbzBuilder } from './cbz.js';
@@ -150,17 +150,41 @@ export async function tokiDownload(startIndex, lastIndex, policy = 'folderInCbz'
         let seriesTitle = "";
         let rootFolder = "";
 
+        // Determine Root Folder Name
+        // [v1.4.0 Fix] Priority: Metadata Title > Common Prefix > First Item Title
+        seriesTitle = getSeriesTitle(); // Official Metadata Title
+        let listPrefixTitle = "";       // Title appearing in the list items
+
         if (list.length > 1) {
-            seriesTitle = getCommonPrefix(first.title, last.title);
-            if (seriesTitle.length > 2) {
-                // If common prefix exists, use it as series title
-                 rootFolder = `[${seriesId}] ${seriesTitle}`;
-            } else {
-                 // Fallback format if no clear prefix found (rare)
-                 rootFolder = `[${seriesId}] ${first.title} ~ ${last.title}`;
-            }
+            listPrefixTitle = getCommonPrefix(first.title, last.title);
+        }
+
+        if (seriesTitle) {
+             rootFolder = `[${seriesId}] ${seriesTitle}`;
+             // Remove invalid characters if any
+             rootFolder = rootFolder.replace(/[<>:"/\\|?*]/g, '');
         } else {
-             rootFolder = `[${seriesId}] ${first.title}`;
+             // Fallback Logic
+            if (listPrefixTitle.length > 2) {
+                seriesTitle = listPrefixTitle; // Use prefix as main title if metadata failed
+                rootFolder = `[${seriesId}] ${seriesTitle}`;
+            } else if (list.length > 1) {
+                 rootFolder = `[${seriesId}] ${first.title} ~ ${last.title}`;
+            } else {
+                 // [v1.4.0 Fix] Single Item Fallback: Try regex
+                 // "인싸 공명 19화" -> "인싸 공명"
+                 const title = first.title;
+                 // Remove " 19화", " 1화" at the end
+                 const cleanTitle = title.replace(/\s+\d+화$/, '').trim();
+                 
+                 if (cleanTitle !== title && cleanTitle.length > 0) {
+                     seriesTitle = cleanTitle; // Successfully extracted
+                     rootFolder = `[${seriesId}] ${seriesTitle}`;
+                 } else {
+                     // Last resort: Use full title
+                     rootFolder = `[${seriesId}] ${title}`;
+                 }
+            }
         }
 
         // [Fix] Append Range [Start-End] for Local Merged Files (folderInCbz / zipOfCbzs)
@@ -234,15 +258,28 @@ export async function tokiDownload(startIndex, lastIndex, policy = 'folderInCbz'
                 // Build the individual chapter file
              
                 // Clean Filename Logic
-                // 1. GAS Upload (Drive): Format "0001 - 1화" (Remove Series Title)
-                // 2. Local Individual: Format "0001 - SeriesTitle 1화" (Keep Full Title)
+                // [v1.4.0 Update] Standardized format: "0001 - SeriesTitle 1화" (Keep Full Title)
+                // Reason: Better identification when moving files out of folder
                 
                 let chapterTitle = item.title;
                 
+                // [v1.4.0] Title Normalization
+                // If list title text differs from official metadata title, replace it.
+                // Ex: List="Hot Manga 19", Meta="Cool Manga" -> "Cool Manga 19"
+                // Condition: We have both titles, they differ, and item starts with list prefix
+                if (seriesTitle && listPrefixTitle && seriesTitle !== listPrefixTitle && listPrefixTitle.length > 2) {
+                     if (chapterTitle.startsWith(listPrefixTitle)) {
+                         chapterTitle = chapterTitle.replace(listPrefixTitle, seriesTitle).trim();
+                     }
+                }
+                
                 // Only clean (remove series title) if uploading to Drive
+                // [Deprecated] User requested to keep series title
+                /*
                 if (destination === 'drive' && seriesTitle && chapterTitle.startsWith(seriesTitle)) {
                     chapterTitle = chapterTitle.replace(seriesTitle, '').trim();
                 }
+                */
 
                 // Final Filename: "0001 - Title"
                 const fullFilename = `${item.num} - ${chapterTitle}`;

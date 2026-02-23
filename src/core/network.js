@@ -178,8 +178,22 @@ async function getOrCreateFolder(folderName, parentId, token, category = 'Webtoo
     }
     
     // 3. Get or create series folder in category
+    // [v1.4.0 Fix] Search by ID prefix "[12345]" instead of full name to handle title changes
+    // folderName format: "[12345] Title"
+    const idMatch = folderName.match(/^\[\d+\]/);
+    const idPrefix = idMatch ? idMatch[0] : null;
+    
+    let queryPart = "";
+    if (idPrefix) {
+        // Search for folders containing "[12345]"
+        queryPart = `name contains '${idPrefix}'`;
+    } else {
+        // Fallback: Exact match
+        queryPart = `name = '${folderName.replace(/'/g, "\\'")}'`; 
+    }
+
     const seriesSearchUrl = `https://www.googleapis.com/drive/v3/files?` +
-        `q=name='${encodeURIComponent(folderName)}' and '${categoryFolderId}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'` +
+        `q=${queryPart} and '${categoryFolderId}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'` +
         `&fields=files(id,name)`;
     
     const seriesResult = await new Promise((resolve, reject) => {
@@ -198,9 +212,20 @@ async function getOrCreateFolder(folderName, parentId, token, category = 'Webtoo
         });
     });
     
+    // Filter results to ensure it starts with the ID (double check)
+    let foundFolder = null;
     if (seriesResult.files && seriesResult.files.length > 0) {
-        console.log(`[DirectUpload] Folder found: ${folderName}`);
-        return seriesResult.files[0].id;
+        if (idPrefix) {
+            // Find the first folder that STARTS with the ID
+            foundFolder = seriesResult.files.find(f => f.name.startsWith(idPrefix));
+        } else {
+            foundFolder = seriesResult.files[0];
+        }
+    }
+
+    if (foundFolder) {
+        console.log(`[DirectUpload] Folder found: ${foundFolder.name} (ID: ${foundFolder.id})`);
+        return foundFolder.id;
     }
     
     // Create series folder
@@ -400,3 +425,6 @@ export async function uploadDirect(blob, folderName, fileName, metadata = {}) {
         throw error;
     }
 }
+
+// Export helper for main.js migration
+export const getOAuthToken = getToken;

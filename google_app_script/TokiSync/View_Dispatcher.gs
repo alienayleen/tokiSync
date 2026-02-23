@@ -48,6 +48,11 @@ function View_Dispatcher(data) {
     } else if (action === "view_migrate_thumbnails") {
       // v1.4.0 Migration
       resultBody = Migrate_MoveThumbnails(data.folderId);
+    } else if (action === "view_migrate_filenames") {
+      // v1.4.0 Migration (Renaming)
+      if (!data.seriesId)
+        throw new Error("seriesId is required for filename migration");
+      resultBody = Migrate_RenameFiles(data.seriesId, data.folderId);
     } else {
       throw new Error("Unknown Viewer Action: " + action);
     }
