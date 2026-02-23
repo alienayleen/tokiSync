@@ -15,6 +15,10 @@ google_app_script/old/
 old_*
 docs/js/backup/*
 
+# Old Logic Directories
+docs_old/
+src/old_core/
+
 # Temporary build artifacts (UserScript)
 docs/*Downloader.user.js
 docs/[0-9]*.user.js
