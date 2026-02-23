@@ -32,7 +32,7 @@ jobs:
           # Prepare unified distribution directory for GitHub Pages
           mkdir -p _site
           # Core UserScript
-          cp dist/tokiSync.user.js _site/
+          cp docs/tokiSync.user.js _site/
           # Viewer Application
           cp -r docs/* _site/
 
