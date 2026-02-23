@@ -27,8 +27,8 @@ jobs:
 
       - name: Build UserScript & Viewer
         run: |
-          npm run build:core
           npm run build:viewer
+          npm run build:core
           # Prepare unified distribution directory for GitHub Pages
           mkdir -p _site
           # Core UserScript
