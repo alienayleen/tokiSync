@@ -198,6 +198,23 @@ const forceCloudSync = () => {
 };
 
 /**
+ * Save cloud config from SettingsPanel (Standalone mode)
+ * Syncs local config reactive to gasConfig via setConfig
+ */
+const saveCloudConfig = () => {
+  const url = config.deploymentId.trim();
+  const folderId = config.folderId.trim();
+  const apiKey = config.apiKey.trim();
+  if (!url || !folderId) {
+    notify('⚠️ GAS URL과 Drive Folder ID는 필수입니다.');
+    return;
+  }
+  setConfig(url, folderId, apiKey);
+  notify('✅ 설정이 저장되었습니다. 라이브러리를 새로고침합니다...');
+  refreshLibrary();
+};
+
+/**
  * Initialize the app: setup Bridge, load config, fetch library
  */
 const initApp = async () => {
@@ -205,6 +222,10 @@ const initApp = async () => {
 
   // 1. Setup Bridge (Zero-Config listener)
   initBridge((url, folderId, apiKey) => {
+    // Sync config reactive so SettingsPanel reflects the injected values
+    config.deploymentId = url;
+    config.folderId = folderId;
+    config.apiKey = apiKey;
     setConfig(url, folderId, apiKey);
     notify('⚡️ 자동 설정 완료! (Zero-Config)');
     refreshLibrary();
@@ -523,7 +544,7 @@ export function useStore() {
     cleanupBlobUrls, formatSize,
 
     // Methods
-    notify, forceCloudSync, initApp,
+    notify, forceCloudSync, saveCloudConfig, initApp,
     openSeries, startReading, exitViewer, goBackToLibrary,
     goToNextEpisode, goToPrevEpisode,
     toggleViewerUI, setViewerMode,

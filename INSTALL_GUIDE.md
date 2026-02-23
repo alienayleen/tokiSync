@@ -19,6 +19,53 @@
 3. `google_app_script/TokiSync_Server_Bundle.gs` 파일 내용을 복사하여 `Code.gs`에 붙여넣기.
 4. **저장** (Ctrl+S).
 
+### 1-1-b. appsscript.json 매니페스트 설정 (중요)
+
+GAS 매니페스트 파일(`appsscript.json`)이 올바르게 설정되어야 Drive API 권한과 웹앱 배포가 정상 작동합니다.
+
+**웹 편집기에서 확인/수정하는 방법:**
+
+1. 좌측 **프로젝트 설정** (톱니바퀴 아이콘) 클릭.
+2. **「appsscript.json」 매니페스트 파일을 편집기에 표시** 체크박스 활성화.
+3. 편집기 파일 목록에서 `appsscript.json` 클릭 후 아래 내용으로 교체.
+
+**`appsscript.json` 전체 내용:**
+
+```json
+{
+  "timeZone": "Asia/Seoul",
+  "dependencies": {
+    "enabledAdvancedServices": [
+      {
+        "userSymbol": "Drive",
+        "serviceId": "drive",
+        "version": "v3"
+      }
+    ]
+  },
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/script.external_request"
+  ],
+  "webapp": {
+    "executeAs": "USER_DEPLOYING",
+    "access": "ANYONE_ANONYMOUS"
+  }
+}
+```
+
+| 항목                      | 설명                                        |
+| ------------------------- | ------------------------------------------- |
+| `timeZone`                | 한국 시간대 (`Asia/Seoul`)                  |
+| `enabledAdvancedServices` | Drive API v3 고급 서비스 활성화             |
+| `oauthScopes`             | Google Drive 접근 및 외부 HTTP 요청 권한    |
+| `webapp.executeAs`        | 스크립트 소유자(나) 권한으로 실행           |
+| `webapp.access`           | 익명 사용자 접근 허용 (API Key로 실제 보안) |
+
+> ⚠️ **clasp 사용자:** `google_app_script/TokiSync/appsscript.json` 파일이 이미 위 내용으로 작성되어 있습니다. `clasp push` 시 자동으로 적용됩니다.
+
 ### 1-2. 라이브러리 추가 (Drive API)
 
 1. 좌측 **서비스(Services)** 옆 `+` 클릭.

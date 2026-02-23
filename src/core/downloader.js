@@ -6,6 +6,7 @@ import { CbzBuilder } from './cbz.js';
 import { LogBox, Notifier } from './ui.js';
 import { getConfig } from './config.js';
 import { startSilentAudio, stopSilentAudio } from './anti_sleep.js';
+import { fetchHistory } from './gas.js';
 
 // Sleep Policy Presets
 const SLEEP_POLICIES = {
@@ -221,6 +222,27 @@ export async function tokiDownload(startIndex, lastIndex, policy = 'folderInCbz'
             }
         }
 
+        // [v1.5.0 Smart Skip] Pre-load history for Drive uploads to skip already-uploaded episodes
+        let uploadedHistorySet = new Set();
+        if (destination === 'drive') {
+            try {
+                logger.log('☁️ 드라이브 업로드 기록 확인 중...');
+                const history = await fetchHistory(rootFolder, category);
+                // Normalize: accept padded ("0001") and plain ("1") forms
+                history.forEach(id => {
+                    const plain = parseInt(id).toString();
+                    uploadedHistorySet.add(id.toString());   // e.g. "0001"
+                    uploadedHistorySet.add(plain);           // e.g. "1"
+                });
+                if (uploadedHistorySet.size > 0) {
+                    logger.log(`⏭️ 이미 업로드된 에피소드 ${history.length}개 감지 — 건너뜁니다.`);
+                }
+            } catch (histErr) {
+                // Non-fatal: if history check fails, proceed without skipping
+                logger.log(`⚠️ 업로드 기록 조회 실패 (전체 다운로드 진행): ${histErr.message}`, 'warn');
+            }
+        }
+
         // Create IFrame
         const iframe = document.createElement('iframe');
         iframe.width = 600; iframe.height = 600;
@@ -232,6 +254,16 @@ export async function tokiDownload(startIndex, lastIndex, policy = 'folderInCbz'
             const item = parseListItem(list[i].element || list[i]); 
             console.clear();
             logger.log(`[${i + 1}/${list.length}] 처리 중: ${item.title}`);
+
+            // [v1.5.0 Smart Skip] Skip already-uploaded episodes (Drive policy only)
+            if (destination === 'drive' && uploadedHistorySet.size > 0) {
+                const numStr = item.num ? item.num.toString() : '';
+                const numPlain = parseInt(numStr).toString();
+                if (uploadedHistorySet.has(numStr) || uploadedHistorySet.has(numPlain)) {
+                    logger.log(`⏭️ 건너뜀 (이미 업로드됨): ${item.title}`);
+                    continue;
+                }
+            }
 
             // Decision based on Policy
             let currentBuilder = null;
