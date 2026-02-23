@@ -5,9 +5,10 @@ on:
     branches: [main]
     paths:
       - "src/**"
-      - "docs/tokiSync.user.js"
+      - "package.json"
       - "webpack.core.config.cjs"
       - "vite.config.js"
+      - ".github/workflows/**"
 
 jobs:
   build:
