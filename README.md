@@ -49,14 +49,14 @@
 ### 2. 📥 UserScript 설치
 
 1. [Tampermonkey](https://www.tampermonkey.net/) 확장 프로그램을 설치합니다.
-2. `docs/tokiSync.user.js` 파일 내용을 복사하여 새 스크립트로 추가합니다.
+2. [TokiSync UserScript 설치](https://pray4skylark.github.io/tokiSync/tokiSync.user.js) 링크를 클릭하여 스크립트를 추가합니다.
 3. 웹툰 사이트 접속 후 메뉴에서 **설정**을 열고 `GAS URL`, `Folder ID`, `API Key`를 입력합니다.
 
 ### 3. 📊 뷰어 실행
 
-- **방법 A (로컬)**: `docs/` 폴더를 VS Code `Live Server` 등으로 엽니다.
-- **방법 B (웹 호스팅)**: GitHub Pages 등을 통해 호스팅합니다.
-- **연동**: UserScript가 실행 중인 브라우저로 뷰어에 접속하면 **자동으로 설정이 완료**됩니다.
+- 👉 **[TokiSync 웹 뷰어 접속](https://pray4skylark.github.io/tokiSync/)**
+- **로컬 빌드가 필요한 경우**: `npm install && npm run build` 실행 후 생성된 `dist/` 폴더 사용.
+- **연동**: UserScript가 실행 중인 브라우저로 위 뷰어 주소에 접속하면 **자동으로 설정이 완료**됩니다.
 
 ---
 

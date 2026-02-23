@@ -97,8 +97,9 @@ GAS 매니페스트 파일(`appsscript.json`)이 올바르게 설정되어야 Dr
 ## 2단계: UserScript (수집기) 설치
 
 1. 브라우저에 [Tampermonkey](https://www.tampermonkey.net/) 설치.
-2. `docs/tokiSync.user.js` 파일 내용 전체 복사.
-3. Tampermonkey -> **새 스크립트 추가** -> 붙여넣기 -> **저장**.
+2. 다음 링크를 클릭하여 스크립트를 설치합니다:
+   👉 **[TokiSync UserScript 설치하기](https://pray4skylark.github.io/tokiSync/tokiSync.user.js)**
+3. Tampermonkey 설치 화면이 뜨면 **설치(Install)**를 클릭합니다.
 4. **동작 확인 및 설정**:
    - 뉴토끼/북토끼 사이트 접속.
    - Tampermonkey 메뉴 -> `TokiSync` -> **⚙️ 설정** 클릭.
@@ -113,15 +114,17 @@ GAS 매니페스트 파일(`appsscript.json`)이 올바르게 설정되어야 Dr
 
 ### A. 간편 연동 (UserScript 이용) - 권장
 
-1. 뷰어 페이지(`docs/index.html`)를 엽니다. (로컬 또는 웹 호스팅)
+1. 다음 웹 뷰어 주소로 접속합니다:
+   👉 **[TokiSync 웹 뷰어](https://pray4skylark.github.io/tokiSync/)**
 2. **UserScript가 설치된 브라우저**라면, 자동으로 설정이 주입됩니다.
    - _"⚡️ Auto-Config Injected"_ 메시지와 함께 즉시 사용 가능합니다.
+   - 즐겨찾기(북마크)에 등록해 두고 사용하시면 편리합니다.
 
 ### B. 수동 설정 (Standalone)
 
-1. 뷰어 페이지 접속 시 설정 모달이 뜹니다.
-2. **GAS 웹 앱 URL**, **루트 폴더 ID**, **API Key**를 직접 입력합니다.
-3. **저장**하면 브라우저에 설정이 영구 저장됩니다.
+1. 위 웹 뷰어 페이지 접속 시 설정 패널이 뜹니다.
+2. **GAS App ID**(URL 복사값 전체 가능), **Security Key(API Key)**, **Drive Folder ID**를 직접 입력합니다.
+3. **Save Config(저장)**를 누르면 브라우저에 설정이 영구 보관되며 라이브러리가 로드됩니다.
 
 ---
 

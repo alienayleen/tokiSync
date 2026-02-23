@@ -19,9 +19,9 @@ docs/js/backup/*
 docs_old/
 src/old_core/
 
-# Temporary build artifacts (UserScript)
-docs/*Downloader.user.js
-docs/[0-9]*.user.js
+# Temporary build artifacts
+dist/
+docs/
 
 # Consolidated Handover File
 PROJECT_HANDOVER_MASTER.md
