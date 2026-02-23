@@ -17,12 +17,13 @@ const SLEEP_POLICIES = {
 // Processing Loop에 해당되는 로직을 분리 한다.
 export async function processItem(item, builder, siteInfo, iframe, seriesTitle = "") {
     const { site, protocolDomain } = siteInfo;
-    const isNovel = (site === "북토끼");
+    const config = getConfig();
+    const isBooktokiImageMode = site === "북토끼" && config.booktokiImageMode;
+    const isNovel = (site === "북토끼" && !isBooktokiImageMode);
 
     await waitIframeLoad(iframe, item.src);
     
     // Apply Dynamic Sleep based on Policy
-    const config = getConfig();
     const policy = SLEEP_POLICIES[config.sleepMode] || SLEEP_POLICIES.agile;
     await sleep(policy.min, policy.max);
     
@@ -80,7 +81,13 @@ export async function tokiDownload(startIndex, lastIndex, policy = 'folderInCbz'
         return;
     }
     const { site, protocolDomain, category } = siteInfo;
-    const isNovel = (site === "북토끼");
+    const config = getConfig();
+    const isBooktokiImageMode = site === "북토끼" && config.booktokiImageMode;
+    const isNovel = (site === "북토끼" && !isBooktokiImageMode);
+
+    if (isBooktokiImageMode) {
+        logger.log('⚙️ 특수 옵션 활성화: 북토끼 이미지 다운로드 모드', 'success');
+    }
 
     try {
         // Prepare Strategy Variables

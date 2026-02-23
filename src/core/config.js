@@ -3,10 +3,11 @@ export const CFG_FOLDER_ID = "TOKI_FOLDER_ID";
 export const CFG_POLICY_KEY = "TOKI_DOWNLOAD_POLICY";
 export const CFG_API_KEY = "TOKI_API_KEY";
 export const CFG_SLEEP_MODE = "TOKI_SLEEP_MODE";
+export const CFG_BOOKTOKI_IMAGE_MODE = "TOKI_BOOKTOKI_IMAGE_MODE";
 
 /**
  * Get current configuration
- * @returns {{gasUrl: string, folderId: string, policy: string, apiKey: string, sleepMode: string}}
+ * @returns {{gasUrl: string, folderId: string, policy: string, apiKey: string, sleepMode: string, booktokiImageMode: boolean}}
  */
 export function getConfig() {
     return {
@@ -14,7 +15,8 @@ export function getConfig() {
         folderId: GM_getValue(CFG_FOLDER_ID, ""),
         policy: GM_getValue(CFG_POLICY_KEY, "folderInCbz"),
         apiKey: GM_getValue(CFG_API_KEY, ""),
-        sleepMode: GM_getValue(CFG_SLEEP_MODE, "agile") // default: agile
+        sleepMode: GM_getValue(CFG_SLEEP_MODE, "agile"), // default: agile
+        booktokiImageMode: GM_getValue(CFG_BOOKTOKI_IMAGE_MODE, false)
     };
 }
 
@@ -142,6 +144,13 @@ export function showConfigModal() {
                 </select>
             </div>
 
+            <div class="toki-input-group" style="display:flex; align-items:center; gap:8px;">
+                <input type="checkbox" id="toki-cfg-booktoki-image" ${config.booktokiImageMode ? 'checked' : ''}>
+                <label for="toki-cfg-booktoki-image" class="toki-label" style="margin:0; font-size:13px; color:#ddd;">
+                    [특수 옵션] 북토끼도 이미지 기반으로 다운로드
+                </label>
+            </div>
+
             <div class="toki-modal-footer">
                 <button id="toki-btn-cancel" class="toki-btn toki-btn-cancel">취소</button>
                 <button id="toki-btn-save" class="toki-btn toki-btn-save">저장</button>
@@ -166,12 +175,14 @@ export function showConfigModal() {
         const newApiKey = document.getElementById('toki-cfg-apikey').value.trim();
         const newPolicy = document.getElementById('toki-cfg-policy').value;
         const newSleepMode = document.getElementById('toki-cfg-sleepmode').value;
+        const newBooktokiImageMode = document.getElementById('toki-cfg-booktoki-image').checked;
 
         setConfig(CFG_URL_KEY, newGas);
         setConfig(CFG_FOLDER_ID, newFolder);
         setConfig(CFG_API_KEY, newApiKey);
         setConfig(CFG_POLICY_KEY, newPolicy);
         setConfig(CFG_SLEEP_MODE, newSleepMode);
+        setConfig(CFG_BOOKTOKI_IMAGE_MODE, newBooktokiImageMode);
 
         alert('설정이 저장되었습니다.');
         overlay.remove();
