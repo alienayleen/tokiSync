@@ -22,6 +22,7 @@ src/old_core/
 # Temporary build artifacts (UserScript)
 docs/*Downloader.user.js
 docs/[0-9]*.user.js
+docs/tokiSync.user.js
 
 # Consolidated Handover File
 PROJECT_HANDOVER_MASTER.md
