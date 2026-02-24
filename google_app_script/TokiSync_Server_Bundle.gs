@@ -1,14 +1,13 @@
-/* ⚙️ TokiSync Server Code Bundle v1.2.0 (Updated: 2026-02-04) */
+/* ⚙️ TokiSync Server Code Bundle v1.0.0 (Generated: 2026-02-24T17:09:26.850Z) */
 
 /* ========================================================================== */
 /* FILE: Main.gs */
 /* ========================================================================== */
 
-// ⚙️ TokiSync API Server v1.2.0 (Stateless & Secure)
+// ⚙️ TokiSync API Server v1.0.0 (Stateless)
 // -----------------------------------------------------
 // 🤝 Compatibility:
-//    - Client v1.2.0+ (User Execution Mode)
-//    - View v1.2.0+ (Secure API Key)
+//    - Client v1.0.0+ (User Execution Mode)
 // -----------------------------------------------------
 
 // [GET] 서버 상태 확인용
@@ -21,28 +20,28 @@
  */
 function doGet(e) {
   return ContentService.createTextOutput(
-    "✅ TokiSync API Server v1.2.0 (Stateless) is Running...",
+    "✅ TokiSync API Server v1.5.5 (Stateless) is Running...",
   );
 }
 
-// [POST] Tampermonkey & Viewer Request Handler
+// [POST] Tampermonkey 요청 처리 (핵심 로직)
 /**
  * [POST] API 요청 처리 핸들러
  * 클라이언트(Tampermonkey, Web App)로부터의 JSON 요청을 처리합니다.
  *
  * [요청 흐름]
  * 1. Payload 파싱 및 `folderId` 검증
- * 2. API Key 인증 (모든 요청 필수)
- * 3. Action Type(`type`)에 따라 적절한 서비스 함수 호출
- * 4. 결과 반환 (`success` or `error`)
+ * 2. `data.type`에 따라 적절한 서비스 함수로 분기
+ * 3. `view_*` 요청은 `View_Dispatcher`로 위임
+ * 4. 결과(JSON) 반환
+ *
+ * @param {Object} e - 이벤트 객체 (postData 포함)
+ * @returns {TextOutput} JSON 응답
  */
-
-// 🔒 API Key Configuration
-// =================================================================
-// IMPORTANT: You MUST set 'API_KEY' in Script Properties!
-// 1. Project Settings (Gear Icon) > Script Properties
-// 2. Add Row: Property="API_KEY", Value="your_secret_password"
-// =================================================================
+// [CONSTANTS]
+const SERVER_VERSION = "v1.5.5"; // API Key Enforcement for All Requests (including viewer)
+// API Key stored in Script Properties (Project Settings > Script Properties)
+// Set property: API_KEY = your_secret_key
 const API_KEY = PropertiesService.getScriptProperties().getProperty("API_KEY");
 
 function doPost(e) {
@@ -127,6 +126,7 @@ function doPost(e) {
   }
 }
 
+
 /* ========================================================================== */
 /* FILE: Utils.gs */
 /* ========================================================================== */
@@ -177,7 +177,7 @@ function findFolderId(folderName, rootFolderId) {
 
     if (response.files && response.files.length > 0) {
       Debug.log(
-        `   ✅ Found: ${response.files[0].name} (${response.files[0].id})`,
+        `   ✅ Found: ${response.files[0].name} (${response.files[0].id})`
       );
       return response.files[0].id;
     }
@@ -200,7 +200,7 @@ function findFolderId(folderName, rootFolderId) {
 
       if (fallbackRes.files && fallbackRes.files.length > 0) {
         Debug.log(
-          `   ✅ Fallback Found: ${fallbackRes.files[0].name} (${fallbackRes.files[0].id})`,
+          `   ✅ Fallback Found: ${fallbackRes.files[0].name} (${fallbackRes.files[0].id})`
         );
         return fallbackRes.files[0].id;
       }
@@ -220,7 +220,7 @@ function getOrCreateSeriesFolder(
   rootFolderId,
   folderName,
   category = "Webtoon",
-  createIfMissing = true,
+  createIfMissing = true
 ) {
   const root = DriveApp.getFolderById(rootFolderId);
 
@@ -273,7 +273,7 @@ function createRes(status, body, debugLogs = null) {
   if (debugLogs) payload.debugLogs = debugLogs;
 
   return ContentService.createTextOutput(JSON.stringify(payload)).setMimeType(
-    ContentService.MimeType.JSON,
+    ContentService.MimeType.JSON
   );
 }
 
@@ -283,6 +283,7 @@ function authorizeCheck() {
   UrlFetchApp.fetch("https://www.google.com");
   console.log("✅ 권한 승인 완료!");
 }
+
 
 /* ========================================================================== */
 /* FILE: SyncService.gs */
@@ -593,6 +594,54 @@ function migrateLegacyStructure(rootFolderId) {
   );
 }
 
+// =======================================================
+// 🔑 Direct Drive Access Token Provider
+// =======================================================
+
+/**
+ * Provides OAuth Access Token for Client-Side Direct Drive Upload
+ *
+ * This endpoint enables the UserScript to bypass GAS relay and directly
+ * upload files to Google Drive using GM_xmlhttpRequest.
+ *
+ * Security: Token is valid for 1 hour and scoped to Drive access only.
+ *
+ * @returns {Object} Response with access token
+ */
+function view_get_token() {
+  Debug.log("🔑 view_get_token: Generating OAuth token");
+
+  try {
+    const token = ScriptApp.getOAuthToken();
+
+    if (!token) {
+      Debug.error("❌ Token generation failed");
+      return createRes(
+        "error",
+        "Failed to generate OAuth token",
+        Debug.getLogs(),
+      );
+    }
+
+    Debug.log("✅ Token generated successfully");
+
+    return createRes(
+      "success",
+      {
+        token: token,
+        expiresIn: 3600, // 1 hour (approximate)
+        scope: "https://www.googleapis.com/auth/drive",
+        timestamp: new Date().toISOString(),
+      },
+      Debug.getLogs(),
+    );
+  } catch (e) {
+    Debug.error("❌ Token generation error:", e);
+    return createRes("error", `Token Error: ${e.message}`, Debug.getLogs());
+  }
+}
+
+
 /* ========================================================================== */
 /* FILE: UploadService.gs */
 /* ========================================================================== */
@@ -607,7 +656,7 @@ function initResumableUpload(data, rootFolderId) {
     rootFolderId,
     data.folderName,
     data.category,
-    true,
+    true
   );
   const folderId = seriesFolder.getId();
 
@@ -629,8 +678,8 @@ function initResumableUpload(data, rootFolderId) {
       data.fileName.endsWith(".jpg") || data.fileName.endsWith(".jpeg")
         ? "image/jpeg"
         : data.fileName.endsWith(".epub")
-          ? "application/epub+zip"
-          : "application/zip",
+        ? "application/epub+zip"
+        : "application/zip",
   };
 
   const params = {
@@ -682,6 +731,7 @@ function uploadChunk(data) {
   }
 }
 
+
 /* ========================================================================== */
 /* FILE: View_Dispatcher.gs */
 /* ========================================================================== */
@@ -708,7 +758,12 @@ function View_Dispatcher(data) {
     if (action === "view_get_library") {
       if (!data.folderId) throw new Error("folderId is required for library");
       const bypassCache = data.bypassCache === true;
-      resultBody = View_getSeriesList(data.folderId, bypassCache);
+      const continuationToken = data.continuationToken || null;
+      resultBody = View_getSeriesList(
+        data.folderId,
+        bypassCache,
+        continuationToken,
+      );
     } else if (action === "view_get_books" || action === "view_refresh_cache") {
       if (!data.seriesId) throw new Error("seriesId is required for books");
       const bypassCache =
@@ -720,6 +775,30 @@ function View_Dispatcher(data) {
       const offset = data.offset || 0;
       const length = data.length || 10 * 1024 * 1024;
       resultBody = View_getFileChunk(data.fileId, offset, length);
+    } else if (action === "view_get_token") {
+      // Direct Drive Access: OAuth Token Provider
+      resultBody = view_get_token();
+      return resultBody; // Already wrapped by createRes in SyncService
+    } else if (action === "view_save_index") {
+      if (!data.seriesList) throw new Error("seriesList is required");
+      View_saveIndex(data.folderId, data.seriesList);
+      resultBody = { saved: true };
+    } else if (action === "view_migrate_thumbnails") {
+      // v1.4.0 Migration
+      resultBody = Migrate_MoveThumbnails(data.folderId);
+    } else if (action === "view_migrate_filenames") {
+      // v1.4.0 Migration (Renaming)
+      if (!data.seriesId)
+        throw new Error("seriesId is required for filename migration");
+      resultBody = Migrate_RenameFiles(data.seriesId, data.folderId);
+    } else if (action === "view_history_get") {
+      if (!folderId) throw new Error("folderId is required for history");
+      resultBody = View_getReadHistory(folderId);
+      return resultBody; // Already wrapped in createRes
+    } else if (action === "view_history_save") {
+      if (!folderId) throw new Error("folderId is required for history");
+      resultBody = View_saveReadHistory(data, folderId);
+      return resultBody; // Already wrapped in createRes
     } else {
       throw new Error("Unknown Viewer Action: " + action);
     }
@@ -729,6 +808,7 @@ function View_Dispatcher(data) {
     return createRes("error", e.toString());
   }
 }
+
 
 /* ========================================================================== */
 /* FILE: View_BookService.gs */
@@ -863,7 +943,7 @@ function View_getBooks(seriesId, bypassCache = false) {
     }
 
     console.log(
-      `[View_getBooks] Series: ${seriesId}, Total: ${totalFiles}, Returned: ${books.length} (Cache Updated)`,
+      `[View_getBooks] Series: ${seriesId}, Total: ${totalFiles}, Returned: ${books.length} (Cache Updated)`
     );
     return books;
   } catch (e) {
@@ -928,14 +1008,14 @@ function View_getFileChunk(fileId, offset, length) {
       };
     } else {
       throw new Error(
-        `Drive API Failed: ${response.getResponseCode()} ${response.getContentText()}`,
+        `Drive API Failed: ${response.getResponseCode()} ${response.getContentText()}`
       );
     }
   } catch (e) {
     // Fallback to DriveApp if API fails (e.g. scope issue) - Optional but Risky for memory
     console.warn(
       "Drive API Partial Fetch failed, falling back to DriveApp (High Memory Risk): " +
-        e,
+        e
     );
     const file = DriveApp.getFileById(fileId);
     const blob = file.getBlob();
@@ -954,26 +1034,30 @@ function View_getFileChunk(fileId, offset, length) {
   }
 }
 
+
 /* ========================================================================== */
 /* FILE: View_LibraryService.gs */
 /* ========================================================================== */
 
 // =======================================================
-// 🚀 Viewer Library Service (Isolated)
+// 🚀 Viewer Library Service (Isolated) - v1.4.0 Centralized Thumbnails
 // =======================================================
+
+const INDEX_FILE_NAME = "index.json";
+const THUMB_FOLDER_NAME = "_Thumbnails";
 
 /**
  * 해당 폴더(Libraries)의 시리즈 목록을 반환합니다.
- * 성능을 위해 `index.json` 캐시 파일을 우선 확인하고, 없으면 재구축합니다.
- *
- * @param {string} folderId - 라이브러리 루트 폴더 ID
- * @returns {Array<Object>} 시리즈 목록 (JSON)
  */
-function View_getSeriesList(folderId, bypassCache = false) {
+function View_getSeriesList(
+  folderId,
+  bypassCache = false,
+  continuationToken = null,
+) {
   if (!folderId) throw new Error("Folder ID is required");
 
-  // 1. Check Cache (if not bypassed)
-  if (!bypassCache) {
+  // 1. Check Cache (Only if clean start)
+  if (!bypassCache && !continuationToken) {
     const root = DriveApp.getFolderById(folderId);
     const files = root.getFilesByName(INDEX_FILE_NAME);
 
@@ -988,89 +1072,147 @@ function View_getSeriesList(folderId, bypassCache = false) {
     }
   }
 
-  // 2. Rebuild if missing or bypassed
-  return View_rebuildLibraryIndex(folderId);
+  // 2. Rebuild (Paged)
+  return View_rebuildLibraryIndex(folderId, continuationToken);
 }
 
 /**
- * 라이브러리 폴더 구조를 스캔하여 인덱스(시리즈 목록)를 생성합니다.
- * `info.json` 메타데이터를 우선순위로 하며, 폴더명 파싱도 지원합니다.
- * 생성된 인덱스는 `index.json` 파일로 저장됩니다.
- *
- * @param {string} folderId - 라이브러리 루트 폴더 ID
- * @returns {Array<Object>} 생성된 시리즈 목록
+ * v1.4.0: Centralized Thumbnail Logic
+ * 1. Build Thumbnail Map from '_Thumbnails' folder
+ * 2. Scan Series Folders using Map (No file scan inside series)
  */
-/**
- * 라이브러리 폴더 구조를 스캔하여 인덱스(시리즈 목록)를 생성합니다.
- * Root > Category > Series 구조와 Legacy(Root > Series) 구조를 모두 지원합니다.
- */
-function View_rebuildLibraryIndex(folderId) {
-  if (!folderId) throw new Error("Folder ID is required");
-
+function View_rebuildLibraryIndex(folderId, continuationToken) {
   const root = DriveApp.getFolderById(folderId);
-  const folders = root.getFolders();
+  const startTime = new Date().getTime();
+  const TIME_LIMIT = 20000; // 20 Seconds
   const seriesList = [];
 
-  // Known Categories
-  const CATEGORIES = ["Webtoon", "Manga", "Novel"];
+  // State
+  let state = continuationToken
+    ? JSON.parse(continuationToken)
+    : {
+        step: 0,
+        targets: [],
+        driveToken: null,
+        thumbMap: {}, // { SeriesID: FileID } - Carried over pagination
+      };
 
-  while (folders.hasNext()) {
-    const folder = folders.next();
-    const name = folder.getName();
+  // Phase 0: Plan Targets & Build Thumbnail Map (Only on first run)
+  if (state.step === 0 && state.targets.length === 0) {
+    // 1. Build Thumbnail Map
+    // Assumption: _Thumbnails has reasonable count (<10k).
+    // If >10k, we might need pagination here too, but GAS iterator handles it.
+    // We try to fill it in 5s.
+    const thumbFolders = root.getFoldersByName(THUMB_FOLDER_NAME);
+    if (thumbFolders.hasNext()) {
+      const tFolder = thumbFolders.next();
+      const tFiles = tFolder.getFiles();
+      while (tFiles.hasNext()) {
+        // Safety check for time in Map building?
+        // If huge, this loop might timeout.
+        // Ideally we assume it fits. If not, we need a separate Step for Map building.
+        // Let's rely on GAS speed for listing files.
+        const tf = tFiles.next();
+        // Name: "12345.jpg" -> ID: "12345"
+        const tid = tf.getName().replace(/\.[^/.]+$/, "");
+        state.thumbMap[tid] = tf.getId();
+      }
+    }
 
-    if (name === INDEX_FILE_NAME) continue;
+    // 2. Plan Targets
+    state.targets.push({ id: folderId, category: "Uncategorized" }); // Root
+    const CATS = ["Webtoon", "Manga", "Novel"];
+    const folders = root.getFolders();
+    while (folders.hasNext()) {
+      const f = folders.next();
+      if (CATS.includes(f.getName())) {
+        state.targets.push({ id: f.getId(), category: f.getName() });
+      }
+    }
+  }
 
-    // 1. Check if it's a Category Folder
-    if (CATEGORIES.includes(name)) {
-      const subFolders = folder.getFolders();
-      while (subFolders.hasNext()) {
+  let hasMore = false;
+
+  // Execution Loop
+  while (state.step < state.targets.length) {
+    const current = state.targets[state.step];
+    let iterator;
+
+    try {
+      if (state.driveToken) {
+        iterator = DriveApp.continueFolderIterator(state.driveToken);
+      } else {
+        iterator = DriveApp.getFolderById(current.id).getFolders();
+      }
+
+      while (iterator.hasNext()) {
+        if (new Date().getTime() - startTime > TIME_LIMIT) {
+          hasMore = true;
+          break;
+        }
+
+        const folder = iterator.next();
+        const name = folder.getName();
+
+        if (name === INDEX_FILE_NAME || name === THUMB_FOLDER_NAME) continue;
+        if (
+          ["Webtoon", "Manga", "Novel"].includes(name) &&
+          current.category === "Uncategorized"
+        )
+          continue;
+
         try {
-          const s = processSeriesFolder(subFolders.next(), name);
+          // Pass thumbMap
+          const s = processSeriesFolder(
+            folder,
+            current.category,
+            state.thumbMap,
+          );
           if (s) seriesList.push(s);
-        } catch (e) {
-          Debug.log(`Error processing series in ${name}: ${e}`);
-        }
+        } catch (e) {}
       }
-    }
-    // 2. Otherwise/Fallback: Treat as Legacy Series in Root
-    else {
-      try {
-        // Simple check: does it look like a series? (Has [ID] or info.json)
-        // We do a full process check, if valid it returns object, else null/partial
-        // But for performance, maybe check name pattern first?
-        // [ID] pattern is strong indicator.
-        if (name.match(/^\[(\d+)\]/)) {
-          const s = processSeriesFolder(folder, "Uncategorized");
-          if (s) seriesList.push(s);
-        }
-      } catch (e) {
-        Debug.log(`Error processing legacy series: ${e}`);
+
+      if (hasMore) {
+        state.driveToken = iterator.getContinuationToken();
+        return {
+          status: "continue",
+          continuationToken: JSON.stringify(state),
+          list: seriesList,
+        };
+      } else {
+        state.step++;
+        state.driveToken = null;
       }
+    } catch (e) {
+      Debug.log(`Error in step ${state.step}: ${e}`);
+      state.step++;
+      state.driveToken = null;
     }
   }
 
-  seriesList.sort(
-    (a, b) => new Date(b.lastModified) - new Date(a.lastModified),
-  ); // Sort by Recent
+  return { status: "completed", list: seriesList };
+}
 
-  // Save Lightweight Index
-  const jsonString = JSON.stringify(seriesList);
-  const indexFiles = root.getFilesByName(INDEX_FILE_NAME);
-  if (indexFiles.hasNext()) {
-    indexFiles.next().setContent(jsonString);
-  } else {
-    root.createFile(INDEX_FILE_NAME, jsonString, MimeType.PLAIN_TEXT);
-  }
-
-  return seriesList;
+function View_saveIndex(folderId, list) {
+  if (!list || !Array.isArray(list)) return;
+  list.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
+  const root = DriveApp.getFolderById(folderId);
+  const jsonString = JSON.stringify(list);
+  const files = root.getFilesByName(INDEX_FILE_NAME);
+  if (files.hasNext()) files.next().setContent(jsonString);
+  else root.createFile(INDEX_FILE_NAME, jsonString, MimeType.PLAIN_TEXT);
 }
 
 /**
- * [Helper] 단일 시리즈 폴더를 처리하여 메타데이터 객체를 반환합니다.
+ * [Helper] 단일 시리즈 폴더 처리
+ *
+ * Optimization:
+ * - NO `getFilesByName('cover.jpg')`
+ * - Look up `thumbMap` for cover ID
+ * - ONLY scan for `info.json`
  */
-function processSeriesFolder(folder, categoryContext) {
+function processSeriesFolder(folder, categoryContext, thumbMap) {
   const folderName = folder.getName();
-  // Debug.log(`[Scan] Processing: ${folderName}`); // Too noisy for all, maybe enable if needed
 
   let metadata = {
     status: "ONGOING",
@@ -1079,43 +1221,35 @@ function processSeriesFolder(folder, categoryContext) {
     category: categoryContext,
   };
   let seriesName = folderName;
-  let thumbnailId = "";
-  let thumbnailOld = "";
   let sourceId = "";
   let booksCount = 0;
+  let thumbnailId = "";
 
-  // ID Parsing
+  // ID Parsing "[12345] Title"
   const idMatch = folderName.match(/^\[(\d+)\]/);
-  if (idMatch) sourceId = idMatch[1];
-
-  // 1. Check for 'cover.jpg'
-  // Try exact match first
-  let coverFiles = folder.getFilesByName("cover.jpg");
-  if (coverFiles.hasNext()) {
-    const f = coverFiles.next();
-    thumbnailId = f.getId();
-    // Debug.log(`  -> Found cover.jpg: ${thumbnailId}`);
-  } else {
-    // Try Case-Insensitive / Alternative names
-    const altNames = ["Cover.jpg", "cover.png", "Cover.png", "cover.jpeg"];
-    for (const alt of altNames) {
-      const alts = folder.getFilesByName(alt);
-      if (alts.hasNext()) {
-        thumbnailId = alts.next().getId();
-        break;
-      }
+  if (idMatch) {
+    sourceId = idMatch[1];
+    // Lookup Optimized Map
+    if (thumbMap && thumbMap[sourceId]) {
+      thumbnailId = thumbMap[sourceId];
     }
   }
 
-  // 2. Parse info.json
+  // Parse info.json (Still needed for name/author)
   const infoFiles = folder.getFilesByName("info.json");
+  let thumbnailOld = "";
+
   if (infoFiles.hasNext()) {
     try {
       const content = infoFiles.next().getBlob().getDataAsString();
       const parsed = JSON.parse(content);
 
       if (parsed.title) seriesName = parsed.title;
-      if (parsed.id) sourceId = parsed.id;
+      // If we didn't get ID from folder, try info.json (rare fallback)
+      if (!sourceId && parsed.id) {
+        sourceId = parsed.id;
+        if (thumbMap && thumbMap[sourceId]) thumbnailId = thumbMap[sourceId];
+      }
       if (parsed.file_count) booksCount = parsed.file_count;
 
       if (
@@ -1129,20 +1263,25 @@ function processSeriesFolder(folder, categoryContext) {
         metadata.authors = parsed.metadata.authors;
       else if (parsed.author) metadata.authors = [parsed.author];
 
-      // Dual Strategy: Base64 from info.json (temp store in thumbnailId if we want, but let's use separate field)
-      if (parsed.thumbnail) thumbnailOld = parsed.thumbnail; // Base64 or URL
+      // Fallback text thumb (http)
+      if (parsed.thumbnail) thumbnailOld = parsed.thumbnail;
     } catch (e) {}
   } else {
     const match = folderName.match(/^\[(\d+)\]\s*(.+)/);
     if (match) seriesName = match[2];
   }
 
-  // Refine Dual Strategy Return
-  let base64Thumb = "";
-  if (thumbnailOld && thumbnailOld.startsWith("data:image")) {
-    base64Thumb = thumbnailOld;
+  // Decide Final Thumbnail
+  // Rule: If we have thumbnailId (from Map), use it.
+  // Rule: If not, use thumbnailOld URL (but NOT base64)
+  let finalThumbnail = "";
+  if (thumbnailId) {
+    // Good.
+  } else if (thumbnailOld) {
+    if (!thumbnailOld.startsWith("data:image")) {
+      finalThumbnail = thumbnailOld;
+    }
   }
-  // If thumbnailOld is http url, we keep it in 'thumbnail' field anyway.
 
   return {
     id: folder.getId(),
@@ -1150,82 +1289,19 @@ function processSeriesFolder(folder, categoryContext) {
     name: seriesName,
     booksCount: booksCount,
     metadata: metadata,
-    thumbnail: base64Thumb || thumbnailOld, // Base64 or External URL
-    thumbnailId: thumbnailId, // Drive ID (cover.jpg)
+    thumbnail: finalThumbnail,
+    thumbnailId: thumbnailId,
     hasCover: !!thumbnailId,
     lastModified: folder.getLastUpdated(),
     category: metadata.category,
   };
 }
 
-/* ========================================================================== */
-/* FILE: View_Utils.gs */
-/* ========================================================================== */
-
-// =======================================================
-// 🛠 Viewer Utility Functions (Isolated)
-// =======================================================
-
-const INDEX_FILE_NAME = "library_index.json";
-
-/**
- * Viewer 전용 권한 확인 함수
- * 이 함수를 실행하여 View 관련 스코프(DriveApp) 권한을 승인받습니다.
- */
-function View_authorizeCheck() {
-  DriveApp.getRootFolder();
-  console.log("✅ [Viewer] Auth Check Complete");
-}
 
 /* ========================================================================== */
-/* FILE: Debug.gs */
+/* FILE: View_HistoryService.gs */
 /* ========================================================================== */
 
-// =====================================================
-// 🐞 디버깅 모듈 (In-Memory Log Collector)
-// =====================================================
-
-const Debug = {
-  logs: [],
-  startTime: 0,
-
-  start: function () {
-    this.logs = [];
-    this.startTime = new Date().getTime();
-    this.log("🕒 Execution Started");
-  },
-
-  log: function (msg) {
-    const elapsed = new Date().getTime() - this.startTime;
-    const timestamp = `[+${elapsed}ms]`;
-    console.log(msg); // Stackdriver에도 남김
-    this.logs.push(`${timestamp} ${msg}`);
-  },
-
-  error: function (msg, err) {
-    const elapsed = new Date().getTime() - this.startTime;
-    const timestamp = `[+${elapsed}ms]`;
-    const errMsg = err ? ` | Error: ${err.message}\nStack: ${err.stack}` : "";
-    console.error(msg + errMsg);
-    this.logs.push(`❌ ${timestamp} ${msg}${errMsg}`);
-  },
-
-  getLogs: function () {
-    return this.logs;
-  },
-};
-
-// 테스트용 함수 (유지)
-function testSetup() {
-  Debug.start();
-  Debug.log("Test Log 1");
-  try {
-    throw new Error("Test Error");
-  } catch (e) {
-    Debug.error("Test Exception catch", e);
-  }
-  return Debug.getLogs();
-}
 // =======================================================
 // 📖 View History Service
 // Drive 루트에 read_history.json 저장/불러오기
@@ -1286,3 +1362,77 @@ function View_saveReadHistory(data, folderId) {
     return createRes("error", `History save failed: ${e.message}`);
   }
 }
+
+
+/* ========================================================================== */
+/* FILE: View_Utils.gs */
+/* ========================================================================== */
+
+// =======================================================
+// 🛠 Viewer Utility Functions (Isolated)
+// =======================================================
+
+// const INDEX_FILE_NAME declared in View_LibraryService.gs
+// const INDEX_FILE_NAME = "library_index.json";
+
+/**
+ * Viewer 전용 권한 확인 함수
+ * 이 함수를 실행하여 View 관련 스코프(DriveApp) 권한을 승인받습니다.
+ */
+function View_authorizeCheck() {
+  DriveApp.getRootFolder();
+  console.log("✅ [Viewer] Auth Check Complete");
+}
+
+
+/* ========================================================================== */
+/* FILE: Debug.gs */
+/* ========================================================================== */
+
+// =====================================================
+// 🐞 디버깅 모듈 (In-Memory Log Collector)
+// =====================================================
+
+const Debug = {
+  logs: [],
+  startTime: 0,
+
+  start: function () {
+    this.logs = [];
+    this.startTime = new Date().getTime();
+    this.log("🕒 Execution Started");
+  },
+
+  log: function (msg) {
+    const elapsed = new Date().getTime() - this.startTime;
+    const timestamp = `[+${elapsed}ms]`;
+    console.log(msg); // Stackdriver에도 남김
+    this.logs.push(`${timestamp} ${msg}`);
+  },
+
+  error: function (msg, err) {
+    const elapsed = new Date().getTime() - this.startTime;
+    const timestamp = `[+${elapsed}ms]`;
+    const errMsg = err ? ` | Error: ${err.message}\nStack: ${err.stack}` : "";
+    console.error(msg + errMsg);
+    this.logs.push(`❌ ${timestamp} ${msg}${errMsg}`);
+  },
+
+  getLogs: function () {
+    return this.logs;
+  },
+};
+
+// 테스트용 함수 (유지)
+function testSetup() {
+  Debug.start();
+  Debug.log("Test Log 1");
+  try {
+    throw new Error("Test Error");
+  } catch (e) {
+    Debug.error("Test Exception catch", e);
+  }
+  return Debug.getLogs();
+}
+
+

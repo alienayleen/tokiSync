@@ -14,7 +14,7 @@
  */
 function doGet(e) {
   return ContentService.createTextOutput(
-    "✅ TokiSync API Server v1.2.0 (Stateless) is Running...",
+    "✅ TokiSync API Server v1.5.5 (Stateless) is Running...",
   );
 }
 
@@ -33,7 +33,7 @@ function doGet(e) {
  * @returns {TextOutput} JSON 응답
  */
 // [CONSTANTS]
-const SERVER_VERSION = "v1.2.0"; // API Key Enforcement for All Requests (including viewer)
+const SERVER_VERSION = "v1.5.5"; // API Key Enforcement for All Requests (including viewer)
 // API Key stored in Script Properties (Project Settings > Script Properties)
 // Set property: API_KEY = your_secret_key
 const API_KEY = PropertiesService.getScriptProperties().getProperty("API_KEY");

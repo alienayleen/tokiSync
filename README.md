@@ -1,16 +1,16 @@
-# ⚡️ TokiSync (토끼싱크) v1.5.0
+# ⚡️ TokiSync (토끼싱크) v1.5.5
 
 **북토끼, 뉴토끼, 마나토끼**의 콘텐츠를 **구글 드라이브로 직접 업로드**하고, **전용 웹 뷰어**를 통해 편리하게 관리/열람할 수 있는 올인원 솔루션입니다.
 
-> **🚀 v1.5.0 업데이트:**
-> **Viewer 2.0 (Cinematic)**: Vue 3 + Tailwind 기반의 새로운 몰입형 뷰어가 적용되었습니다.
-> **Unified Menu Modal**: 기존 메뉴를 직관적인 모달 UI로 통합하여 사용성을 개선했습니다.
+> **🚀 v1.5.5 업데이트:**
+> **열람 이력 동기화**: Dexie.js와 Drive 동기화를 통한 열람 이력(Read History) 기록 기능이 추가되었습니다.
+> **오프라인 캐싱 강화**: 라이브러리 및 에피소드 목록을 IndexedDB에 캐싱하여 GAS 호출 빈도를 대폭 줄이고 오프라인 접근성을 높였습니다.
 
 ---
 
 ## ✨ 주요 기능
 
-### 📥 수집기 (UserScript) - v1.5.0
+### 📥 수집기 (UserScript) - v1.5.5
 
 - **📱 통합 메뉴 모달 (New)**: `Ctrl+Shift+T` 또는 우측 하단 버튼으로 모든 기능을 한 곳에서 제어.
 - **🚀 Direct Drive Access**: GAS 서버의 병목 없이 **구글 드라이브 API로 직접 데이터를 전송**합니다.
@@ -21,18 +21,20 @@
 - **🔄 스마트 동기화**: 중복 없이 신규 회차만 다운로드.
 - **☁️ 구글 드라이브 직통 업로드**: PC 저장공간 최소화.
 
-### 📡 서버 (GAS API) - v1.3.0
+### 📡 서버 (GAS API) - v1.5.5
+
+- **📚 읽기 이력 동기화 (New)**: `read_history.json`을 통한 기기 간 열람 이력 공유.
 
 - **🔑 OAuth 토큰 발급 (New)**: 클라이언트의 Direct Access를 위한 권한 위임.
 - **🛡️ Fallback 시스템**: Direct Access 실패 시 기존 방식을 통한 안전한 중계 처리.
 - **🔒 API Key 보안**: 전체 API 인증 강제.
 - **📦 대용량 Resumable Upload**: 5GB+ 파일 지원.
 
-### 📊 뷰어 2.0 (Cinematic Update) - v1.5.0
+### 📊 뷰어 2.0 (Cinematic Update) - v1.5.5
 
 - **🎥 Cinematic Experience**: 글래스모피즘 UI와 몰입형 에피소드 상세 페이지 제공.
-- **🚀 Tech Stack**: **Vue 3 + Tailwind CSS** 기반의 SPA 구조로 완전 개편.
-- **📱 통합 엔진**: 웹툰/만화/소설 뷰어를 하나의 엔진으로 통합 및 오프라인 캐싱(Dexie.js) 지원.
+- **🚀 Tech Stack**: **Vue 3 + Tailwind CSS** 기반의 SPA 구조.
+- **📱 오프라인 강화 (New)**: IndexedDB(Dexie.js)를 활용한 라이브러리/에피소드 캐싱 및 열람 이력 기록.
 
 ---
 

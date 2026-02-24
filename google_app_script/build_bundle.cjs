@@ -18,6 +18,7 @@ const FILES = [
   "View_Dispatcher.gs",
   "View_BookService.gs",
   "View_LibraryService.gs",
+  "View_HistoryService.gs",
   "View_Utils.gs",
   "Debug.gs",
 ];
