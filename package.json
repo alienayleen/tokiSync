@@ -18,8 +18,9 @@
     "watch:viewer": "vite build --watch",
     "gas:login": "clasp login",
     "gas:clone": "clasp clone",
-    "gas:push": "clasp push",
-    "gas:deploy": "clasp deploy"
+    "gas:push": "clasp push -P google_app_script/TokiSync",
+    "gas:deploy": "clasp deploy -P google_app_script/TokiSync",
+    "gas:deploy:auto": "clasp deploy -P google_app_script/TokiSync -i $(node -p \"require('./google_app_script/TokiSync/.clasp.json').deployId\") -d \"npm Auto \""
   },
   "repository": {
     "type": "git",
