@@ -448,6 +448,7 @@ const refreshEpisodes = () => {
 };
 
 const startReading = async (ep) => {
+  cleanupBlobUrls(); // 이전 에피소드 Blob URL 즉시 해제 (메모리 누수 방지)
   currentEpisode.value = ep;
   currentPage.value = 1;
   viewerContent.value = null;

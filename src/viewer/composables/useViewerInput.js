@@ -1,7 +1,8 @@
+import { watch } from 'vue';
 import { useStore } from './useStore';
 
 /**
- * useViewerInput - 통합 입력 컨트롤러 (v2)
+ * useViewerInput - 통합 입력 컨트롤러 (v2.1)
  *
  * 기존 useTouch.js를 완전 대체합니다.
  * 마우스 클릭, 터치 탭/스와이프를 단일 핸들러로 처리하며
@@ -13,6 +14,12 @@ import { useStore } from './useStore';
  *   중앙    → toggleViewerUI
  *
  * 키보드는 useKeyboard.js가 계속 담당합니다.
+ *
+ * 개선 포인트 (v2.1):
+ * - isUIElement에 .viewer-toolbar 추가
+ * - touchmove 리스너를 뷰어 모드에 따라 동적 교체
+ *   (페이지 모드: passive:false / 스크롤 모드: passive:true)
+ * - iOS Safari에서 스크롤 모드 장시간 사용 시 저하 현상 방지
  */
 export function useViewerInput() {
   const {
@@ -45,11 +52,12 @@ export function useViewerInput() {
   };
 
   /**
-   * UI 요소 위 이벤트인지 확인 (헤더/푸터/버튼 등은 무시)
+   * UI 요소 위 이벤트인지 확인 (헤더/푸터/보턴 등은 무시)
+   * viewer-toolbar 선택자 추가(v2.1 개선)
    */
   const isUIElement = (el) => {
     return !!el?.closest(
-      '.glass-controls, [class*="z-[4000]"], button, input, select, a, label'
+      '.glass-controls, .viewer-toolbar, [class*="z-[4000]"], button, input, select, a, label'
     );
   };
 
@@ -129,16 +137,42 @@ export function useViewerInput() {
 
   // ── attach / detach ────────────────────────────────────────────
   let bound = false;
+  // 현재 등록된 touchmove 핸들러의 passive 옵션 추적
+  let currentTouchMovePassive = true;
+  let stopWatchMode = null;
+
+  /**
+   * touchmove 리스너를 passive 옵션에 맞게 교체
+   * - Page 모드: passive:false (수평 스와이프 시 preventDefault 필요)
+   * - Scroll 모드: passive:true (iOS Safari 성능 보호)
+   */
+  const syncTouchMoveListener = (isScrollMode) => {
+    if (!bound) return;
+    const newPassive = isScrollMode;
+    if (newPassive === currentTouchMovePassive) return; // 변화 없으면 교체 불필요
+    document.removeEventListener('touchmove', onTouchMove);
+    document.addEventListener('touchmove', onTouchMove, { passive: newPassive });
+    currentTouchMovePassive = newPassive;
+  };
 
   const attach = () => {
     if (bound) return;
+    const isScrollMode = viewerData.mode === 'scroll';
+    currentTouchMovePassive = isScrollMode;
     // mousedown: 데스크탑 클릭 처리
     document.addEventListener('mousedown', onMouseDown);
     // touch: 모바일 탭/스와이프 처리
     document.addEventListener('touchstart', onTouchStart, { passive: true });
-    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchmove', onTouchMove, { passive: isScrollMode });
     document.addEventListener('touchend', onTouchEnd, { passive: true });
     bound = true;
+
+    // viewerData.mode 변경 시 touchmove passive 자동 동기화
+    stopWatchMode = watch(
+      () => viewerData.mode,
+      (mode) => syncTouchMoveListener(mode === 'scroll'),
+      { immediate: false }
+    );
   };
 
   const detach = () => {
@@ -146,6 +180,7 @@ export function useViewerInput() {
     document.removeEventListener('touchstart', onTouchStart);
     document.removeEventListener('touchmove', onTouchMove);
     document.removeEventListener('touchend', onTouchEnd);
+    if (stopWatchMode) { stopWatchMode(); stopWatchMode = null; }
     bound = false;
   };
 
