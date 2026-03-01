@@ -20,5 +20,21 @@
 - **GAS Deployment**: `npm run build:gas` and `npm run gas:push` (Uses Clasp).
 - **All Builds**: `npm run build` runs all the above. Always ensure builds pass before committing (`User prefers build tests before commits`).
 
-## Additional Context
-- Refer to `PROJECT_HANDOVER_MASTER.md` for the single source of truth regarding project specifications, roadmap, and UI/UX requirements.
+## Viewer Input Architecture
+- **Single Controller Rule**: All viewer input (mouse, touch, keyboard, wheel) MUST be handled through a single composable: `useViewerInput.js`.
+  - DO NOT split input handling across component event handlers (e.g., `nav-zone @click`) and composables (e.g., `useTouch.js`).
+  - Mouse clicks: Use `@mousedown.left` attached directly to `viewer-container`.
+  - Touch: Attach `touchstart`/`touchend` directly to `viewer-container`. Use a `lastTouch` timestamp flag (+300ms buffer) to prevent ghost `mousedown` events after touch.
+  - `nav-zone` div pattern is ABOLISHED. Do not re-introduce it.
+
+## Theme System Conventions
+- **No hardcoded colors in viewer components.** All colors must use CSS theme variables.
+  - ❌ WRONG: `bg-black/95`, `text-white`, `text-zinc-400`, `text-zinc-600`
+  - ✅ CORRECT: `text-theme-text`, `text-theme-sub`, `text-theme-muted`, `hover:bg-theme-surface-hover`
+- **Glass UI elements** (e.g., `.glass-controls` toolbar) must use `--t-glass-bg` and `--t-glass-border` CSS variables for both dark and light themes.
+- **Global theme state** is managed via `appTheme` (ref) and `toggleTheme` in `useStore.js`. It is applied via `data-theme` attribute on `document.documentElement`. Do NOT create per-component or per-view theme states.
+
+## Additional Context & Documentation Workflow
+- **Master Reference**: Refer to `PROJECT_HANDOVER_MASTER.md` for the single source of truth regarding project specifications, roadmap, and UI/UX requirements.
+- **Post-Task Documentation**: After completing a major task (i.e., immediately prior to or after a Git commit), you MUST document the key changes, architectural decisions, and updated status in `PROJECT_HANDOVER_MASTER.md`.
+- **Rule Updates**: If the completed task introduces a new, highly important convention, architecture rule, or restriction, you MUST also duplicate that specific rule here in `.geminirules` to ensure it is constantly enforced in future sessions.
