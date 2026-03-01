@@ -62,10 +62,46 @@
         <div v-if="viewerData.mode === 'scroll'" class="max-w-4xl w-full">
           <img v-for="(src, i) in viewerContent.images" :key="i" :src="src"
                class="w-full h-auto block select-none shadow-2xl border-b border-white/5" loading="lazy">
+          <!-- End of Chapter: 다음 화 안내 인라인 섹션 -->
+          <div class="next-ep-guide">
+            <p class="next-ep-guide-label">End of Chapter</p>
+            <div v-if="nextEpisodeData" class="next-ep-guide-content">
+              <img :src="nextEpisodeData.thumbnail" class="next-ep-thumb">
+              <p class="next-ep-title">{{ nextEpisodeData.name || nextEpisodeData.title }}</p>
+              <div class="next-ep-actions">
+                <button @click="goToNextEpisode" class="next-ep-btn-primary">다음 화 보기</button>
+                <button @click="exitViewer" class="next-ep-btn-ghost">목록으로</button>
+              </div>
+            </div>
+            <div v-else class="next-ep-guide-content">
+              <p class="next-ep-last">마지막 화입니다.</p>
+              <button @click="exitViewer" class="next-ep-btn-ghost">목록으로 돌아가기</button>
+            </div>
+          </div>
         </div>
 
         <!-- Page Mode -->
         <div v-else class="h-full w-full flex items-center justify-center overflow-hidden">
+          <!-- [Next Episode Guide] 마지막 페이지 초과 시 전체화면 안내 -->
+          <transition name="fade">
+            <div v-if="showNextEpisodeGuide" class="next-ep-fullscreen">
+              <p class="next-ep-guide-label">End of Chapter</p>
+              <div v-if="nextEpisodeData" class="next-ep-guide-content">
+                <img :src="nextEpisodeData.thumbnail" class="next-ep-thumb-lg">
+                <p class="next-ep-title-lg">{{ nextEpisodeData.name || nextEpisodeData.title }}</p>
+                <div class="next-ep-actions">
+                  <button @click="goToNextEpisode" class="next-ep-btn-primary">다음 화 보기</button>
+                  <button @click="exitViewer" class="next-ep-btn-ghost">목록으로</button>
+                </div>
+              </div>
+              <div v-else class="next-ep-guide-content">
+                <p class="next-ep-last">마지막 화입니다.</p>
+                <button @click="exitViewer" class="next-ep-btn-ghost">목록으로 돌아가기</button>
+              </div>
+            </div>
+          </transition>
+          <!-- 일반 페이지 렌더링 -->
+          <template v-if="!showNextEpisodeGuide">
           <div class="spread-layout" :dir="viewerDefaults.rtl ? 'rtl' : 'ltr'">
             <template v-if="viewerDefaults.spread && currentSlotData">
               <!-- Slot-based: single (cover etc.) → 1 image -->
@@ -87,6 +123,7 @@
               <img v-if="currentImage" :key="'p'+currentPage" :src="currentImage" class="single-image shadow-2xl">
             </template>
           </div>
+          </template>
         </div>
       </template>
 
@@ -96,10 +133,44 @@
           <div class="novel-scroll-content opacity-90 tracking-tight font-medium text-current"
                :style="{ fontSize: novelSettings.fontSize + 'px', lineHeight: String(novelSettings.lineHeight) }"
                v-html="viewerContent.content"></div>
+          <!-- End of Chapter: 소설 스크롤 못도 다음 화 안내 -->
+          <div class="next-ep-guide">
+            <p class="next-ep-guide-label">End of Chapter</p>
+            <div v-if="nextEpisodeData" class="next-ep-guide-content">
+              <img :src="nextEpisodeData.thumbnail" class="next-ep-thumb">
+              <p class="next-ep-title">{{ nextEpisodeData.name || nextEpisodeData.title }}</p>
+              <div class="next-ep-actions">
+                <button @click="goToNextEpisode" class="next-ep-btn-primary">다음 화 보기</button>
+                <button @click="exitViewer" class="next-ep-btn-ghost">목록으로</button>
+              </div>
+            </div>
+            <div v-else class="next-ep-guide-content">
+              <p class="next-ep-last">마지막 화입니다.</p>
+              <button @click="exitViewer" class="next-ep-btn-ghost">목록으로 돌아가기</button>
+            </div>
+          </div>
         </div>
         <!-- Page Mode: CSS Column Pagination -->
         <div v-else class="novel-page-container" :class="{ 'novel-spread': novelSettings.spread }" ref="novelContainerRef">
-          <div class="novel-text-body" ref="novelBodyRef"
+          <!-- [Next Episode Guide] 소설 페이지 모드에서 마지막 페이지 초과 -->
+          <transition name="fade">
+            <div v-if="showNextEpisodeGuide" class="next-ep-fullscreen">
+              <p class="next-ep-guide-label">End of Chapter</p>
+              <div v-if="nextEpisodeData" class="next-ep-guide-content">
+                <img :src="nextEpisodeData.thumbnail" class="next-ep-thumb-lg">
+                <p class="next-ep-title-lg">{{ nextEpisodeData.name || nextEpisodeData.title }}</p>
+                <div class="next-ep-actions">
+                  <button @click="goToNextEpisode" class="next-ep-btn-primary">다음 화 보기</button>
+                  <button @click="exitViewer" class="next-ep-btn-ghost">목록으로</button>
+                </div>
+              </div>
+              <div v-else class="next-ep-guide-content">
+                <p class="next-ep-last">마지막 화입니다.</p>
+                <button @click="exitViewer" class="next-ep-btn-ghost">목록으로 돌아가기</button>
+              </div>
+            </div>
+          </transition>
+          <div v-if="!showNextEpisodeGuide" class="novel-text-body" ref="novelBodyRef"
                :style="novelTextStyle">
             <div class="novel-inner-content"
                  :style="{ fontSize: novelSettings.fontSize + 'px', lineHeight: String(novelSettings.lineHeight) }"
@@ -167,6 +238,7 @@ const {
   viewerDefaults, viewerData, novelSettings,
   viewerContent, downloadProgress, isDownloading,
   hasNextEpisode, hasPrevEpisode,
+  nextEpisodeData, showNextEpisodeGuide,
   novelPageCount, novelCurrentPage,
   pageSlots, currentSlotIndex,
   exitViewer, goToNextEpisode, goToPrevEpisode,

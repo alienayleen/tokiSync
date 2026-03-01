@@ -103,6 +103,13 @@ const currentEpisodeIndex = computed(() => {
 const hasNextEpisode = computed(() => currentEpisodeIndex.value < episodes.value.length - 1);
 const hasPrevEpisode = computed(() => currentEpisodeIndex.value > 0);
 
+// 다음 화 안내 화면 상태
+const showNextEpisodeGuide = ref(false);
+// 다음 화 정보 (썸네일/제목 표시용)
+const nextEpisodeData = computed(() =>
+  hasNextEpisode.value ? episodes.value[currentEpisodeIndex.value + 1] : null
+);
+
 // 현재 시리즈에서 가장 최근에 읽은 에피소드 (readHistory의 lastReadAt 기준)
 const lastReadEpisode = ref(null);
 
@@ -451,6 +458,7 @@ const startReading = async (ep) => {
   cleanupBlobUrls(); // 이전 에피소드 Blob URL 즉시 해제 (메모리 누수 방지)
   currentEpisode.value = ep;
   currentPage.value = 1;
+  showNextEpisodeGuide.value = false; // 안내 화면 초기화
   viewerContent.value = null;
 
   // Determine viewer mode from category/type
@@ -503,6 +511,7 @@ const startReading = async (ep) => {
 const goToNextEpisode = () => {
   if (hasNextEpisode.value) {
     cleanupBlobUrls();
+    showNextEpisodeGuide.value = false;
     const nextEp = episodes.value[currentEpisodeIndex.value + 1];
     startReading(nextEp);
     notify(`⏩ ${nextEp.title || nextEp.name}`);
@@ -589,7 +598,8 @@ const next = () => {
       novelCurrentPage.value++;
       currentPage.value = novelCurrentPage.value + 1;
     } else {
-      notify('마지막 페이지입니다.');
+      // 소설도 마지막 페이지에서 안내 화면 표시
+      showNextEpisodeGuide.value = true;
     }
   } else if (viewerDefaults.spread && pageSlots.value.length > 0) {
     // Slot-based navigation
@@ -597,16 +607,21 @@ const next = () => {
       currentSlotIndex.value++;
       currentPage.value = currentSlotIndex.value + 1;
     } else {
-      notify('마지막 페이지입니다.');
+      showNextEpisodeGuide.value = true;
     }
   } else {
     // Single page mode
     if (currentPage.value < totalPages.value) currentPage.value++;
-    else notify('마지막 페이지입니다.');
+    else showNextEpisodeGuide.value = true;
   }
 };
 
 const prev = () => {
+  // 안내 화면에서 뒤로가면 마지막 페이지로 복귀
+  if (showNextEpisodeGuide.value) {
+    showNextEpisodeGuide.value = false;
+    return;
+  }
   if (viewerData.mode === 'scroll') {
     const container = document.getElementById('viewer-container');
     container.scrollBy({ top: -window.innerHeight * 0.8, behavior: 'smooth' });
@@ -700,6 +715,7 @@ export function useStore() {
 
     // Episode Nav Computed
     hasNextEpisode, hasPrevEpisode,
+    nextEpisodeData, showNextEpisodeGuide,
 
     // Novel Content & Pagination
     fullNovelContent,
