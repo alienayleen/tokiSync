@@ -1,26 +1,32 @@
 # Project: tokiSync
+
 # This file contains Gemini's project-specific memory and instructions.
+
 # Add rules here to override or supplement the global ~/.gemini/GEMINI.md rules.
 
 ## Project Identity & Architecture
-- **Architecture**: 
+
+- **Architecture**:
   - Backend: Google Apps Script (Stateless API).
   - Bridge: Tampermonkey UserScript (Core logic, DOM Scraping, `GM_xmlhttpRequest` for Direct Drive Access).
   - Frontend (Viewer): Vue 3 (Composition API) + Tailwind CSS SPA, hosted on GitHub Pages.
 - **Storage**: Dexie.js for offline viewer cache.
 
 ## Coding Conventions & Rules
+
 - **Backend (GAS)**: Must remain stateless. Do NOT use `PropertiesService` for user settings; everything must be payload-driven.
 - **Frontend (Viewer)**: Adhere to the "Cinematic" design philosophy (Glassmorphism, blur effects, entry animations). Use Vue 3 Composition API.
 - **File Naming Standard**: Google Drive folders must use `[ID] Series Title` format. Files must use `Number - Title` format.
 
 ## Workflows & Build Commands
+
 - **Viewer Build**: `npm run build:viewer` (Uses Vite, outputs to `docs/` for GitHub Pages).
 - **Core Script Build**: `npm run build:core` (Uses Webpack).
 - **GAS Deployment**: `npm run build:gas` and `npm run gas:push` (Uses Clasp).
 - **All Builds**: `npm run build` runs all the above. Always ensure builds pass before committing (`User prefers build tests before commits`).
 
 ## Viewer Input Architecture
+
 - **Single Controller Rule**: All viewer input (mouse, touch, keyboard, wheel) MUST be handled through a single composable: `useViewerInput.js`.
   - DO NOT split input handling across component event handlers (e.g., `nav-zone @click`) and composables (e.g., `useTouch.js`).
   - Mouse clicks: Use `@mousedown.left` attached directly to `viewer-container`.
@@ -28,6 +34,7 @@
   - `nav-zone` div pattern is ABOLISHED. Do not re-introduce it.
 
 ## Theme System Conventions
+
 - **No hardcoded colors in viewer components.** All colors must use CSS theme variables.
   - ❌ WRONG: `bg-black/95`, `text-white`, `text-zinc-400`, `text-zinc-600`
   - ✅ CORRECT: `text-theme-text`, `text-theme-sub`, `text-theme-muted`, `hover:bg-theme-surface-hover`
@@ -35,6 +42,7 @@
 - **Global theme state** is managed via `appTheme` (ref) and `toggleTheme` in `useStore.js`. It is applied via `data-theme` attribute on `document.documentElement`. Do NOT create per-component or per-view theme states.
 
 ## Additional Context & Documentation Workflow
-- **Master Reference**: Refer to `PROJECT_HANDOVER_MASTER.md` for the single source of truth regarding project specifications, roadmap, and UI/UX requirements.
+
+- **Master Reference**: `PROJECT_HANDOVER_MASTER.md` is the single source of truth for project specs, roadmap, and UI/UX requirements. It is **agent-only** (listed in `.gitignore`) and must NOT be committed to git.
 - **Post-Task Documentation**: After completing a major task (i.e., immediately prior to or after a Git commit), you MUST document the key changes, architectural decisions, and updated status in `PROJECT_HANDOVER_MASTER.md`.
 - **Rule Updates**: If the completed task introduces a new, highly important convention, architecture rule, or restriction, you MUST also duplicate that specific rule here in `.geminirules` to ensure it is constantly enforced in future sessions.

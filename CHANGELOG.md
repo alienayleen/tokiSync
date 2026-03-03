@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.5.5] - 2026-03-03
+
+### 🎨 EpisodesView 전면 재설계
+
+- KakaoPage 스타일 2패널 레이아웃 도입: 왼쪽 사이드바(커버 + 액션 버튼) + 오른쪽 에피소드 목록 카드.
+- 세로형 썸네일(`aspect-[1/1.45]`), 커버 후광 효과(`ring-8 ring-white/10`), 첫 화 보기 버튼 강조(옐로우) 등 디자인 디테일 대폭 강화.
+- "End of Collection" 마커 및 hover scale 효과 추가.
+
+### 🌗 전역 테마 시스템 구축
+
+- `html[data-theme="dark"|"light"]` 속성 기반의 전역 다크/라이트 모드 전환 시스템 신설.
+- 모든 컬러를 `--t-*` CSS 변수 체계로 통일, 컴포넌트 내 하드코딩 색상 완전 제거.
+- `useStore.js`의 `appTheme` / `toggleTheme`으로 단일 관리, NavHeader 토글 버튼 항시 표시, `localStorage` 설정 유지.
+
+### ⚙️ 뷰어 이벤트 아키텍처 전면 재설계
+
+- 마우스·터치·키보드 이벤트가 분산된 구조(`nav-zone`, `useTouch.js`, `useKeyboard.js`)를 **`useViewerInput.js` 단일 컨트롤러**로 통합.
+- 화면 좌 15% / 우 15% / 중앙 영역 자동 판별 (`getZone(clientX)`) 로직 구현.
+- 터치 후 Ghost Click 500ms 방지 내장, `nav-zone` HTML 패턴 완전 폐기.
+- 리더 툴바의 하드코딩 색상을 테마 변수 클래스(`viewer-toolbar-icon` 등)로 교체.
+
+### 🐛 모바일 터치 버그 3종 수정
+
+- 툴바 위 터치 오동작: `isUIElement` 선택자에 `.viewer-toolbar` 누락 추가.
+- iOS 장시간 사용 시 터치 저하: `touchmove` passive 옵션을 뷰어 모드 전환 시 동적 교체.
+- Blob URL 메모리 누수: `startReading()` 진입 시 `cleanupBlobUrls()` 즉시 호출.
+
+### ✨ 마지막 화 다음 에피소드 안내 화면
+
+- 스크롤 모드: 콘텐츠 하단 인라인 안내 섹션(다음 화 썸네일 + 제목 + 이동 버튼).
+- 페이지 모드: `showNextEpisodeGuide` 전체화면 fade 전환, `prev()` 시 마지막 페이지 복귀.
+- 이미지/소설 양쪽 모드 모두 적용.
+
+### 🗑️ Deprecated
+
+- `src/viewer/composables/useTouch.js` 삭제 (`useViewerInput.js`로 완전 대체).
+
 ## [v1.5.0] - 2026-02-19
 
 ### 📱 Unified Menu Modal (Modern UI)
