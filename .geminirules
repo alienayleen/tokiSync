@@ -4,6 +4,13 @@
 
 # Add rules here to override or supplement the global ~/.gemini/GEMINI.md rules.
 
+# 🚨 CRITICAL SYSTEM RULE (PRIORITY 0) 🚨
+
+**1. ABSOLUTE PROHIBITION:** Under NO circumstances shall the AI execute, trigger, or attempt to run ANY build, test, or deployment commands (including but not limited to `npm run build`, `clasp push`) in the background or via the terminal. Auto-execution and agentic testing loops are strictly forbidden.
+**2. STRICT ROLE DEFINITION:** The execution of ALL build and deployment pipelines is strictly and exclusively reserved for the Human User.
+**3. AI ACTION MANDATE:** After generating, modifying, or reviewing code, the AI MUST immediately halt all operational execution. Your sole responsibility regarding builds is to output a text-based instruction explicitly guiding the user to manually execute the required command in their own terminal.
+**4. PROPOSE BEFORE IMPLEMENTATION (APPROVAL GATING):** Upon receiving any coding task, feature request, or bug report, the AI MUST NOT immediately generate the final code. The AI MUST first: 1) Analyze the request, 2) Output a clear, step-by-step proposed solution or architectural plan, and 3) Explicitly PAUSE and ask for the user's approval. Writing actual code is STRICTLY FORBIDDEN until the user explicitly approves the proposed plan.
+
 ## Project Identity & Architecture
 
 - **Architecture**:
@@ -23,7 +30,7 @@
 - **Viewer Build**: `npm run build:viewer` (Uses Vite, outputs to `docs/` for GitHub Pages).
 - **Core Script Build**: `npm run build:core` (Uses Webpack).
 - **GAS Deployment**: `npm run build:gas` and `npm run gas:push` (Uses Clasp).
-- **All Builds**: `npm run build` runs all the above. Always ensure builds pass before committing (`User prefers build tests before commits`).
+- **All Builds**: `npm run build` runs all the above.
 
 ## Viewer Input Architecture
 

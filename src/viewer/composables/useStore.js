@@ -242,6 +242,8 @@ const toggleNovelSpread = () => {
   if (l) novelSettings.lineHeight = parseFloat(l);
   const s = localStorage.getItem('TOKI_NOVEL_SPREAD');
   if (s) novelSettings.spread = s === '1';
+  const m = localStorage.getItem('TOKI_NOVEL_LAST_MODE');
+  if (m) novelSettings.lastMode = m;
 })();
 
 // --- Methods ---
@@ -302,6 +304,7 @@ async function syncHistoryFromDrive() {
     const local = await db.readHistory.toArray();
     const merged = mergeHistory(local, remote);
     await db.readHistory.bulkPut(merged);
+    await saveReadHistory(merged);
     console.log(`[History] Drive sync 완료: ${merged.length}개`);
   } catch (e) {
     console.warn('[History] Drive pull 실패 (로컬 이력 사용):', e);
@@ -484,6 +487,7 @@ const startReading = async (ep) => {
     // 에피소드 목록에서 isRead 즉시 반영
     const target = episodes.value.find(e => e.id === ep.id);
     if (target) target.isRead = true;
+    await refreshLastReadEpisode();
   } catch (e) {
     console.warn('[History] 로컬 이력 기록 실패:', e);
   }
@@ -549,6 +553,7 @@ const setViewerMode = (mode) => {
   viewerData.mode = mode;
   if (selectedItem.value?.type === 'novel' || selectedItem.value?.category?.toLowerCase() === 'novel') {
     novelSettings.lastMode = mode;
+    localStorage.setItem('TOKI_NOVEL_LAST_MODE', mode);
   }
 };
 

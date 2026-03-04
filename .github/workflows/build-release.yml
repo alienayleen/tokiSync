@@ -1,4 +1,4 @@
-name: Build Release
+name: Build and Deploy (Dev & Prod)
 
 on:
   push:
@@ -9,45 +9,48 @@ on:
       - "webpack.core.config.cjs"
       - "vite.config.js"
       - ".github/workflows/**"
+  release:
+    types: [published]
+
+permissions:
+  contents: write # 릴리스 자산 업로드 및 배포를 위해 필요
+  pages: write
+  id-token: write
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4 # v3에서 v4로 업그레이드 (Node 20 환경 최적화)
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm" # npm 캐시 활성화로 빌드 속도 향상
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build All (UserScript, Viewer, GAS Bundle)
+      - name: Build Project
+        run: npm run build
+
+      - name: Prepare Distribution Directory
         run: |
-          npm run build
-          # Prepare unified distribution directory for GitHub Pages
-          mkdir -p _site
-          # Core UserScript
-          cp docs/tokiSync.user.js _site/
-          # Viewer Application
-          cp -r docs/* _site/
-          # GAS Bundle
-          cp google_app_script/TokiSync_Server_Bundle.gs _site/
+          # 배포용 임시 폴더 생성
+          mkdir -p ./deploy_dist
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: "_site"
+          # 파일 복사 로직 (기존 로직 유지)
+          cp docs/tokiSync.user.js ./deploy_dist/
+          cp -r docs/* ./deploy_dist/
+          cp google_app_script/TokiSync_Server_Bundle.gs ./deploy_dist/
 
       - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: deploy_dist
+          branch: gh-pages # 배포용 브랜치 별도 운용
+          # 핵심 로직: 릴리스면 루트(/), 푸시면 dev 폴더에 배포
+          target-folder: ${{ github.event_name == 'release' && '/' || 'dev' }}
+          clean: ${{ github.event_name == 'release' }} # 릴리스 배포 시에만 기존 파일 정리
