@@ -122,12 +122,13 @@ function View_getBooks(seriesId, bypassCache = false) {
     const existingCache = folder.getFilesByName(CACHE_FILE_NAME);
     if (existingCache.hasNext()) {
       existingCache.next().setContent(cacheContent);
+      while (existingCache.hasNext()) existingCache.next().setTrashed(true);
     } else {
       folder.createFile(CACHE_FILE_NAME, cacheContent, MimeType.PLAIN_TEXT);
     }
 
     console.log(
-      `[View_getBooks] Series: ${seriesId}, Total: ${totalFiles}, Returned: ${books.length} (Cache Updated)`
+      `[View_getBooks] Series: ${seriesId}, Total: ${totalFiles}, Returned: ${books.length} (Cache Updated)`,
     );
     return books;
   } catch (e) {
@@ -192,14 +193,14 @@ function View_getFileChunk(fileId, offset, length) {
       };
     } else {
       throw new Error(
-        `Drive API Failed: ${response.getResponseCode()} ${response.getContentText()}`
+        `Drive API Failed: ${response.getResponseCode()} ${response.getContentText()}`,
       );
     }
   } catch (e) {
     // Fallback to DriveApp if API fails (e.g. scope issue) - Optional but Risky for memory
     console.warn(
       "Drive API Partial Fetch failed, falling back to DriveApp (High Memory Risk): " +
-        e
+        e,
     );
     const file = DriveApp.getFileById(fileId);
     const blob = file.getBlob();

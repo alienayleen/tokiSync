@@ -6,11 +6,19 @@
 
 # 🚨 CRITICAL SYSTEM RULE (PRIORITY 0) 🚨
 
-**1. ABSOLUTE PROHIBITION:** Under NO circumstances shall the AI execute, trigger, or attempt to run ANY build, test, or deployment commands (including but not limited to `npm run build`, `clasp push`) in the background or via the terminal. Auto-execution and agentic testing loops are strictly forbidden.
-**2. STRICT ROLE DEFINITION:** The execution of ALL build and deployment pipelines is strictly and exclusively reserved for the Human User.
-**3. AI ACTION MANDATE:** After generating, modifying, or reviewing code, the AI MUST immediately halt all operational execution. Your sole responsibility regarding builds is to output a text-based instruction explicitly guiding the user to manually execute the required command in their own terminal.
-**4. PROPOSE BEFORE IMPLEMENTATION (APPROVAL GATING):** Upon receiving any coding task, feature request, or bug report, the AI MUST NOT immediately generate the final code. The AI MUST first: 1) Analyze the request, 2) Output a clear, step-by-step proposed solution or architectural plan, and 3) Explicitly PAUSE and ask for the user's approval. Writing actual code is STRICTLY FORBIDDEN until the user explicitly approves the proposed plan.
+**0. CONTEXT INITIALIZATION MANDATE:** 새로운 세션 시작 시 무조건 `PROJECT_HANDOVER_MASTER.md`를 먼저 읽고 컨텍스트를 복구할 것.
 
+**1. PROPOSE BEFORE IMPLEMENTATION:** 코딩 작업 시 분석 -> 단계별 계획 출력 -> **사용자 승인 대기** 과정을 거칠 것. 승인 전 코드 작성 금지.
+
+**2. OPERATION CLASSIFICATION (NEW):** 명령어 실행 권한을 다음과 같이 엄격히 구분한다.
+   - 🚫 **PROHIBITED (Deployment/Destructive):** `npm run build`, `clasp push`, `rm -rf`, `git push` 등 배포 및 파괴적 명령은 직접 실행 금지. 사용자에게 텍스트로 가이드할 것.
+   - ✅ **ALLOWED (Diagnostic/Read-only):** `ls`, `pwd`, `cat`, `grep`, `find`, `git status`, `npm list` 등 환경 파악 및 파일 확인용 명령어는 자유롭게 실행하여 컨텍스트를 파악할 것.
+   - ⚠️ **CONDITIONAL (Development):** `npm test`, `npm run lint` 등 안전한 검증용 명령은 계획 단계에서 승인받은 경우 실행 가능.
+
+**3. NO SHADOW ECHOING:** 터미널 명령어를 실행하는 대신 `echo "doing something..."`과 같이 텍스트만 출력하는 행위를 엄격히 금지한다. 
+   - 실행 가능한 명령은 실제 도구로 실행하고, 실행할 수 없는 제약 사항은 터미널 밖(대화창)에서 텍스트로 설명할 것.
+
+**4. STRICT ROLE DEFINITION:** 빌드 및 배포 파이프라인의 최종 실행 주체는 오직 'Human User'이다.
 ## Project Identity & Architecture
 
 - **Architecture**:

@@ -158,8 +158,15 @@ function View_saveIndex(folderId, list) {
   const root = DriveApp.getFolderById(folderId);
   const jsonString = JSON.stringify(list);
   const files = root.getFilesByName(INDEX_FILE_NAME);
-  if (files.hasNext()) files.next().setContent(jsonString);
-  else root.createFile(INDEX_FILE_NAME, jsonString, MimeType.PLAIN_TEXT);
+  if (files.hasNext()) {
+    files.next().setContent(jsonString);
+    // 중복 파일이 존재할 경우 삭제 (처음 한 개 이후의 파일들)
+    while (files.hasNext()) {
+      files.next().setTrashed(true);
+    }
+  } else {
+    root.createFile(INDEX_FILE_NAME, jsonString, MimeType.PLAIN_TEXT);
+  }
 }
 
 /**

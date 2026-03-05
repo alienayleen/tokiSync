@@ -38,30 +38,23 @@ jobs:
 
       - name: Prepare Distribution Directory
         run: |
-          # 배포용 최상위 폴더 생성
           mkdir -p ./deploy_dist
+          cp -r docs/* ./deploy_dist/
+          cp google_app_script/TokiSync_Server_Bundle.gs ./deploy_dist/
 
-          # 타겟 디렉토리 환경 결정 (릴리스면 루트, 푸시면 dev 폴더)
-          if [ "${{ github.event_name }}" == "release" ]; then
-            TARGET_DIR="./deploy_dist"
-          else
-            TARGET_DIR="./deploy_dist/dev"
-            mkdir -p $TARGET_DIR
-          fi
-
-          # 빌드 파일 복사
-          cp docs/tokiSync.user.js $TARGET_DIR/
-          cp -r docs/* $TARGET_DIR/
-          cp google_app_script/TokiSync_Server_Bundle.gs $TARGET_DIR/
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Deploy Dev to gh-pages
+        if: github.event_name == 'push'
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          path: "./deploy_dist"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./deploy_dist
+          destination_dir: dev
+          keep_files: true
 
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Deploy Stable to gh-pages
+        if: github.event_name == 'release'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./deploy_dist
+          keep_files: true

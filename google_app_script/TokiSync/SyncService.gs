@@ -107,6 +107,7 @@ function saveSeriesInfo(data, rootFolderId) {
 
   if (files.hasNext()) {
     files.next().setContent(jsonString);
+    while (files.hasNext()) files.next().setTrashed(true);
   } else {
     seriesFolder.createFile(fileName, jsonString, MimeType.PLAIN_TEXT);
   }
