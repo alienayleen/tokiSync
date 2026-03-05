@@ -48,6 +48,7 @@ function View_saveReadHistory(data, folderId) {
     const files = folder.getFilesByName(HISTORY_FILE_NAME);
     if (files.hasNext()) {
       files.next().setContent(jsonString);
+      while (files.hasNext()) files.next().setTrashed(true);
     } else {
       folder.createFile(HISTORY_FILE_NAME, jsonString, MimeType.PLAIN_TEXT);
     }

@@ -8,16 +8,14 @@ function initResumableUpload(data, rootFolderId) {
     rootFolderId,
     data.folderName,
     data.category,
-    true
+    true,
   );
   const folderId = seriesFolder.getId();
 
-  // [Fix] Prevent Duplicate Covers: Delete existing cover.jpg if uploading a new one
-  if (data.fileName === "cover.jpg") {
-    const existing = seriesFolder.getFilesByName("cover.jpg");
-    while (existing.hasNext()) {
-      existing.next().setTrashed(true);
-    }
+  // [Fix] Prevent Duplicate Files: Delete existing file with the same name before uploading a new one
+  const existing = seriesFolder.getFilesByName(data.fileName);
+  while (existing.hasNext()) {
+    existing.next().setTrashed(true);
   }
 
   const url =
@@ -30,8 +28,8 @@ function initResumableUpload(data, rootFolderId) {
       data.fileName.endsWith(".jpg") || data.fileName.endsWith(".jpeg")
         ? "image/jpeg"
         : data.fileName.endsWith(".epub")
-        ? "application/epub+zip"
-        : "application/zip",
+          ? "application/epub+zip"
+          : "application/zip",
   };
 
   const params = {
