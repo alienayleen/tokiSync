@@ -1,4 +1,4 @@
-/* ⚙️ TokiSync Server Code Bundle v1.0.0 (Generated: 2026-03-05T03:30:26.943Z) */
+/* ⚙️ TokiSync Server Code Bundle v1.0.0 (Generated: 2026-03-05T05:15:09.239Z) */
 
 /* ========================================================================== */
 /* FILE: Main.gs */
@@ -39,7 +39,7 @@ function doGet(e) {
  * @returns {TextOutput} JSON 응답
  */
 // [CONSTANTS]
-const SERVER_VERSION = "v1.5.5"; // API Key Enforcement for All Requests (including viewer)
+const SERVER_VERSION = "v1.5.6"; // API Key Enforcement for All Requests (including viewer)
 // API Key stored in Script Properties (Project Settings > Script Properties)
 // Set property: API_KEY = your_secret_key
 const API_KEY = PropertiesService.getScriptProperties().getProperty("API_KEY");
