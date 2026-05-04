@@ -129,6 +129,19 @@
                       <option :value="3">3 Threads</option>
                     </select>
                   </div>
+
+                  <!-- [v2.1] Viewer Engine Version Selection -->
+                  <div class="col-span-1 md:col-span-2 p-5 rounded-[24px] bg-blue-600/10 border border-blue-500/30 flex items-center justify-between">
+                    <div class="flex flex-col">
+                      <span class="text-[11px] font-black text-blue-500 uppercase tracking-tighter">Viewer Engine</span>
+                      <span class="text-[9px] text-theme-muted uppercase opacity-70">V1: Legacy / V2: Progress Tracking (BETA)</span>
+                    </div>
+                    <select v-model.number="viewerDefaults.viewerVersion" class="bg-black/60 border border-white/10 rounded-xl px-4 py-2 text-[10px] font-black text-blue-500 outline-none focus:border-blue-500/50 transition-all uppercase italic tracking-widest">
+                      <option :value="1">V1 Standard</option>
+                      <option :value="2">V2 Progress</option>
+                    </select>
+                  </div>
+
                 </div>
               </div>
 

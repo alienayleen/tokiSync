@@ -14,6 +14,12 @@ All notable changes to this project will be documented in this file.
     - Drive V3 변경 후 발생하는 Blob 타입 캐스팅 오류(`getDataAsString is not a function` 등) 현상을 선제적으로 방어하기 위해, **UrlFetchApp 기반의 명시적 REST API 호출**을 결합(Hybrid)하여 가장 최신의 파일 내용과 바이트 스트림을 고속으로 다운로드하도록 안정성을 극대화했습니다.
 - **데이터 흐름 정합성 및 인덱스 최적화**:
     - `SyncService`, `View_LibraryService` 등 전 구간의 인덱스 검색, 객체 반환(`id` 통일) 인터페이스를 정밀히 리팩터링하여 향후 업데이트(i18n, 설정 동기화 등) 확장에 유리한 확고한 설계 기반을 다졌습니다.
+- **뷰어 V1/V2 정합성 복구 및 페이지 모드 최적화**:
+    - **하위 호환성 완벽 복구 (V1 Recovery)**: 데이터 파이프라인(`useFetcher.js`)의 필드명을 `content`로 원복하여, 최신 업데이트 후 빈 화면이 나오던 V1 소설 뷰어를 즉시 정상화했습니다.
+    - **V1-Logic 기반 정밀 페이지 엔진 (Option A)**: V2 `TextRenderer`에 V1의 검증된 페이지 알고리즘을 이식했습니다.
+        - **자가 페이지 제어**: 컴포넌트가 직접 `clientWidth`를 측정해 컬럼 폭을 `px`로 고정하여 서브픽셀 오차를 차단합니다.
+        - **단위 정밀도**: 기존의 불안정한 `vw` 이동을 폐기하고, 자기 자신을 기준으로 한 `%` 단위(`translateX(-N * 100%)`)를 사용하여 모든 환경에서 1px의 어긋남 없는 정확한 페이지 넘김을 구현했습니다.
+    - **메모리 최적화**: HTML 원본을 중복 저장하지 않고 `content` 필드 하나로 V1(HTML)과 V2(파싱 단락)가 공존하도록 설계하여 대용량 EPUB 로드 시의 안정성을 높였습니다.
 
 ## [v1.7.6] - 2026-04-16
 
@@ -115,7 +121,7 @@ All notable changes to this project will be documented in this file.
 
 - **자체 논리 감사(Self-Audit) 의무화**: 모든 코드 수정 전후로 논리적 결함, 아키텍처 정합성, 에지 케이스를 자가 진단하도록 `AI_AGENT_CONTEXT.md` 및 `.geminirules`에 프로토콜을 명시했습니다.
 - **실시간 기록 원칙 (Immediate Record)**: 정보 누락을 방지하기 위해 모든 기술적 변경 사항을 수정 즉시 `CHANGELOG.md`에 반영하는 규칙을 도입했습니다.
-- **검증 보고(Reporting) 강화**: 작업 완료 후 `walkthrough.md` 등을 통해 검증 내용과 예상 결과를 사용자에게 명확히 보고하도록 프로세스를 표준화했습니다.
+- **검증 보고(Reporting) 강화**: 작업 완료 후 `documentation/reports/walkthrough.md` 등을 통해 검증 내용과 예상 결과를 사용자에게 명확히 보고하도록 프로세스를 표준화했습니다.
 
 ### ✨ Smart Skip 엔진 고도화 및 강제 재다운로드 UI
 

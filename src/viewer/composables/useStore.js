@@ -1,5 +1,7 @@
 import { ref, reactive, computed, watch, toRaw } from 'vue';
 import { db } from './db.js';
+import { useProgressMarker } from './useProgressMarker.js';
+
 import { useBridge } from './useBridge.js';
 import { useGAS } from './useGAS.js';
 import { useFetcher } from './useFetcher.js';
@@ -46,8 +48,19 @@ const viewerDefaults = reactive({
   autoCrop: false,      
   virtualScroll: true,
   preloadNext: true,
-  downloadThreads: 2 // [v1.7.4] Default parallelism
+  downloadThreads: 2, // [v1.7.4] Default parallelism
+  viewerVersion: 1 // [v2.1] 1: Legacy, 2: Progress Locator System
 });
+
+// [v2.1] Progress Marker Engine Initialization
+const { 
+  logicalIndex, 
+  isRestoring,
+  updateLocator, 
+  saveToDB: saveMarkerToDB, 
+  restore: restoreMarker 
+} = useProgressMarker();
+
 
 // [v1.7.0] [오류 2 수정] viewerDefaults 영속화
 (function loadViewerDefaults() {
@@ -105,7 +118,7 @@ const isPreloadTriggered = ref(false); // [v1.7.5-fix] 프리로드 제어용
 const episodes = ref([]);
 
 // Viewer content (populated by useFetcher after unzip)
-const viewerContent = ref(null); // { type: 'images', images: [] } or { type: 'text', content: '' }
+const viewerContent = ref(null); // { type: 'images', images: [] } or { type: 'text', content: '', paragraphs: [] }
 
 // --- Thumbnail Helpers ---
 const NO_IMAGE_SVG = "data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22100%22%20height%3D%22100%22%20viewBox%3D%220%200%20100%20100%22%3E%3Crect%20width%3D%22100%22%20height%3D%22100%22%20fill%3D%22%23333%22%2F%3E%3Ctext%20x%3D%2250%22%20y%3D%2250%22%20font-family%3D%22Arial%22%20font-size%3D%2212%22%20fill%3D%22%23666%22%20text-anchor%3D%22middle%22%20dy%3D%22.3em%22%3ENo%20Image%3C%2Ftext%3E%3C%2Fsvg%3E";
@@ -506,6 +519,30 @@ const openSeries = async (item, bypassCache = false) => {
       (books || []).map(b => ({ ...b, seriesId: item.id, cachedAt: now }))
     );
     episodes.value = (books || []).map(attachMeta);
+
+    // [v1.8.1] History Garbage Collection (유령 히스토리 청소)
+    try {
+      const validEpisodeIds = new Set((books || []).map(b => b.id));
+      const ghostHistories = localHistory.filter(h => !validEpisodeIds.has(h.episodeId));
+      
+      if (ghostHistories.length > 0 && validEpisodeIds.size > 0) { // 방어 로직: 정상적인 에피소드가 1개 이상일 때만 청소 수행
+        const ghostIds = ghostHistories.map(h => h.episodeId);
+        await db.readHistory.bulkDelete(ghostIds);
+        console.log(`🧹 [History:GC] 유령 에피소드 ${ghostIds.length}개 청소 완료 (로컬)`);
+        
+        // 원격 동기화 파일에서도 유령 데이터 제거
+        const remote = await getReadHistory().catch(() => []);
+        if (Array.isArray(remote)) {
+          const cleanedRemote = remote.filter(r => r.seriesId !== item.id || validEpisodeIds.has(r.episodeId));
+          const local = await db.readHistory.toArray();
+          const merged = mergeHistory(local, cleanedRemote);
+          await db.readHistory.bulkPut(merged);
+          saveReadHistory(merged).catch(e => console.warn('[History:GC] 원격 저장 실패', e));
+        }
+      }
+    } catch (gcErr) {
+      console.warn('[History:GC] 청소 중 오류 발생:', gcErr);
+    }
   } catch (e) {
     console.error('Episode Fetch Error:', e);
     // GAS 실패 시 만료 캐시 사용
@@ -561,12 +598,20 @@ const startReading = async (ep) => {
 
   // 열람 이력 기록 (Dexie)
   try {
-    await db.readHistory.put({
-      episodeId: ep.id,
-      seriesId: ep.seriesId || selectedItem.value?.id || '',
-      lastReadAt: new Date().toISOString(),
-      progress: 0,
-    });
+    const existingHistory = await db.readHistory.get(ep.id);
+    if (existingHistory) {
+      // Preserve markerIndex and progress, just update timestamp
+      await db.readHistory.update(ep.id, {
+        lastReadAt: new Date().toISOString()
+      });
+    } else {
+      await db.readHistory.put({
+        episodeId: ep.id,
+        seriesId: ep.seriesId || selectedItem.value?.id || '',
+        lastReadAt: new Date().toISOString(),
+        progress: 0,
+      });
+    }
     // 에피소드 목록에서 isRead 즉시 반영
     const target = episodes.value.find(e => e.id === ep.id);
     if (target) target.isRead = true;
@@ -586,15 +631,40 @@ const startReading = async (ep) => {
     if (!result) return; // Cancelled
     viewerContent.value = result;
 
-    // If text EPUB, switch to appropriate mode
-    if (result.type === 'text') {
-      viewerData.mode = novelSettings.lastMode;
+    // [v2.2] Novel Text Preparation (Sanitized Array)
+    if (result.type === 'text' && typeof result.content === 'string') {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(result.content, 'text/html');
+      
+      // Extract block-level elements
+      const rawBlocks = Array.from(doc.querySelectorAll('p, div, li, h1, h2, h3, h4, h5, h6'));
+      
+      // Filter out containers that have nested blocks to avoid duplicated text
+      // (e.g., if we have <div><p>Text</p></div>, we only want the <p>)
+      const leafBlocks = rawBlocks.filter(b => !b.querySelector('p, div, li'));
+      
+      if (leafBlocks.length > 0) {
+        result.paragraphs = leafBlocks
+          .map(el => el.textContent.trim())
+          .filter(p => p.length > 0);
+      } else {
+        // Fallback for plain text or very simple HTML
+        result.paragraphs = result.content
+          .split(/\r?\n/)
+          .map(p => p.trim())
+          .filter(p => p.length > 0);
+      }
+      
+      console.log(`[V2:Parser] Parsed ${result.paragraphs.length} paragraphs (Leaf-block mode)`);
     }
 
     // Build page slots for spread mode
     if (result.type === 'images') {
       buildPageSlots();
     }
+
+    // [v2.9-fix] Restore is now handled exclusively by ReaderViewV2's onRendererReady
+    // to ensure layout is ready and prevent race conditions.
 
     // [v1.7.5-fix] 즉시 프리로드 제거 (사용자가 50% 읽었을 때로 지연)
     isPreloadTriggered.value = false;
@@ -667,9 +737,26 @@ const onScrollUpdate = () => {
   const pct = Math.min(scrollTop / maxScroll, 1);
   scrollProgress.value = Math.round(pct * 100);
 
-  isScrollSyncing.value = true;
-  const total = totalPages.value;
-  currentPage.value = Math.max(1, Math.min(total, Math.round(pct * (total - 1)) + 1));
+  // [v2.1] V2 Progress Bridge
+  if (viewerDefaults.viewerVersion === 2) {
+    // Find locator element near the top (80px offset)
+    const elements = document.querySelectorAll('[data-locator]');
+    let closestIndex = 0;
+    for (const el of elements) {
+      if (el.offsetTop >= scrollTop + 70) { // 70-80px range
+        closestIndex = parseInt(el.getAttribute('data-locator'), 10);
+        break;
+      }
+    }
+    updateLocator(closestIndex);
+    saveMarkerToDB(currentEpisode.value?.id);
+    // V2에서는 기존 % 기록 로직은 건너뜀
+  } else {
+    isScrollSyncing.value = true;
+    const total = totalPages.value;
+    currentPage.value = Math.max(1, Math.min(total, Math.round(pct * (total - 1)) + 1));
+  }
+
   
   // [v1.7.5-fix] 스마트 프리로드: 50% 이상 읽었을 때 딱 한 번만 다음 화 가져오기
   if (pct >= 0.5 && !isPreloadTriggered.value && viewerDefaults.preloadNext && hasNextEpisode.value) {
@@ -794,6 +881,35 @@ watch(
   }
 );
 
+// [v2.7] Page Mode Progress Bridge
+// Whenever slot, novel page, or single page changes, update the locator
+watch([currentSlotIndex, novelCurrentPage, currentPage], () => {
+  if (viewerDefaults.viewerVersion !== 2) return;
+  if (viewerData.mode === 'scroll') return;
+  if (isRestoring.value) return; // [v2.9-fix] 복구 중에는 UI 초기값에 의한 덮어쓰기 방지
+
+  // For images
+  if (viewerContent.value?.type === 'images') {
+    if (viewerDefaults.spread && pageSlots.value[currentSlotIndex.value]) {
+      const firstImgInSlot = pageSlots.value[currentSlotIndex.value].pages[0];
+      updateLocator(firstImgInSlot);
+    } else if (!viewerDefaults.spread) {
+      updateLocator(currentPage.value - 1);
+    }
+  } 
+  // For novel text, precise paragraph mapping based on current page
+  else if (viewerContent.value?.type === 'text') {
+    const totalParas = viewerContent.value.paragraphs?.length || 0;
+    const totalPages = novelPageCount.value || 1;
+    if (totalParas > 0 && totalPages > 0) {
+      const approxPara = Math.floor((novelCurrentPage.value / totalPages) * totalParas);
+      updateLocator(approxPara);
+    }
+  }
+  
+  saveMarkerToDB(currentEpisode.value?.id);
+});
+
 // Sync slider → slot index (when user drags slider in spread mode)
 watch(currentPage, (newPage) => {
   if (viewerDefaults.spread && pageSlots.value.length > 0 && viewerContent.value?.type === 'images') {
@@ -857,7 +973,7 @@ export function useStore() {
     openSeries, refreshEpisodes, startReading, exitViewer, goBackToLibrary,
     goToNextEpisode, goToPrevEpisode,
     toggleViewerUI, setViewerMode,
-    handleWheel, handleNext, handlePrev, onScrollUpdate,
+    handleWheel, handleNext, handlePrev, next, prev, onScrollUpdate,
     deleteItem, reloadApp, cancelViewerDownload,
   };
 }

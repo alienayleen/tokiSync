@@ -77,11 +77,8 @@ function isConfigured() {
 function getBaseUrl() {
   if (!gasConfig.gasId) return '';
   
-  // [v1.7.5] 로컬 개발(DEV) 환경일 때만 Vite 프록시 경로 사용 (CORS 에러 방지)
-  if (import.meta.env.DEV) {
-    return `/api/gas/macros/s/${gasConfig.gasId}/exec`;
-  }
-
+  // Proxy routing removed due to HTTP 500 errors with Google's 302 redirects.
+  // Google Apps Script natively supports CORS for POST requests with Content-Type: text/plain.
   return `https://script.google.com/macros/s/${gasConfig.gasId}/exec`;
 }
 
@@ -168,13 +165,23 @@ async function getLibrary(options = {}) {
         continue;
       } else {
         // Completed or unknown
+        // 중복 제거 방어 코드 (백엔드 페이지네이션 버그로 쌓인 중복 데이터 정리)
+        const uniqueSeries = [];
+        const seenIds = new Set();
+        for (const s of allSeries) {
+          if (!seenIds.has(s.id)) {
+            seenIds.add(s.id);
+            uniqueSeries.push(s);
+          }
+        }
+
         if (step > 1) {
           // Background save index
-          request('view_save_index', { seriesList: allSeries })
+          request('view_save_index', { seriesList: uniqueSeries })
             .then((r) => console.log('📝 Index saved:', r))
             .catch((e) => console.warn('❌ Index save failed:', e));
         }
-        break;
+        return uniqueSeries;
       }
     } else {
       console.warn('[GAS] Unknown API Response:', response);

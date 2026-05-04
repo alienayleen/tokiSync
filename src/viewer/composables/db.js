@@ -35,3 +35,13 @@ db.version(6).stores({
   imageMeta: '[seriesId+episodeId+index], bounds',
   episodeData: 'fileId, seriesId, cachedAt'
 });
+
+db.version(7).stores({
+  library: '++id, title, type, fileId, progress',
+  readHistory: 'episodeId, seriesId, lastReadAt, markerType, markerIndex',
+  libraryCache: 'id',
+  episodeCache: '[seriesId+id], seriesId, id, cachedAt', 
+  imageMeta: '[seriesId+episodeId+index], bounds',
+  episodeData: 'fileId, seriesId, cachedAt'
+});
+

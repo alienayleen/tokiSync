@@ -16,8 +16,10 @@
         </div>
         <button @click="refreshLibrary(true)" :disabled="isSyncing"
                 class="w-14 h-14 flex-shrink-0 flex items-center justify-center bg-theme-surface hover:bg-theme-surface-hover rounded-2xl transition-all text-theme-muted hover:text-theme-text"
-                :class="{ 'animate-spin': isSyncing }" title="새로고침">
-          ↻
+                title="새로고침">
+          <svg class="w-6 h-6" :class="{ 'animate-spin': isSyncing }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
         </button>
       </div>
     </div>

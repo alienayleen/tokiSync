@@ -60,6 +60,22 @@
 #   정보 누락을 방지한다.
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 📂 SECTION 2.1: DOCUMENTATION DIRECTORY STRUCTURE
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 모든 마크다운 문서(비핵심 SSOT 제외)는 `documentation/` 폴더 내에 저장한다.
+
+# ▸ 분류 규칙:
+#   1. `documentation/guides/` : 설치, 사용법, 배포 체크리스트 등 가이드 성격.
+#   2. `documentation/reports/` : 릴리즈 분석, 리팩토링 보고서, walkthrough.md 등.
+#   3. `documentation/archive/` : 과거 업데이트 이력, 참고용 참조 문서 등.
+
+# ▸ 루트 유지 예외 (Root SSOT Docs):
+#   - README.md, CHANGELOG.md, AI_AGENT_CONTEXT.md, PROJECT_HANDOVER_MASTER.md
+
+# ▸ 문서 생성 시 주의사항:
+#   - 새로운 문서를 생성할 때는 위 카테고리에 맞춰 위치시키고, README.md의 '문서 지도'를 업데이트할 것.
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🔒 SECTION 3: EDITORIAL RULES
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # NO SHADOW ECHOING: 실제 실행 없이 echo "doing..."만 출력하는 행위 금지.

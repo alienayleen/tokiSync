@@ -113,7 +113,7 @@ AI Agents MUST apply or be prompted with the appropriate expert skills correspon
   - Identify potential edge cases (e.g., empty Drive folders, timeout scenarios).
   - Ensure cross-browser and mobile compatibility of UI changes.
 - **Verification Reporting**: The agent must report the outcome of its self-audit.
-  - Include a summary of "What was verified" and "Potential risks" in the `walkthrough.md` or final summary.
+  - Include a summary of "What was verified" and "Potential risks" in the `documentation/reports/walkthrough.md` or final summary.
 - **Atomic Changelog Protocol**: All technical changes MUST be recorded in `CHANGELOG.md` immediately upon completion of the sub-task, ensuring no history is lost.
 
 ---
