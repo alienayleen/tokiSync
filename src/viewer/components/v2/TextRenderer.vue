@@ -90,7 +90,7 @@ watch(() => [props.paragraphs, props.mode, props.settings.fontSize, props.settin
 <style scoped>
 .v2-text-renderer {
   width: 100%;
-  max-width: 768px;
+  max-width: 720px; /* 일반적인 소설책 가로폭 기준 */
   margin: 0 auto;
   transition: transform 0.3s cubic-bezier(0.2, 0, 0, 1);
   will-change: transform;
@@ -118,7 +118,8 @@ watch(() => [props.paragraphs, props.mode, props.settings.fontSize, props.settin
 
 /* Move horizontal padding to segments to avoid column width offset */
 .v2-text-renderer.page .v2-segment {
-  padding: 0 10vw; /* Comfortable reading padding */
+  /* 최대 720px의 텍스트 영역을 보장하면서, 화면이 좁을 때는 최소 20px의 패딩을 유지 */
+  padding: 0 calc(max(20px, 50vw - 360px));
   margin-bottom: 2.5rem;
   box-sizing: border-box;
 }

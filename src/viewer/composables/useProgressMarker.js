@@ -34,7 +34,18 @@ const TextStrategy = {
     return el ? el.offsetTop : null;
   },
   getPageFromLocator(index, store) {
-    // [v2.8] Calculate page index for novel text
+    // [v2.9] DOM 기반의 정확한 페이지 계산 (문단을 직접 찾아서 확인)
+    const el = document.querySelector(`[data-locator="${index}"]`);
+    if (el) {
+      const container = el.closest('.v2-text-renderer');
+      if (container && container.clientWidth > 0) {
+        const pageIndex = Math.floor(el.offsetLeft / container.clientWidth);
+        console.log(`[V2:Locator] DOM Offset Recalc: index=${index}, offsetLeft=${el.offsetLeft}, clientWidth=${container.clientWidth} -> Page ${pageIndex + 1}`);
+        return pageIndex;
+      }
+    }
+
+    // DOM 요소를 찾지 못한 경우에만 Heuristic으로 Fallback
     const content = store.viewerContent?.value || store.viewerContent;
     if (!content?.paragraphs) return -1;
     const totalParas = content.paragraphs.length;
@@ -44,7 +55,9 @@ const TextStrategy = {
     
     // Heuristic: paragraph index / total paragraphs * total pages
     const ratio = index / totalParas;
-    return Math.max(0, Math.min(totalPages - 1, Math.floor(ratio * totalPages)));
+    const fallbackIdx = Math.max(0, Math.min(totalPages - 1, Math.floor(ratio * totalPages)));
+    console.log(`[V2:Locator] Fallback Heuristic: idx=${index}, ratio=${ratio.toFixed(2)} -> Page ${fallbackIdx + 1}`);
+    return fallbackIdx;
   }
 };
 

@@ -899,11 +899,32 @@ watch([currentSlotIndex, novelCurrentPage, currentPage], () => {
   } 
   // For novel text, precise paragraph mapping based on current page
   else if (viewerContent.value?.type === 'text') {
-    const totalParas = viewerContent.value.paragraphs?.length || 0;
-    const totalPages = novelPageCount.value || 1;
-    if (totalParas > 0 && totalPages > 0) {
-      const approxPara = Math.floor((novelCurrentPage.value / totalPages) * totalParas);
-      updateLocator(approxPara);
+    // [v2.9] DOM 기반 정확한 저장 로직: 현재 화면(Column)에 들어와 있는 첫 번째 문단 찾기
+    const container = document.querySelector('.v2-text-renderer.page');
+    let foundIndex = -1;
+    
+    if (container && container.clientWidth > 0) {
+      const targetOffsetLeft = novelCurrentPage.value * container.clientWidth;
+      const elements = container.querySelectorAll('[data-locator]');
+      for (const el of elements) {
+        // 요소의 가로 위치가 현재 페이지의 시작점보다 크거나 같으면, 그 요소가 페이지의 첫 요소임
+        if (el.offsetLeft >= targetOffsetLeft) {
+          foundIndex = parseInt(el.getAttribute('data-locator'), 10);
+          break;
+        }
+      }
+    }
+    
+    if (foundIndex !== -1) {
+      updateLocator(foundIndex);
+    } else {
+      // DOM을 못 찾은 경우 Fallback (Heuristic)
+      const totalParas = viewerContent.value.paragraphs?.length || 0;
+      const totalPages = novelPageCount.value || 1;
+      if (totalParas > 0 && totalPages > 0) {
+        const approxPara = Math.floor((novelCurrentPage.value / totalPages) * totalParas);
+        updateLocator(approxPara);
+      }
     }
   }
   

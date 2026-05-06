@@ -136,6 +136,37 @@
           <button @click="setViewerMode(viewerData.mode === 'scroll' ? 'page' : 'scroll')" :class="viewerData.mode === 'scroll' ? 'text-blue-500' : ''">Scroll</button>
           <span class="text-blue-500">{{ viewerData.mode === 'scroll' ? scrollProgress + '%' : currentPage + ' / ' + totalPages }}</span>
         </div>
+
+        <!-- Novel Settings Row -->
+        <div v-if="isNovelMode" class="flex flex-col space-y-4 pt-4 border-t border-white/10 mt-4">
+          <!-- Row 1: 테마 색상 + 폰트 크기 -->
+          <div class="flex items-center justify-between text-white">
+            <div class="flex space-x-3">
+              <button class="w-8 h-8 rounded-full border-2 transition-all bg-white border-zinc-200" :class="{ 'ring-2 ring-blue-500 border-transparent': novelSettings.theme === 'light' }" @click.stop="setNovelTheme('light')" title="Light"></button>
+              <button class="w-8 h-8 rounded-full border-2 transition-all bg-[#f4ecd8] border-[#d4c5b0]" :class="{ 'ring-2 ring-blue-500 border-transparent': novelSettings.theme === 'sepia' }" @click.stop="setNovelTheme('sepia')" title="Sepia"></button>
+              <button class="w-8 h-8 rounded-full border-2 transition-all bg-black border-zinc-700"  :class="{ 'ring-2 ring-blue-500 border-transparent': novelSettings.theme === 'dark' }"  @click.stop="setNovelTheme('dark')"  title="Dark"></button>
+            </div>
+            <div class="flex items-center space-x-4 bg-white/5 rounded-2xl px-4 py-1 border border-white/5">
+              <button class="text-lg font-bold text-zinc-400 hover:text-white transition-colors px-2" @click.stop="adjustFontSize(-2)">A-</button>
+              <span class="text-sm font-black w-6 text-center text-blue-400">{{ novelSettings.fontSize }}</span>
+              <button class="text-lg font-bold text-zinc-400 hover:text-white transition-colors px-2" @click.stop="adjustFontSize(2)">A+</button>
+            </div>
+          </div>
+          <!-- Row 2: 줄 간격 + 2쪽보기 -->
+          <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-4 flex-grow mr-6">
+              <span class="text-[10px] font-black uppercase tracking-widest text-zinc-500">줄 간격</span>
+              <input type="range" min="1.4" max="3.0" step="0.1" :value="novelSettings.lineHeight"
+                     @input="setLineHeight(parseFloat($event.target.value))"
+                     class="flex-grow accent-blue-500 h-1 rounded-full bg-zinc-800 appearance-none cursor-pointer">
+            </div>
+            <button class="p-2 rounded-xl transition-all border"
+                    :class="novelSettings.spread ? 'bg-blue-500/20 border-blue-500/50 text-blue-400' : 'bg-white/5 border-transparent text-zinc-500 hover:text-white hover:bg-white/10'" 
+                    @click.stop="toggleNovelSpread" title="두 페이지 보기">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+            </button>
+          </div>
+        </div>
       </div>
     </transition>
     <!-- Episode List Modal Integration -->
@@ -170,8 +201,11 @@ const {
   novelCurrentPage, novelPageCount,
   exitViewer, goToNextEpisode, goToPrevEpisode,
   setViewerMode, handleWheel, handleNext, handlePrev, onScrollUpdate,
-  cleanupBlobUrls
+  cleanupBlobUrls,
+  setNovelTheme, adjustFontSize, setLineHeight, toggleNovelSpread
 } = store;
+
+const { restore, heuristicJump, isRestoring, logicalIndex, getStrategy } = useProgressMarker();
 
 /**
  * [v2.9] Novel Paginate: Receive calculated page count from renderer
@@ -179,9 +213,20 @@ const {
 function onNovelPaginate(count) {
   console.log(`[V2:Viewer] Received Novel Page Count: ${count}`);
   novelPageCount.value = count;
+  
+  // 폰트 크기/줄 간격 변경 후에도 현재 읽던 문단(logicalIndex)을 화면에 유지하기 위해 페이지 보정
+  if (isNovelMode.value && viewerData.mode !== 'scroll') {
+    const strategy = getStrategy('text');
+    if (strategy) {
+      const targetPageIdx = strategy.getPageFromLocator(logicalIndex.value, store);
+      if (targetPageIdx !== -1 && novelCurrentPage.value !== targetPageIdx) {
+        console.log(`[V2:Viewer] Resync progress for index ${logicalIndex.value} -> Page ${targetPageIdx + 1}`);
+        novelCurrentPage.value = targetPageIdx;
+        currentPage.value = targetPageIdx + 1;
+      }
+    }
+  }
 }
-
-const { restore, heuristicJump, isRestoring, logicalIndex } = useProgressMarker();
 const input = useViewerInput();
 const keyboard = useKeyboard();
 
