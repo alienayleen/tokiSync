@@ -1,4 +1,5 @@
 import { sleep, waitIframeLoad, saveFile, getCommonPrefix, scrollToLoad } from './utils.js';
+import { extractEpisodeData } from './extractor.js';
 import { ParserFactory } from './parsers/ParserFactory.js';
 import { detectSite } from './detector.js';
 import { EpubBuilder } from './epub.js';
@@ -8,6 +9,7 @@ import { getConfig } from './config.js';
 import { startSilentAudio, stopSilentAudio } from './anti_sleep.js';
 import { fetchHistory, refreshCacheAfterUpload, getBooksByCacheId, initUpdateUploadViaGASRelay, getMergeIndexFragment } from './gas.js';
 import { fetchHistoryDirect, checkSingleHistoryDirect } from './network.js';
+import { fetchNovelText } from './novel-decryptor.js';
 
 // Sleep Policy Presets
 const SLEEP_POLICIES = {
@@ -17,60 +19,114 @@ const SLEEP_POLICIES = {
 };
 
 // Processing Loop에 해당되는 로직을 분리 한다.
-export async function processItem(item, builder, siteInfo, iframe, parser, seriesTitle = "") {
-    const { site } = siteInfo;
-    const isNovel = (site === "북토끼");
+export async function processItem(item, builder, siteInfo, iframe, parser, seriesTitle = "", targetDoc = null) {
+    const { category } = siteInfo;
+    const isNovel = (category === 'Novel' || category === 'novel');
+    const viewerCfg = parser.rule.viewer || {};
+    const fetchMethod = viewerCfg.fetchMethod || (isNovel ? 'xhr' : 'iframe');
 
-    await waitIframeLoad(iframe, item.src);
-    
     // Apply Dynamic Sleep based on Policy
     const config = getConfig();
     const policy = SLEEP_POLICIES[config.sleepMode] || SLEEP_POLICIES.agile;
-    await sleep(policy.min, policy.max);
+
+    let iframeDoc = targetDoc;
+    let isStaticDoc = false;
+
+    // [전략 B] fetchMethod === 'api'는 targetDoc 여부와 무관하게 항상 API 경로 우선
+    if (fetchMethod === 'api') {
+        const logger = LogBox.getInstance();
+        logger.log(`[API] 직접 복호화 시도 중: ${item.title}`, 'Downloader');
+
+        const text = await fetchNovelText(item.src, viewerCfg.decryptApi || {});
+
+        if (text) {
+            builder.addChapter(item.title, text);
+            logger.log(`✅ 복호화 성공: ${item.title}`, 'Downloader');
+        } else {
+            logger.error(`⚠️ 복호화 실패 (스킵): ${item.title}`, 'Downloader');
+        }
+        return; // DOM 파이프라인 완전 우회
+    }
+
+    if (!iframeDoc) {
+        if (fetchMethod === 'xhr') {
+            const logger = LogBox.getInstance();
+            logger.log(`[XHR] 문서 파싱 중...`, 'Downloader');
+            
+            const responseText = await new Promise((resolve, reject) => {
+                if (typeof GM_xmlhttpRequest === 'undefined') {
+                    reject(new Error("GM_xmlhttpRequest 권한이 없습니다. iframe 폴백을 설정해주세요."));
+                    return;
+                }
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: item.src,
+                    headers: { "Referer": window.location.origin },
+                    onload: (res) => resolve(res.responseText),
+                    onerror: (err) => reject(new Error("네트워크 오류: " + (err.statusText || 'Unknown')))
+                });
+            });
+
+            const parserObj = new DOMParser();
+            iframeDoc = parserObj.parseFromString(responseText, "text/html");
+            isStaticDoc = true;
+
+            await sleep(policy.min, policy.max);
+        } else {
+            await waitIframeLoad(iframe, item.src, viewerCfg);
+            await sleep(policy.min, policy.max);
+            
+            try {
+                const win = iframe.contentWindow;
+                if (!win) throw new Error("NoWindow");
+                iframeDoc = win.document;
+                const title = iframeDoc.title; // CORS/Access Check
+                
+                // [v1.8.1] 만약 내용이 아예 없거나 보안 차단 문구가 보인다면 에러 발생시켜 XHR로 유도
+                if (!title || title.includes('403') || title.includes('Cloudflare')) {
+                    if (iframeDoc.body.innerHTML.length < 100) {
+                        throw new Error("IframeBlockedOrEmpty");
+                    }
+                }
+            } catch (e) {
+                console.warn('[Downloader] iframe 접근 차단 감지(CORS). XHR 방식으로 즉시 폴백합니다.', e);
+                const responseText = await new Promise((resolve, reject) => {
+                    GM_xmlhttpRequest({
+                        method: 'GET',
+                        url: item.src,
+                        headers: { "Referer": window.location.origin },
+                        onload: (res) => resolve(res.responseText),
+                        onerror: (err) => reject(new Error("XHR 폴백 실패: " + (err.statusText || 'Unknown')))
+                    });
+                });
+                const parserObj = new DOMParser();
+                iframeDoc = parserObj.parseFromString(responseText, "text/html");
+                isStaticDoc = true;
+            }
+        }
+    }
+
+    // --- [v1.8.2] 1단계: 모듈화된 파이프라인(Extractor) 호출 ---
+    const extractedData = await extractEpisodeData(iframeDoc, parser, siteInfo, isStaticDoc, item.src);
     
-    const iframeDoc = iframe.contentWindow.document;
+    // 메타데이터가 뷰어에서 추출되었다면 활용 (단건 다운로드 등)
+    const finalTitle = extractedData.episodeTitle && extractedData.episodeTitle !== "UnknownEpisode" 
+                       ? extractedData.episodeTitle 
+                       : item.title;
 
     if (isNovel) {
-        const text = parser.getNovelContent(iframeDoc);        // Add chapter to existing builder instance
-        builder.addChapter(item.title, text);
+        if (!extractedData.content) {
+            LogBox.getInstance().error(`⚠️ 텍스트 추출 실패: ${finalTitle}`, 'Downloader');
+            return;
+        }
+        builder.addChapter(finalTitle, extractedData.content);
     } 
     else {
-        // Webtoon / Manga (v1.7.1 Hybrid Collection)
         const logger = LogBox.getInstance();
-        
-        // 1. 스크롤 전 URL 선점 수집 (프로토타입 방식의 장점: data-original 등에 숨은 진짜 URL 확보)
-        const initialUrls = parser.getImageList(iframeDoc);
-        
-        // 2. 강제 스크롤을 통해 레이지 로딩 이미지 활성화
-        await scrollToLoad(iframeDoc);
-
-        // 3. 스크롤 후 최종 URL 수집
-        let finalUrls = parser.getImageList(iframeDoc);
-        
-        // 4. 하이브리드 병합: 스크롤 전후 URL 중 더 신뢰도 높은 것을 선택
-        // 만약 finalUrls가 placeholder(isDummy: true)라면 initialUrls를 사용
-        const mergedUrls = finalUrls.map((final, idx) => {
-            const initial = initialUrls[idx];
-            if (final.isDummy && initial && !initial.isDummy) {
-                console.log(`[Hybrid] Placeholder 우회: ${final.url.split('/').pop()} -> ${initial.url.split('/').pop()}`);
-                return initial.url;
-            }
-            return final.url;
-        }).filter(url => url !== ""); // 최종적으로 유효한 URL만 추출
-
-        logger.log(`이미지 ${mergedUrls.length}개 감지`, 'Parser');
-
-        // [Fix] 시나리오 C: 0개 감지 시 1.5초 추가 대기 후 재파싱 1회
-        if (mergedUrls.length === 0) {
-            logger.warn('[Parser] 이미지 0개 — 1.5초 후 재파싱 시도', 'Parser');
-            await sleep(1500);
-            const retryUrls = parser.getImageList(iframeDoc);
-            if (retryUrls.length > 0) mergedUrls.push(...retryUrls);
-            logger.log(`[Parser] 재파싱 결과: ${mergedUrls.length}개`, 'Parser');
-        }
+        const mergedUrls = extractedData.urls;
 
         if (mergedUrls.length === 0) {
-            logger.error(`⚠️ 이미지 감지 실패: ${item.title} — 해당 챕터 건너점`, 'Parser');
+            logger.error(`⚠️ 이미지 감지 실패: ${finalTitle} — 해당 챕터 건너뜀`, 'Parser');
             return;
         }
 
@@ -138,22 +194,23 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
         logger.log('[Anti-Sleep] 자동 시작 실패 (사용자 상호작용 필요)', 'error');
     }
 
-    const siteInfo = detectSite();
+    const siteInfo = await detectSite();
     if (!siteInfo) {
         alert("지원하지 않는 사이트이거나 다운로드 페이지가 아닙니다.");
         stopSilentAudio();
         return;
     }
 
-    const parser = ParserFactory.getParser();
+    const parser = await ParserFactory.getParser();
     if (!parser) {
         alert("파서를 초기화할 수 없습니다.");
         stopSilentAudio();
         return;
     }
 
-    const { site, category } = siteInfo;
-    const isNovel = (site === "북토끼");
+    const { category, matchedRule } = siteInfo;
+    const siteName = matchedRule?.name || "TokiSync Parser";
+    const isNovel = (category === 'Novel' || category === 'novel');
 
     try {
         // Prepare Strategy Variables
@@ -187,16 +244,25 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
             logger.log('⚠️ folderInCbz 정책이 폐기되어 zipOfCbzs(배치)로 전환되었습니다.', 'warn');
         }
 
+        const EXTENSION_MAP = {
+            'Novel': 'epub',
+            'novel': 'epub',
+            'Webtoon': 'cbz',
+            'webtoon': 'cbz',
+            'Manga': 'cbz',
+            'manga': 'cbz'
+        };
+
         if (buildingPolicy === 'zipOfCbzs') {
             masterZip = new JSZip(); // Master Container for current batch
-            extension = isNovel ? 'epub' : 'cbz';
+            extension = EXTENSION_MAP[category] ?? 'cbz';
         } else {
             // Individual / native / drive
-            extension = isNovel ? 'epub' : 'cbz';
+            extension = EXTENSION_MAP[category] ?? 'cbz';
         }
 
         // Get List
-        let list = parser.getListItems();
+        let list = await parser.getListItems();
 
         // [v2.0] 커스텀 범위 필터 ("1,2,4-10" 형식)
         const rangeSet = parseRangeSpec(rangeSpec);
@@ -493,7 +559,7 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
                     series: seriesTitle || rootFolder,
                     title: chapterTitle,
                     number: item.num,
-                    writer: site
+                    writer: siteName
                 });
                 const blob = await innerZip.generateAsync({ type: "blob" });
 
@@ -655,7 +721,7 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
                     const finalZip = await masterEpubBuilder.build({
                         series: seriesTitle || rootFolder,
                         title: seriesTitle || rootFolder,
-                        writer: site
+                        writer: siteName
                     });
                     const finalBlob = await finalZip.generateAsync({ type: "blob" });
                     

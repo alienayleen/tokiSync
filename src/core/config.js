@@ -6,6 +6,8 @@ export const CFG_API_KEY = "TOKI_API_KEY";
 export const CFG_SLEEP_MODE = "TOKI_SLEEP_MODE";
 export const CFG_SMART_SKIP_RATIO = "TOKI_SMART_SKIP_RATIO";
 export const CFG_NOVEL_MODE = "TOKI_NOVEL_MODE";
+export const CFG_REMOTE_RULE_URL = "TOKI_REMOTE_RULE_URL";
+export const CFG_CUSTOM_RULES = "TOKI_CUSTOM_RULES";
 
 /**
  * Get current configuration
@@ -39,7 +41,9 @@ export function getConfig() {
         apiKey: GM_getValue(CFG_API_KEY, ""),
         sleepMode: GM_getValue(CFG_SLEEP_MODE, "agile"), // default: agile
         smartSkipRatio: parseInt(GM_getValue(CFG_SMART_SKIP_RATIO, "50"), 10), // default 50% of Max
-        novelMode: GM_getValue(CFG_NOVEL_MODE, "perChapter") // default: chapter-by-chapter
+        novelMode: GM_getValue(CFG_NOVEL_MODE, "perChapter"), // default: chapter-by-chapter
+        remoteRuleUrl: GM_getValue(CFG_REMOTE_RULE_URL, ""),
+        customRules: GM_getValue(CFG_CUSTOM_RULES, "[]")
     };
 }
 
@@ -91,7 +95,7 @@ export function showConfigModal() {
             }
             .toki-input-group { margin-bottom: 16px; }
             .toki-label { display: block; font-size: 12px; color: #aaa; margin-bottom: 6px; }
-            .toki-input, .toki-select {
+            .toki-input, .toki-select, .toki-textarea {
                 width: 100%; padding: 10px;
                 background: rgba(0, 0, 0, 0.3);
                 border: 1px solid rgba(255, 255, 255, 0.1);
@@ -99,7 +103,13 @@ export function showConfigModal() {
                 color: #fff; font-size: 14px;
                 box-sizing: border-box;
             }
-            .toki-input:focus, .toki-select:focus {
+            .toki-textarea {
+                font-family: monospace;
+                font-size: 12px;
+                resize: vertical;
+                min-height: 100px;
+            }
+            .toki-input:focus, .toki-select:focus, .toki-textarea:focus {
                 outline: none; border-color: #6a5acd;
                 box-shadow: 0 0 0 2px rgba(106, 90, 205, 0.3);
             }
@@ -184,6 +194,18 @@ export function showConfigModal() {
                 </select>
             </div>
 
+            <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 20px 0;">
+
+            <div class="toki-input-group">
+                <label class="toki-label">원격 파싱 룰 URL (JSON)</label>
+                <input type="text" id="toki-cfg-remote-rule" class="toki-input" placeholder="https://example.com/rules.json" value="${config.remoteRuleUrl}">
+            </div>
+
+            <div class="toki-input-group">
+                <label class="toki-label">커스텀 파싱 룰 (JSON Array)</label>
+                <textarea id="toki-cfg-custom-rule" class="toki-textarea" placeholder="[{...}]">${config.customRules}</textarea>
+            </div>
+
             <div class="toki-modal-footer">
                 <button id="toki-btn-cancel" class="toki-btn toki-btn-cancel">취소</button>
                 <button id="toki-btn-save" class="toki-btn toki-btn-save">저장</button>
@@ -216,6 +238,31 @@ export function showConfigModal() {
         const newSleepMode = document.getElementById('toki-cfg-sleepmode').value;
         const newSmartSkip = document.getElementById('toki-cfg-smartskip').value;
         const newNovelMode = document.getElementById('toki-cfg-novel-mode').value;
+        const newRemoteRule = document.getElementById('toki-cfg-remote-rule').value.trim();
+        const newCustomRule = document.getElementById('toki-cfg-custom-rule').value.trim() || '[]';
+
+        // Validate Custom Rules JSON
+        let validCustomRule = '[]';
+        try {
+            let parsed = JSON.parse(newCustomRule);
+            
+            // [v1.8.1] 룰 구조 유연화: { rules: [...] } 형태의 전체 구조를 넣었을 경우 자동 처리
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                if (Array.isArray(parsed.rules)) {
+                    parsed = parsed.rules;
+                } else {
+                    throw new Error("커스텀 룰은 JSON 배열이거나, 'rules' 키를 포함한 객체여야 합니다.");
+                }
+            }
+
+            if (!Array.isArray(parsed)) {
+                throw new Error("커스텀 룰은 JSON 배열(Array) 형태여야 합니다.");
+            }
+            validCustomRule = JSON.stringify(parsed, null, 2);
+        } catch (e) {
+            alert(`커스텀 룰 JSON 파싱 오류:\n${e.message}\n설정을 저장할 수 없습니다.`);
+            return;
+        }
 
         // URL 입력 시 ID 추출 로직 병합 (사용자 편의성)
         let finalGasId = newGasId;
@@ -229,10 +276,13 @@ export function showConfigModal() {
         setConfig(CFG_SLEEP_MODE, newSleepMode);
         setConfig(CFG_SMART_SKIP_RATIO, newSmartSkip);
         setConfig(CFG_NOVEL_MODE, newNovelMode);
+        setConfig(CFG_REMOTE_RULE_URL, newRemoteRule);
+        setConfig(CFG_CUSTOM_RULES, validCustomRule);
 
         alert('설정이 저장되었습니다.');
         overlay.remove();
     };
+
 
     // Close on background click
     overlay.onclick = (e) => {
