@@ -2,6 +2,18 @@
 
 ## 📥 Client (Tampermonkey)
 
+### v1.8.0 (Official Release) - 2026.05.07
+
+> **🚀 v1.8.0 정식 릴리스:**
+> **엔진 범용화 및 소설 뷰어 완성**: 사이트별 하드코딩을 탈피한 JSON 기반 동적 파서(GenericParser) 아키텍처로 전면 개편되었습니다. 또한, 최신 보안이 적용된 소설 복호화 엔진과 V2 소설 전용 툴바 및 정밀 동기화 시스템이 탑재된 통합 안정화 버전입니다.
+
+- **[Core]** **GenericParser & RuleManager**: 사이트별 파싱 로직을 JSON 규칙으로 분리하여 새로운 사이트 대응 속도 극대화.
+- **[Core]** **Novel Decryptor Implementation**: API 기반의 소설 콘텐츠 복호화 파이프라인 구축 및 HMAC 인증 연동.
+- **[Viewer]** **V2 소설 전용 툴바**: 테마(Light/Sepia/Dark), 폰트 크기, 줄 간격 조절 및 2쪽 보기(Spread) 기능 추가.
+- **[Viewer]** **DOM 기반 정밀 위치 동기화**: 폰트 변경 등으로 레이아웃이 변해도 읽던 문단(Logical Index)을 정확히 추적하여 화면에 유지.
+- **[Doc]** 동적 규칙 작성을 위한 `DYNAMIC_RULE_GUIDE.md` 및 정식 릴리스 노트 추가.
+- **[Build]** Core/Viewer/GAS 통합 빌드 파이프라인 최적화 완료.
+
 ### v1.7.4 (Performance & Fail-safe) - 2026.04.14
 
 > **🚀 v1.7.4 업데이트 (Consolidated):**

@@ -9,38 +9,28 @@
 
 ## ✨ 주요 기능
 
-### 📥 수집기 (UserScript) - v1.7.4
+### 📥 수집기 (UserScript) - v1.8.0
 
 - **📱 통합 메뉴 모달**: `Ctrl+Shift+T` 또는 우측 하단 버튼으로 모든 기능을 한 곳에서 제어.
+- **⚙️ 동적 파서 시스템 (New)**: 하드코딩 대신 JSON 기반 동적 규칙을 사용하여 새로운 사이트에도 즉시 대응.
+- **🛡️ 콘텐츠 복호화 엔진 (New)**: 최신 보안 기술이 적용된 소설 콘텐츠를 API를 통해 완벽히 복호화 및 추출.
 - **🚀 Direct Drive Access**: GAS 서버의 병목 없이 **구글 드라이브 API로 직접 데이터를 전송**합니다.
-- **🛡️ 안티 스크래핑 보안 (New)**: 
+- **🛡️ 안티 스크래핑 보안**: 
   - **Dynamic LazyKey**: 랜덤하게 변하는 이미지 속성명을 실시간 탐지.
   - **Heuristic Container**: 미끼 광고 영역을 피하고 진짜 본문만 선별 추출.
-- **🛡️ 차단 방지 시스템**:
-  - **Anti-Sleep**: 백그라운드에서도 멈춤 없이 다운로드가 지속됩니다.
-  - **Captcha 감지**: Cloudflare/캡차 발생 시 자동으로 일시정지하고 알림을 보냅니다.
-- **⚡️ Zero-Config 뷰어 연동**: 로컬/웹 뷰어 접속 시 API Key 자동 주입.
-- **🔄 스마트 동기화**: 중복 없이 신규 회차만 다운로드.
-- **☁️ 구글 드라이브 직통 업로드**: PC 저장공간 최소화.
 
-### 📡 서버 (GAS API) - v1.6.0
+### 📡 서버 (GAS API) - v1.8.0
 
-- **📚 읽기 이력 동기화 (New)**: `read_history.json`을 통한 기기 간 열람 이력 공유.
-
-- **🔑 OAuth 토큰 발급 (New)**: 클라이언트의 Direct Access를 위한 권한 위임.
-- **🛡️ Fallback 시스템**: Direct Access 실패 시 기존 방식을 통한 안전한 중계 처리.
-- **🔒 API Key 보안**: 전체 API 인증 강제.
+- **📚 읽기 이력 동기화**: `read_history.json`을 통한 기기 간 열람 이력 공유.
+- **🔑 OAuth 토큰 발급**: 클라이언트의 Direct Access를 위한 권한 위임.
 - **📦 대용량 Resumable Upload**: 5GB+ 파일 지원.
 
-### 📊 뷰어 2.0 (Cinematic & Refined) - v1.7.5
+### 📊 뷰어 2.0 (Cinematic & Refined) - v1.8.0
 
-- **🎥 Cinematic Experience**: 글래스모피즘 UI와 몰입형 에피소드 상세 페이지 제공.
-- **🚀 Download Manager (Modal UI)**: 시청 중에도 진행 상황을 즉시 확인하고 제어할 수 있는 **슬라이드업 모달 전용 UI**를 새롭게 도입했습니다.
-- **🛡️ Network Isolation**: 뷰어 종료와 무관하게 백그라운드에서 끊김 없이 완료되는 독립적 다운로드 엔진 탑재.
-- **🚀 High-Performance Engine**: **Virtual Scroll** 및 **6분할 병렬 다운로드** 도입으로 대용량 이미지도 끊김 없이 로딩.
-- **✂️ Auto-Crop & Spread**: 지능형 여백 제거 및 2쪽 보기(Double Spread) 지원.
-- **📱 지능형 영구 캐시 (LRU)**: IndexedDB를 활용하여 데이터를 영구 저장하며, 최신 열람 순서에 따라 자동으로 공간을 관리하는 가비지 컬렉션(GC) 지원.
-- **⚡️ Zero-Waste Network**: 뷰어나 모달 종료 시 불필요한 네트워크 요청을 즉각 중단(Early Abort)하여 리소스 낭비 최소화.
+- **📖 소설 전용 설정 (New)**: 테마(Light/Sepia/Dark), 폰트 크기, 줄 간격, 2쪽 보기 등 최적화된 독서 환경 제공.
+- **🎯 정밀 위치 동기화 (New)**: DOM 기반 정밀 트래킹으로 설정 변경 후에도 읽던 문단을 정확히 유지.
+- **🚀 Download Manager (Modal UI)**: 시청 중에도 진행 상황을 즉시 확인하고 제어할 수 있는 슬라이드업 모달 전용 UI.
+- **⚡️ Zero-Waste Network**: 뷰어 종료 시 불필요한 네트워크 요청을 즉각 중단(Early Abort)하여 리소스 낭비 최소화.
 
 
 ---
@@ -91,7 +81,7 @@
 
 프로젝트에 대한 더 자세한 정보는 `documentation/` 폴더 내의 문서들을 확인하세요.
 
-- **[가이드 (Guides)](./documentation/guides/)**: 설치 방법, 서비스 가이드, 배포 체크리스트 등
+- **[가이드 (Guides)](./documentation/guides/)**: [설치 방법](./documentation/guides/INSTALL_GUIDE.md), [동적 파싱 규칙 작성](./documentation/guides/DYNAMIC_RULE_GUIDE.md) 등
 - **[보고서 (Reports)](./documentation/reports/)**: 최신 릴리즈 분석, 리팩토링 보고서, 워크스루 등
 - **[아카이브 (Archive)](./documentation/archive/)**: 과거 업데이트 이력, 참고 자료 등
 

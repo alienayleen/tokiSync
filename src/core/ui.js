@@ -548,6 +548,16 @@ export class MenuModal {
                         🔄 썸네일 최적화 (v1.4.0)
                     </button>
                 </div>
+                <div style="margin-top: 10px;">
+                    <button class="toki-btn-action toki-btn-secondary" id="toki-btn-debug-extract" style="font-size: 12px; background: rgba(255, 255, 255, 0.05); border: 1px dashed rgba(255, 255, 255, 0.2);">
+                        🧪 추출 테스트 (Debug)
+                    </button>
+                </div>
+                <div style="margin-top: 10px;">
+                    <button class="toki-btn-action" id="toki-btn-debug-download" style="font-size: 13px; background: #2563eb; color: white;">
+                        🚀 현재 회차 다운로드 (Test)
+                    </button>
+                </div>
             </div>
         `;
         body.appendChild(sysSection);
@@ -669,6 +679,13 @@ export class MenuModal {
         document.getElementById('toki-btn-log').onclick = () => {
             if(this.handlers.toggleLog) this.handlers.toggleLog();
         };
+        document.getElementById('toki-btn-debug-extract').onclick = () => {
+             if(this.handlers.testExtraction) this.handlers.testExtraction();
+        };
+        document.getElementById('toki-btn-debug-download').onclick = () => {
+             if(this.handlers.downloadCurrent) this.handlers.downloadCurrent();
+             this.close(overlay);
+        };
          document.getElementById('toki-btn-thumb-optim').onclick = () => {
             if(this.handlers.migrateThumbnails) this.handlers.migrateThumbnails();
             this.close(overlay);
@@ -707,13 +724,13 @@ export class MenuModal {
  * Mark downloaded items in the list (UI Sync)
  * @param {string[]} historyList Array of episode IDs (e.g. ["0001", "0002"])
  */
-export function markDownloadedItems(historyList) {
+export async function markDownloadedItems(historyList) {
     if (!historyList || historyList.length === 0) return;
 
     // Use Set for fast lookup
     const historySet = new Set(historyList.map(id => id.toString())); // Ensure string comparison
 
-    const parser = ParserFactory.getParser();
+    const parser = await ParserFactory.getParser();
     if (!parser) {
         console.warn('[UI] 파서를 찾을 수 없어 다운로드 표시를 생략합니다.');
         return;

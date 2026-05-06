@@ -13,6 +13,7 @@ const METADATA_MAIN = `// ==UserScript==
 // @downloadURL  https://pray4skylark.github.io/tokiSync/tokiSync.user.js
 // @match        https://*.com/webtoon/*
 // @match        https://*.com/novel/*
+// @match        https://*.com/manhwa/*
 // @match        https://*.net/comic/*
 // @match        https://script.google.com/*
 // @match        https://*.github.io/tokiSync/*

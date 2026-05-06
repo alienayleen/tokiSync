@@ -37,7 +37,7 @@ export function getCommonPrefix(str1, str2) {
     return prefix;
 }
 
-export async function waitIframeLoad(iframe, url) {
+export async function waitIframeLoad(iframe, url, viewerCfg = {}) {
     return new Promise((resolve) => {
         const handler = async () => {
             iframe.removeEventListener('load', handler);
@@ -46,7 +46,7 @@ export async function waitIframeLoad(iframe, url) {
             // load 이벤트 후에도 JS lazy-render 페이지는 DOM이 비어있을 수 있음
             // 이미지(.view-padding div img) 또는 소설 텍스트(#novel_content) 중 하나가
             // 나타날 때까지 최대 8초 폴링 (200ms 간격 × 40회)
-            await waitForContent(iframe, 8000);
+            await waitForContent(iframe, 8000, viewerCfg);
             
             // Captcha Detection
             let isCaptcha = false;
@@ -112,7 +112,7 @@ export async function waitIframeLoad(iframe, url) {
                 
                 // 기존 다운로드용 iframe은 그대로 두고, 
                 // 원본 주소(url)를 다시 로드하여 처음부터 캡차 검사 단계를 정상적으로 통과하도록 재귀호출
-                await waitIframeLoad(iframe, url);
+                await waitIframeLoad(iframe, url, viewerCfg);
                 resolve();
             } else {
                 console.log('[Captcha Debug] No captcha detected');
@@ -125,28 +125,44 @@ export async function waitIframeLoad(iframe, url) {
 }
 
 /**
- * iframe 내부에 실제 콘텐츠가 로드될 때까지 폴링 대기
+ * 창(Window) 내부에 실제 콘텐츠가 로드될 때까지 폴링 대기
  * 웹툰: .view-padding div img / 소설: #novel_content
- * @param {HTMLIFrameElement} iframe
+ * @param {Window} targetWindow 대기할 대상 창 (현재 창 또는 iframe.contentWindow)
  * @param {number} maxWaitMs 최대 대기 시간 (ms), 기본 8000
+ * @param {object} viewerCfg 동적 파서 뷰어 설정
+ * @returns {Document|null} 성공 시 Document 객체 반환, 실패/시간초과 시 null
  */
-async function waitForContent(iframe, maxWaitMs = 8000) {
+export async function waitForContent(targetWindow, maxWaitMs = 8000, viewerCfg = {}) {
     const POLL_INTERVAL = 200;
     const maxAttempts = Math.ceil(maxWaitMs / POLL_INTERVAL);
     
     for (let i = 0; i < maxAttempts; i++) {
         try {
-            const iframeDoc = iframe.contentWindow.document;
-            const hasImages = iframeDoc.querySelector('.view-padding div img') !== null;
-            const hasNovel  = iframeDoc.querySelector('#novel_content') !== null;
+            if (!targetWindow) return null;
+            const targetDoc = targetWindow.document;
+            const title = targetDoc.title; // CORS 확인용 강제 접근
+            
+            let imgSelector = '.view-padding div img';
+            if (viewerCfg.imageContainer) {
+                const itemSel = viewerCfg.imageItem || 'img';
+                imgSelector = viewerCfg.imageContainer.split(',').map(c => `${c.trim()} ${itemSel}`).join(', ');
+            }
+            const novelSelector = viewerCfg.novelContent || '#novel_content';
+            
+            const hasImages = targetDoc.querySelector(imgSelector) !== null;
+            const novelEl = targetDoc.querySelector(novelSelector);
+            const hasNovel = novelEl && novelEl.innerText.trim().length > 50;
             
             if (hasImages || hasNovel) {
                 const type = hasImages ? 'Webtoon' : 'Novel';
                 LogBox.getInstance().log(`[DOM Poll] ${type} 콘텐츠 감지 (${(i + 1) * POLL_INTERVAL}ms)`, 'DOM:Poll');
-                return; // 콘텐츠 발견 → 즉시 반환
+                return targetDoc; // 콘텐츠 발견 → 즉시 반환
             }
         } catch (e) {
-            // CORS 등 접근 불가 시 → 대기 지속
+            if (e.name === 'SecurityError' || e.message.includes('Blocked a frame')) {
+                // CORS로 완전히 막힌 경우 호출자에게 알림
+                throw e;
+            }
         }
         await sleep(POLL_INTERVAL);
     }
@@ -164,8 +180,9 @@ async function waitForContent(iframe, maxWaitMs = 8000) {
  *            - stallTimeoutMs 동안 변화 없으면 포기 (스톨)
  * @param {HTMLDocument} iframeDoc
  * @param {number} stallTimeoutMs 진행 없을 때 포기하는 시간 (ms), 기본 20000
+ * @param {object} viewerCfg 동적 파서 뷰어 설정
  */
-export async function scrollToLoad(iframeDoc, stallTimeoutMs = 20000) {
+export async function scrollToLoad(iframeDoc, stallTimeoutMs = 20000, viewerCfg = {}) {
     const POLL_INTERVAL = 300;
 
     const win = iframeDoc.defaultView || iframeDoc.parentWindow;
@@ -181,7 +198,16 @@ export async function scrollToLoad(iframeDoc, stallTimeoutMs = 20000) {
     logger.log(`[ScrollToLoad] Phase 1: 고속 점프 시작 (${behavior} 모드)`, 'DOM:Scroll');
 
     // 범용적인 이미지 컨테이너 탐지 (마나토끼 등 다양한 사이트 구조 대응)
-    const targetSelectors = '.view-padding div img, .viewer-main img, #v_content img, .img-tag';
+    let targetSelectors;
+    if (viewerCfg.imageContainer) {
+        const itemSel = viewerCfg.imageItem || 'img';
+        targetSelectors = viewerCfg.imageContainer.split(',')
+            .map(c => `${c.trim()} ${itemSel}`)
+            .join(', ');
+    } else {
+        targetSelectors = '.view-padding div img, .viewer-main img, #v_content img, .img-tag';
+    }
+    
     const allImages = Array.from(iframeDoc.querySelectorAll(targetSelectors));
     
     if (allImages.length > 0) {
@@ -240,7 +266,7 @@ export async function scrollToLoad(iframeDoc, stallTimeoutMs = 20000) {
     let stallElapsed = 0;
 
     while (true) {
-        const images = Array.from(iframeDoc.querySelectorAll('.view-padding div img'));
+        const images = Array.from(iframeDoc.querySelectorAll(targetSelectors));
         const remaining = images.filter(img => {
             const src = img.src || '';
             // 1. 알려진 플레이스홀더 URL → 대기

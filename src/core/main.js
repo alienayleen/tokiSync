@@ -1,14 +1,17 @@
-import { tokiDownload } from './downloader.js';
-import { detectSite, getMaxEpisodes, parseEpisodeRange } from './detector.js'; // Need to export getMaxEpisodes/parseEpisodeRange if possible, or implement logic here.
+import { tokiDownload, processItem } from './downloader.js';
+import { detectSite, getMaxEpisodes, parseEpisodeRange } from './detector.js'; 
 import { showConfigModal, getConfig, setConfig } from './config.js';
 import { LogBox, markDownloadedItems, MenuModal } from './ui.js';
+import { extractEpisodeData } from './extractor.js';
+import { EpubBuilder } from './epub.js';
+import { CbzBuilder } from './cbz.js';
 import { fetchHistory } from './gas.js';
 import { ParserFactory } from './parsers/ParserFactory.js';
 import { getOAuthToken } from './network.js';
 
 import { getCommonPrefix, blobToArrayBuffer, saveFile } from './utils.js';
 
-export function main() {
+export async function main() {
     console.log("🚀 TokiDownloader Loaded (New Core v1.7.4)");
     
     const logger = LogBox.getInstance();
@@ -152,8 +155,8 @@ export function main() {
         toggleLog: () => logger.toggle(),
         getConfig: getConfig,
         setConfig: setConfig,
-        getEpisodeRange: () => {
-            const parser = ParserFactory.getParser();
+        getEpisodeRange: async () => {
+            const parser = await ParserFactory.getParser();
             if (!parser) return { min: 1, max: 100 };
             
             const list = parser.getListItems();
@@ -176,6 +179,98 @@ export function main() {
             } catch (e) {
                 console.error("[Native Test Failed]", e);
                 return false;
+            }
+        },
+        testExtraction: async () => {
+            try {
+                const logger = LogBox.getInstance();
+                logger.show();
+                logger.log('🧪 추출 테스트 시작...', 'Debug');
+                
+                const parser = await ParserFactory.getParser();
+                if (!parser) {
+                    logger.error('❌ 파서를 찾을 수 없습니다.', 'Debug');
+                    return;
+                }
+
+                const siteInfo = await detectSite();
+                // 현재 페이지(document)를 대상으로 추출 테스트
+                const result = await extractEpisodeData(document, parser, siteInfo, false);
+                
+                console.log('[Debug Result]', result);
+                
+                if (result.urls && result.urls.length > 0) {
+                    logger.success(`✅ 이미지 추출 성공: ${result.urls.length}개`, 'Debug');
+                } else if (result.content) {
+                    logger.success(`✅ 소설 추출 성공: ${result.content.length}자`, 'Debug');
+                } else {
+                    logger.warn('⚠️ 추출된 데이터가 없습니다. (뷰어 페이지가 아닐 수 있음)', 'Debug');
+                }
+                
+                if (result.seriesTitle && result.seriesTitle !== "UnknownSeries") {
+                    logger.log(`📚 작품명: ${result.seriesTitle}`, 'Debug');
+                    logger.log(`🔖 에피소드: ${result.episodeTitle} (${result.episodeNum})`, 'Debug');
+                }
+
+            } catch (e) {
+                LogBox.getInstance().error(`❌ 테스트 실패: ${e.message}`, 'Debug');
+                console.error(e);
+            }
+        },
+        downloadCurrent: async () => {
+            const logger = LogBox.getInstance();
+            try {
+                logger.show();
+                logger.log('🚀 현재 에피소드 다운로드 시작...', 'System');
+                
+                const siteInfo = await detectSite();
+                const parser = await ParserFactory.getParser();
+                if (!parser) throw new Error('파서를 찾을 수 없습니다.');
+
+                // 1. 메타데이터 추출 (제목 등 확인용)
+                const metadata = await extractEpisodeData(document, parser, siteInfo, false);
+                const title = metadata.episodeTitle || "Current_Episode";
+                const seriesTitle = metadata.seriesTitle || "Unknown_Series";
+
+                // 2. 빌더 생성 (카테고리에 따라)
+                const isNovel = (siteInfo.category === 'Novel' || siteInfo.category === 'novel');
+                let builder;
+                if (isNovel) {
+                    builder = new EpubBuilder(seriesTitle, { author: "TokiSync" });
+                } else {
+                    builder = new CbzBuilder(title);
+                }
+
+                // 3. 임시 아이템 객체 생성 (processItem 호환용)
+                const tempItem = {
+                    title: title,
+                    src: document.URL,   // processItem에서 item.src 참조 (API 복호화 포함)
+                    url: document.URL,   // 하위 호환성 유지
+                    num: metadata.episodeNum || "0000"
+                };
+
+                // 4. 단건 다운로드 실행 (현재 페이지의 document를 직접 전달)
+                await processItem(tempItem, builder, siteInfo, null, parser, seriesTitle, document);
+
+                // 5. 파일 생성 및 저장
+                logger.log('💾 파일 생성 및 저장 중...', 'System');
+                
+                const zip = await builder.build({
+                    series: seriesTitle,
+                    title: title,
+                    number: tempItem.num
+                });
+                
+                const blob = await zip.generateAsync({ type: "blob" });
+                const extension = isNovel ? 'epub' : 'cbz';
+                const filename = `${tempItem.num} - ${title}`;
+
+                await saveFile(blob, filename, 'local', extension, { category: siteInfo.category });
+                logger.success('✅ 다운로드 완료!', 'System');
+
+            } catch (e) {
+                logger.error(`❌ 다운로드 실패: ${e.message}`, 'System');
+                console.error(e);
             }
         }
     });
@@ -257,7 +352,7 @@ export function main() {
         }
     });
 
-    const siteInfo = detectSite();
+    const siteInfo = await detectSite();
     if(!siteInfo) return; 
 
     // -- 4. History Sync (Async) & Cross-Tab Auto Refresh --
@@ -268,9 +363,9 @@ export function main() {
         if (isSyncing) return;
         isSyncing = true;
         try {
-            const parser = ParserFactory.getParser();
+            const parser = await ParserFactory.getParser();
             if (!parser) return;
-            const list = parser.getListItems();
+            const list = await parser.getListItems();
             console.log(`[TokiSync] Found ${list.length} list items`);
             if (list.length === 0) {
                 console.warn('[TokiSync] No list items found, skipping history sync');
@@ -294,7 +389,7 @@ export function main() {
             const history = await fetchHistory(rootFolder, category);
             console.log(`[TokiSync] Received ${history.length} history items`);
             if (history.length > 0) {
-                markDownloadedItems(history);
+                await markDownloadedItems(history);
             } else {
                 console.log('[TokiSync] No history items to mark');
             }

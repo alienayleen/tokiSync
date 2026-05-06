@@ -2,7 +2,7 @@
 import { main } from './main.js';
 import { getConfig } from './config.js';
 
-(function () {
+(async function () {
     'use strict';
     
     // Viewer Config Injection (Zero-Config)
@@ -124,6 +124,16 @@ import { getConfig } from './config.js';
         
         console.log("✅ API Proxy initialized (CORS bypass)");
     }
-    
-    main();
+    // Delay main execution to prevent React Hydration errors (#418) on SPA sites
+    const startMain = async () => {
+        setTimeout(async () => {
+            await main();
+        }, 500); // 500ms buffer for hydration to complete
+    };
+
+    if (document.readyState === 'complete') {
+        startMain();
+    } else {
+        window.addEventListener('load', startMain);
+    }
 })();
