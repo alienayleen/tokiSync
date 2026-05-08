@@ -56,8 +56,10 @@ const viewerDefaults = reactive({
 const { 
   logicalIndex, 
   isRestoring,
-  updateLocator, 
+  updateLocator,
+  resetLocator, 
   saveToDB: saveMarkerToDB, 
+  flushSaveToDB,
   restore: restoreMarker 
 } = useProgressMarker();
 
@@ -576,6 +578,12 @@ const refreshEpisodes = async () => {
 };
 
 const startReading = async (ep) => {
+  // [v2.9.2] 에피소드를 넘기기 전, 기존 에피소드의 진도를 즉시 DB에 강제 저장(Flush)
+  if (currentEpisode.value && currentEpisode.value.id !== ep.id) {
+    await flushSaveToDB(currentEpisode.value.id);
+  }
+
+  resetLocator(); // [v2.9.1] 새 에피소드 열 때 이전 진도(마커) 초기화
   cleanupBlobUrls(); // 이전 에피소드 Blob URL 즉시 해제 (메모리 누수 방지)
   cleanupEpisodeData(); // [v1.7.4] 저장소 용량 관리 가동
 
@@ -694,6 +702,10 @@ const goToPrevEpisode = () => {
 };
 
 const exitViewer = () => {
+  // [v2.9.2] 뷰어 종료 시 마지막 위치 즉시 저장
+  if (currentEpisode.value) {
+    flushSaveToDB(currentEpisode.value.id);
+  }
   cancelViewerDownload(); // [v1.7.5] 시청 종료 시 뷰어 다운로드 + 프리로드 즉시 중단
   cleanupBlobUrls();
   viewerContent.value = null;

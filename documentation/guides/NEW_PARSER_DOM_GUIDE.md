@@ -34,3 +34,21 @@
 ## 3. 추가 필수 정보
 - **사이트 URL 패턴:** 대상 사이트의 기본 도메인 주소와 뷰어/목록 페이지의 URL 형태 예시 
   - *예시: `https://example.com/webtoon/12345`*
+
+---
+
+## 4. 실제 추출 예시 (Case Study: 블랙툰)
+
+`PARSER_DOM_WEBTOON.md` 리포트를 바탕으로 한 실제 DOM 추출 및 분석 요약본입니다. 새로운 파서를 제작할 때 어떤 데이터를 찾아야 하는지 참고하세요.
+
+- **메타 데이터 (`div.hero-v2-meta`, `div.hero-v2-thumb`)**:
+  - 작품 제목: `h1.hero-v2-title`
+  - 썸네일: `div.hero-v2-thumb > img`
+  - 작가: `div.hero-v2-author`
+- **에피소드 목록 (`ul.ep-list-v2`)**:
+  - 개별 항목: `li.ep-row-v2`
+  - 화 번호: `span.ep-row-v2-no`
+  - 회차 제목: `.ep-row-v2-title strong`
+  - 링크: `a.ep-row-v2-link`
+
+*(이 추출 데이터를 기반으로 완성된 JSON 규칙은 `DYNAMIC_RULE_GUIDE.md`의 예시를 참고하세요.)*

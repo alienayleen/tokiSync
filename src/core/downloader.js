@@ -15,7 +15,9 @@ import { fetchNovelText } from './novel-decryptor.js';
 const SLEEP_POLICIES = {
     agile: { min: 1000, max: 3000 },      // 빠름 (1-3초)
     cautious: { min: 2000, max: 5000 },   // 신중 (2-5초)
-    thorough: { min: 3000, max: 8000 }    // 철저 (3-8초)
+    thorough: { min: 3000, max: 8000 },   // 철저 (3-8초)
+    slow: { min: 5000, max: 15000 },      // 느림 (5-15초)
+    very_slow: { min: 10000, max: 30000 } // 매우 느림 (10-30초)
 };
 
 // Processing Loop에 해당되는 로직을 분리 한다.
@@ -27,15 +29,18 @@ export async function processItem(item, builder, siteInfo, iframe, parser, serie
 
     // Apply Dynamic Sleep based on Policy
     const config = getConfig();
-    const policy = SLEEP_POLICIES[config.sleepMode] || SLEEP_POLICIES.agile;
+    let policy = SLEEP_POLICIES[config.sleepMode] || SLEEP_POLICIES.agile;
 
     let iframeDoc = targetDoc;
     let isStaticDoc = false;
 
     // [전략 B] fetchMethod === 'api'는 targetDoc 여부와 무관하게 항상 API 경로 우선
     if (fetchMethod === 'api') {
+        // [v2.1] novel-decryptor.js를 통한 API 다운로드는 DDos 감지를 피하기 위해 무조건 매우 느림(10-30초) 고정
+        policy = SLEEP_POLICIES.very_slow;
+
         const logger = LogBox.getInstance();
-        logger.log(`[API] 직접 복호화 시도 중: ${item.title}`, 'Downloader');
+        logger.log(`[API] 직접 복호화 시도 중 (대기: ${policy.min / 1000}~${policy.max / 1000}초): ${item.title}`, 'Downloader');
 
         const text = await fetchNovelText(item.src, viewerCfg.decryptApi || {});
 
@@ -45,6 +50,8 @@ export async function processItem(item, builder, siteInfo, iframe, parser, serie
         } else {
             logger.error(`⚠️ 복호화 실패 (스킵): ${item.title}`, 'Downloader');
         }
+
+        await sleep(policy.min, policy.max);
         return; // DOM 파이프라인 완전 우회
     }
 
@@ -267,12 +274,16 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
         // [v2.0] 커스텀 범위 필터 ("1,2,4-10" 형식)
         const rangeSet = parseRangeSpec(rangeSpec);
         if (rangeSet) {
-            list = list.filter(li => {
-                const item = parser.parseListItem(li);
-                const num = parseInt(item.num);
-                return rangeSet.has(num);
-            });
-            logger.log(`범위 필터 적용: ${rangeSpec} → ${list.length}개 항목`);
+            // 필터링 및 번호 오름차순 정렬 (1부터 다운로드 되도록)
+            const mappedList = list.map(li => {
+                const item = parser.parseListItem(li.element || li);
+                return { li, num: parseInt(item.num) };
+            }).filter(item => rangeSet.has(item.num));
+
+            mappedList.sort((a, b) => a.num - b.num);
+            list = mappedList.map(item => item.li);
+            
+            logger.log(`범위 필터 적용 및 오름차순 정렬 완료: ${rangeSpec} → ${list.length}개 항목`);
         }
         
         // Log episode range

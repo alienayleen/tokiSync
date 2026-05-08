@@ -33,10 +33,10 @@ function doGet(e) {
  * @returns {TextOutput} JSON 응답
  */
 // [CONSTANTS]
-const SERVER_VERSION = "v1.8.0"; // Drive API V3 Migration
+var SERVER_VERSION = "v1.8.0"; // Drive API V3 Migration
 // API Key stored in Script Properties (Project Settings > Script Properties)
 // Set property: API_KEY = your_secret_key
-const API_KEY = PropertiesService.getScriptProperties().getProperty("API_KEY");
+var API_KEY = PropertiesService.getScriptProperties().getProperty("API_KEY");
 
 function doPost(e) {
   Debug.start(); // 🐞 디버그 시작

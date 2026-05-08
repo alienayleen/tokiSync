@@ -2,7 +2,7 @@
 // 🐞 디버깅 모듈 (In-Memory Log Collector)
 // =====================================================
 
-const Debug = {
+var Debug = {
   logs: [],
   startTime: 0,
 

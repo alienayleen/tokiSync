@@ -4,7 +4,7 @@
 // Merge 로직은 클라이언트(뷰어)에서 처리
 // =======================================================
 
-const HISTORY_FILE_NAME = "read_history.json";
+var HISTORY_FILE_NAME = "read_history.json";
 
 /**
  * read_history.json 불러오기

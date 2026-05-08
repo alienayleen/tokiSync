@@ -2,8 +2,8 @@
 // 🚀 Viewer Library Service (Isolated) - v1.4.0 Centralized Thumbnails
 // =======================================================
 
-const INDEX_FILE_NAME = "index.json";
-const THUMB_FOLDER_NAME = "_Thumbnails";
+var INDEX_FILE_NAME = "index.json";
+var THUMB_FOLDER_NAME = "_Thumbnails";
 
 /**
  * 해당 폴더(Libraries)의 시리즈 목록을 반환합니다.

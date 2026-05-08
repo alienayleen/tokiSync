@@ -4,7 +4,7 @@
  * @version 1.0.0 (TokiSync v1.7.6+)
  */
 
-const DriveAccessService = {
+var DriveAccessService = {
   /**
    * 내 드라이브(Root)의 ID를 가져옵니다.
    * @returns {string} Root ID

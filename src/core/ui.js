@@ -513,6 +513,8 @@ export class MenuModal {
                          <option value="agile">빠름 (1-3초)</option>
                          <option value="cautious">신중 (2-5초)</option>
                          <option value="thorough">철저 (3-8초)</option>
+                         <option value="slow">느림 (5-15초)</option>
+                         <option value="very_slow">매우 느림 (10-30초)</option>
                     </select>
                 </div>
                 <div class="toki-control-group">

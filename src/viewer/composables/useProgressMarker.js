@@ -89,18 +89,42 @@ export function useProgressMarker() {
   const saveToDB = async (episodeId) => {
     if (!episodeId || isInternalSyncing.value) return;
 
+    // [v2.9.2] 호출 시점의 값을 스냅샷으로 캡처 (비동기 지연 중 값이 변하는 것 방지)
+    const snapshotIndex = logicalIndex.value;
+
     if (saveTimeout) clearTimeout(saveTimeout);
     saveTimeout = setTimeout(async () => {
       try {
         await db.readHistory.update(episodeId, {
-          markerIndex: logicalIndex.value,
+          markerIndex: snapshotIndex,
           lastReadAt: new Date().toISOString()
         });
-        console.log(`[V2:DB] Auto-saved marker: ${logicalIndex.value}`);
+        console.log(`[V2:DB] Auto-saved marker: ${snapshotIndex}`);
       } catch (e) {
         console.warn('[V2:Save] Failed:', e);
       }
     }, 1000);
+  };
+
+  /**
+   * [v2.9.2] Flush Save
+   * 지연 없이 즉시 DB에 현재 위치를 저장 (페이지 전환/종료 시 호출)
+   */
+  const flushSaveToDB = async (episodeId) => {
+    if (!episodeId) return;
+    if (saveTimeout) {
+      clearTimeout(saveTimeout);
+      saveTimeout = null;
+    }
+    try {
+      await db.readHistory.update(episodeId, {
+        markerIndex: logicalIndex.value,
+        lastReadAt: new Date().toISOString()
+      });
+      console.log(`[V2:DB] Flushed marker: ${logicalIndex.value} for ${episodeId}`);
+    } catch (e) {
+      console.warn('[V2:Save:Flush] Failed:', e);
+    }
   };
 
   /**
@@ -121,6 +145,16 @@ export function useProgressMarker() {
   };
 
   /**
+   * [v2.9.1] Reset Locator
+   * 이전 에피소드의 읽던 위치가 새 에피소드에 오염되지 않도록 초기화
+   */
+  const resetLocator = () => {
+    logicalIndex.value = 0;
+    isInternalSyncing.value = false;
+    console.log('[V2:Locator] Reset to 0');
+  };
+
+  /**
    * Restoration: Jump to logicalIndex based on Mode and Strategy
    */
   const restore = async (store) => {
@@ -136,7 +170,8 @@ export function useProgressMarker() {
       isRestoring.value = true;
       const history = await db.readHistory.get(ep.id);
       if (!history || history.markerIndex === undefined) {
-        console.warn(`[V2:Restore] ⚠️ No history found for ep.id=${ep.id}. Nothing to restore.`);
+        console.warn(`[V2:Restore] ⚠️ No history found for ep.id=${ep.id}. Resetting to 0.`);
+        logicalIndex.value = 0; // 이력이 없으면 강제로 첫 페이지로 초기화
         return;
       }
 
@@ -238,7 +273,9 @@ export function useProgressMarker() {
     isInternalSyncing,
     isRestoring,
     updateLocator,
+    resetLocator,
     saveToDB,
+    flushSaveToDB,
     restore,
     heuristicJump,
     getStrategy
