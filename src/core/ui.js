@@ -72,7 +72,7 @@ export class LogBox {
                     opacity: 0; animation: tokiFadeIn 0.2s forwards;
                 }
                 .toki-modal {
-                    width: 360px; max-width: 90%;
+                    width: 520px; max-width: 95%;
                     background: rgba(30, 32, 35, 0.95);
                     border: 1px solid rgba(255, 255, 255, 0.1);
                     border-radius: 16px;
@@ -82,37 +82,38 @@ export class LogBox {
                     transform: translateY(20px); animation: tokiSlideUp 0.3s forwards;
                 }
                 .toki-modal-header {
-                    padding: 16px 20px;
+                    padding: 18px 24px;
                     background: rgba(255, 255, 255, 0.05);
                     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
                     display: flex; justify-content: space-between; align-items: center;
                 }
-                .toki-modal-title { font-size: 18px; font-weight: 600; color: #fff; display: flex; align-items: center; gap: 8px; }
+                .toki-modal-title { font-size: 20px; font-weight: 600; color: #fff; display: flex; align-items: center; gap: 8px; }
                 .toki-modal-close {
                     background: none; border: none; color: #aaa;
                     font-size: 20px; cursor: pointer; padding: 4px;
                 }
                 .toki-modal-close:hover { color: white; }
                 
-                .toki-modal-body { padding: 10px; max-height: 70vh; overflow-y: auto; }
-
-                /* Accordion */
-                details {
-                    background: rgba(255, 255, 255, 0.03);
-                    border-radius: 8px; margin-bottom: 8px; overflow: hidden;
-                    border: 1px solid transparent; transition: border-color 0.2s;
+                .toki-modal-body { padding: 0; max-height: 80vh; overflow-y: auto; }
+                
+                /* Tabs (v1.8.1) */
+                .toki-tabs {
+                    display: flex; background: rgba(0,0,0,0.2);
+                    border-bottom: 1px solid rgba(255,255,255,0.1);
                 }
-                details[open] { border-color: rgba(255,255,255,0.1); background: rgba(0,0,0,0.2); }
-                summary {
-                    padding: 12px 16px; cursor: pointer; list-style: none;
-                    display: flex; justify-content: space-between; align-items: center;
-                    font-weight: 600; font-size: 14px; user-select: none; color: #fff;
+                .toki-tab-btn {
+                    flex: 1; padding: 14px; background: none; border: none;
+                    color: #888; font-size: 14px; font-weight: 600; cursor: pointer;
+                    transition: all 0.2s; border-bottom: 2px solid transparent;
+                    display: flex; justify-content: center; align-items: center; gap: 6px;
                 }
-                summary::-webkit-details-marker { display: none; }
-                summary:hover { background: rgba(255, 255, 255, 0.05); }
-                summary::after { content: '›'; font-size: 18px; transition: transform 0.2s; color: #aaa; }
-                details[open] summary::after { transform: rotate(90deg); }
-                .toki-accordion-content { padding: 10px 16px 16px; border-top: 1px solid rgba(255,255,255,0.05); }
+                .toki-tab-btn:hover { color: #ddd; background: rgba(255,255,255,0.05); }
+                .toki-tab-btn.active {
+                    color: #fff; border-bottom-color: #6a5acd;
+                    background: rgba(106, 90, 205, 0.1);
+                }
+                .toki-tab-content { display: none; padding: 24px; animation: tokiFadeIn 0.2s forwards; }
+                .toki-tab-content.active { display: block; }
 
                 /* Controls */
                 .toki-control-group { margin-bottom: 15px; }
@@ -455,148 +456,153 @@ export class MenuModal {
         `;
         modal.appendChild(header);
 
+        // -- Tabs Header --
+        const tabsHeader = document.createElement('div');
+        tabsHeader.className = 'toki-tabs';
+        tabsHeader.innerHTML = `
+            <button class="toki-tab-btn active" data-tab="download">📥 다운로드</button>
+            <button class="toki-tab-btn" data-tab="settings">⚙️ 설정</button>
+            <button class="toki-tab-btn" data-tab="system">📝 시스템</button>
+        `;
+        modal.appendChild(tabsHeader);
+
         // -- Body --
         const body = document.createElement('div');
         body.className = 'toki-modal-body';
         
-        // 1. Download Section
-        const downSection = this.createAccordion('📥 다운로드 (Download)', true); // Default Open
-        downSection.innerHTML += `
-                <div class="toki-accordion-content">
-                    <!-- Custom Range Input -->
-                    <div class="toki-control-group">
-                        <label class="toki-label">에피소드 범위 지정</label>
-                        <input type="text" id="toki-range-input" class="toki-range-input"
-                            placeholder="예: 1,2,4-10,15 (비우면 전체)">
-                        <div class="toki-range-hint">쉼표(,)로 개별 번호, 하이픈(-)으로 연속 범위 지정</div>
-                    </div>
-                    <div class="toki-control-group">
-                        <label class="toki-label" style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                            <input type="checkbox" id="toki-chk-force-overwrite" style="accent-color:#facc15;"> ⚠️ 강제 재다운로드 (기존 파일 덮어쓰기)
-                        </label>
-                    </div>
-                    <button class="toki-btn-action" id="toki-btn-down-range" style="margin-top: 10px;">
-                        <span>선택 다운로드 시작</span>
-                    </button>
-                    <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 12px 0;">
-                    <button class="toki-btn-action toki-btn-secondary" id="toki-btn-down-all">
-                        <span>전체 다운로드 (All)</span>
-                    </button>
+        // 1. Download Tab
+        const tabDown = document.createElement('div');
+        tabDown.className = 'toki-tab-content active';
+        tabDown.id = 'toki-tab-download';
+        tabDown.innerHTML = `
+                <div class="toki-control-group">
+                    <label class="toki-label">에피소드 범위 지정</label>
+                    <input type="text" id="toki-range-input" class="toki-range-input"
+                        placeholder="예: 1,2,4-10,15 (비우면 전체)">
+                    <div class="toki-range-hint">쉼표(,)로 개별 번호, 하이픈(-)으로 연속 범위 지정</div>
                 </div>
+                <div class="toki-control-group">
+                    <label class="toki-label" style="display:flex; align-items:center; gap:8px; cursor:pointer; color: #ddd; font-size: 13px;">
+                        <input type="checkbox" id="toki-chk-force-overwrite" style="accent-color:#facc15; width: 16px; height: 16px;"> ⚠️ 강제 재다운로드 (기존 파일 덮어쓰기)
+                    </label>
+                </div>
+                <button class="toki-btn-action" id="toki-btn-down-range" style="margin-top: 20px; height: 48px;">
+                    <span>선택 다운로드 시작</span>
+                </button>
+                <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 20px 0;">
+                <button class="toki-btn-action toki-btn-secondary" id="toki-btn-down-all" style="height: 44px;">
+                    <span>전체 다운로드 (All Items)</span>
+                </button>
         `;
-        body.appendChild(downSection);
+        body.appendChild(tabDown);
 
-        // 2. Settings Section
-        const setSection = this.createAccordion('⚙️ 설정 (Settings)');
-        setSection.innerHTML += `
-            <div class="toki-accordion-content">
-                <div class="toki-control-group">
-                    <label class="toki-label">다운로드 정책</label>
-                    <select id="toki-sel-policy" class="toki-select">
-                        <option value="individual">1. 개별 파일 (Individual)</option>
-                        <option value="zipOfCbzs">2. 챕터 묶음 (ZIP of CBZs)</option>
-                        <option value="native">3. 자동 분류 (Native)</option>
-                        <option value="drive">4. 드라이브 업로드 (GoogleDrive)</option>
-                    </select>
+        // 2. Settings Tab
+        const tabSettings = document.createElement('div');
+        tabSettings.className = 'toki-tab-content';
+        tabSettings.id = 'toki-tab-settings';
+        tabSettings.innerHTML = `
+            <div class="toki-control-group">
+                <label class="toki-label">다운로드 저장 방식</label>
+                <select id="toki-sel-policy" class="toki-select">
+                    <option value="individual">1. 개별 파일 (Individual)</option>
+                    <option value="zipOfCbzs">2. 챕터 묶음 (ZIP of CBZs)</option>
+                    <option value="native">3. 자동 분류 (Native)</option>
+                    <option value="drive">4. 드라이브 업로드 (GoogleDrive)</option>
+                </select>
+            </div>
+            <div id="toki-native-helper" style="display:none; margin-bottom: 20px; padding: 12px; background: rgba(255,165,0,0.1); border: 1px solid rgba(255,165,0,0.3); border-radius: 8px;">
+                <div style="font-size: 11px; color: #ffa500; margin-bottom: 10px; line-height: 1.4;">
+                    ⚠️ Native 모드는 Tampermonkey 설정에서 <b>'Download Mode: Browser API'</b> 활성화가 필요합니다.
                 </div>
-                <div id="toki-native-helper" style="display:none; margin-top: 10px; padding: 10px; background: rgba(255,165,0,0.1); border: 1px solid rgba(255,165,0,0.3); border-radius: 6px;">
-                    <div style="font-size: 11px; color: #ffa500; margin-bottom: 8px;">
-                        ⚠️ Native 모드는 Tampermonkey 설정에서 <b>'Download Mode: Browser API'</b> 활성화가 필요합니다.
-                    </div>
-                    <button class="toki-btn-action toki-btn-secondary" id="toki-btn-test-native" style="font-size: 12px; height: 30px;">
-                        📂 자동 분류 기능 테스트
-                    </button>
-                </div>
-                <div class="toki-control-group">
-                    <label class="toki-label">다운로드 속도</label>
-                    <select id="toki-sel-speed" class="toki-select">
-                         <option value="agile">빠름 (1-3초)</option>
-                         <option value="cautious">신중 (2-5초)</option>
-                         <option value="thorough">철저 (3-8초)</option>
-                         <option value="slow">느림 (5-15초)</option>
-                         <option value="very_slow">매우 느림 (10-30초)</option>
-                    </select>
-                </div>
-                <div class="toki-control-group">
-                    <label class="toki-label">소설 패키징 방식</label>
-                    <select id="toki-sel-novel-mode" class="toki-select">
-                         <option value="perChapter">개별 회차 저장 (1회차 = 1파일)</option>
-                         <option value="singleVolume">단행본 합본 저장 (선택 범위 = 1파일)</option>
-                    </select>
-                </div>
-                <div class="toki-control-group">
-                    <button class="toki-btn-action toki-btn-secondary" id="toki-btn-advanced" style="font-size: 13px;">
-                        🛠️ 고급 설정 (경로, API키)
-                    </button>
-                </div>
+                <button class="toki-btn-action toki-btn-secondary" id="toki-btn-test-native" style="font-size: 12px; height: 32px;">
+                    📂 자동 분류 기능 테스트
+                </button>
+            </div>
+            <div class="toki-control-group">
+                <label class="toki-label">다운로드 속도 (대기 시간)</label>
+                <select id="toki-sel-speed" class="toki-select">
+                        <option value="agile">빠름 (1-3초)</option>
+                        <option value="cautious">신중 (2-5초)</option>
+                        <option value="thorough">철저 (3-8초)</option>
+                        <option value="slow">느림 (5-15초)</option>
+                        <option value="very_slow">매우 느림 (10-30초)</option>
+                </select>
+            </div>
+            <div class="toki-control-group">
+                <label class="toki-label">소설 패키징 정책</label>
+                <select id="toki-sel-novel-mode" class="toki-select">
+                        <option value="perChapter">개별 회차 저장 (1회차 = 1파일)</option>
+                        <option value="singleVolume">단행본 합본 저장 (범위 = 1파일)</option>
+                </select>
+            </div>
+            <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.05); margin: 20px 0;">
+            <div class="toki-control-group">
+                <button class="toki-btn-action toki-btn-secondary" id="toki-btn-advanced" style="font-size: 13px; height: 40px;">
+                    🛠️ 고급 설정 상세 (경로, API키, 필터)
+                </button>
             </div>
         `;
-        body.appendChild(setSection);
+        body.appendChild(tabSettings);
 
-        // 3. System Section
-        const sysSection = this.createAccordion('📝 시스템 (System)');
-        sysSection.innerHTML += `
-            <div class="toki-accordion-content">
-                 <button class="toki-btn-action toki-btn-secondary" id="toki-btn-log">
-                    <span>로그창 토글</span>
-                </button>
-                <div style="margin-top: 10px;">
-                     <button class="toki-btn-action toki-btn-secondary" id="toki-btn-migration" style="font-size: 13px;">
-                        📂 파일명 표준화 (Migration)
+        // 3. System Tab
+        const tabSystem = document.createElement('div');
+        tabSystem.className = 'toki-tab-content';
+        tabSystem.id = 'toki-tab-system';
+        tabSystem.innerHTML = `
+                <div class="toki-control-group">
+                    <button class="toki-btn-action toki-btn-secondary" id="toki-btn-log" style="height: 40px;">
+                        <span>로그창 표시/숨기기</span>
                     </button>
                 </div>
-                <div style="margin-top: 10px;">
-                    <button class="toki-btn-action toki-btn-secondary" id="toki-btn-thumb-optim" style="font-size: 12px;">
-                        🔄 썸네일 최적화 (v1.4.0)
+                <div class="toki-control-group">
+                        <button class="toki-btn-action toki-btn-secondary" id="toki-btn-migration" style="font-size: 13px; height: 40px;">
+                        📂 기존 파일명 표준화 (Migration)
                     </button>
                 </div>
-                <div style="margin-top: 10px;">
-                    <button class="toki-btn-action toki-btn-secondary" id="toki-btn-debug-extract" style="font-size: 12px; background: rgba(255, 255, 255, 0.05); border: 1px dashed rgba(255, 255, 255, 0.2);">
+                <div class="toki-control-group">
+                    <button class="toki-btn-action toki-btn-secondary" id="toki-btn-thumb-optim" style="font-size: 13px; height: 40px;">
+                        🔄 썸네일 최적화 및 캐시 갱신
+                    </button>
+                </div>
+                <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.05); margin: 20px 0;">
+                <div class="toki-control-group" style="display: flex; gap: 10px;">
+                    <button class="toki-btn-action toki-btn-secondary" id="toki-btn-debug-extract" style="flex: 1; font-size: 12px; background: rgba(255, 255, 255, 0.05); border: 1px dashed rgba(255, 255, 255, 0.2);">
                         🧪 추출 테스트 (Debug)
                     </button>
-                </div>
-                <div style="margin-top: 10px;">
-                    <button class="toki-btn-action" id="toki-btn-debug-download" style="font-size: 13px; background: #2563eb; color: white;">
-                        🚀 현재 회차 다운로드 (Test)
+                    <button class="toki-btn-action" id="toki-btn-debug-download" style="flex: 1.5; font-size: 13px; background: #2563eb; color: white;">
+                        🚀 현재 회차 즉시 다운로드
                     </button>
                 </div>
-            </div>
         `;
-        body.appendChild(sysSection);
+        body.appendChild(tabSystem);
 
         modal.appendChild(body);
         document.body.appendChild(overlay);
 
         // --- Bind Events & Init Logic ---
-        this.initExclusiveAccordion();
         this.bindEvents(overlay);
     }
 
-    createAccordion(title, open = false) {
-        const details = document.createElement('details');
-        if (open) details.open = true;
-        const summary = document.createElement('summary');
-        summary.innerText = title;
-        details.appendChild(summary);
-        return details;
-    }
-
-    initExclusiveAccordion() {
-        const details = document.querySelectorAll('.toki-modal-body details');
-        details.forEach((detail) => {
-            detail.addEventListener('toggle', (e) => {
-                if (detail.open) {
-                    details.forEach((other) => {
-                        if (other !== detail && other.open) {
-                            other.open = false;
-                        }
-                    });
-                }
-            });
-        });
-    }
+    // Helper removed as no longer using accordion
 
     bindEvents(overlay) {
+        // Tab Switching Logic
+        const tabBtns = overlay.querySelectorAll('.toki-tab-btn');
+        const tabContents = overlay.querySelectorAll('.toki-tab-content');
+
+        tabBtns.forEach(btn => {
+            btn.onclick = () => {
+                const target = btn.getAttribute('data-tab');
+                
+                // Toggle Buttons
+                tabBtns.forEach(b => b.classList.toggle('active', b === btn));
+                // Toggle Contents
+                tabContents.forEach(c => {
+                    c.classList.toggle('active', c.id === `toki-tab-${target}`);
+                });
+            };
+        });
+
         // Headers
         document.getElementById('toki-btn-menu-close').onclick = () => this.close(overlay);
         document.getElementById('toki-btn-viewer-link').onclick = () => {
