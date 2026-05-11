@@ -4,8 +4,9 @@ import { ParserFactory } from './parsers/ParserFactory.js';
 import { detectSite } from './detector.js';
 import { EpubBuilder } from './epub.js';
 import { CbzBuilder } from './cbz.js';
+import { TxtBuilder } from './txt.js';
 import { LogBox, Notifier } from './ui.js';
-import { getConfig } from './config.js';
+import { getConfig, isConfigValid } from './config.js';
 import { startSilentAudio, stopSilentAudio } from './anti_sleep.js';
 import { fetchHistory, refreshCacheAfterUpload, getBooksByCacheId, initUpdateUploadViaGASRelay, getMergeIndexFragment } from './gas.js';
 import { fetchHistoryDirect, checkSingleHistoryDirect } from './network.js';
@@ -36,19 +37,30 @@ export async function processItem(item, builder, siteInfo, iframe, parser, serie
 
     // [전략 B] fetchMethod === 'api'는 targetDoc 여부와 무관하게 항상 API 경로 우선
     if (fetchMethod === 'api') {
-        // [v2.1] novel-decryptor.js를 통한 API 다운로드는 DDos 감지를 피하기 위해 무조건 매우 느림(10-30초) 고정
-        policy = SLEEP_POLICIES.very_slow;
-
         const logger = LogBox.getInstance();
         logger.log(`[API] 직접 복호화 시도 중 (대기: ${policy.min / 1000}~${policy.max / 1000}초): ${item.title}`, 'Downloader');
 
         const text = await fetchNovelText(item.src, viewerCfg.decryptApi || {});
 
         if (text) {
-            builder.addChapter(item.title, text);
+            let cleanText = text;
+            
+            // 1. 앞부분 껍데기 제거 (text 또는 html 형식을 모두 지원하며, 문자열 시작 부분만 타겟팅)
+            cleanText = cleanText.replace(/^\{"kind"\s*:\s*"(text|html)"\s*,\s*"(text|html)"\s*:\s*"/, '');
+            
+            // 2. 뒷부분 껍데기 제거 (", "css":"" } 또는 "} 로 끝나는 모든 경우 대응)
+            cleanText = cleanText.replace(/"\s*(,\s*"css"\s*:\s*""\s*)?\}$/, '');
+            
+            // 3. 줄바꿈 이스케이프(\n)를 실제 줄바꿈으로 변환
+            cleanText = cleanText.replace(/\\n/g, '\n');
+            
+            // 4. 따옴표 이스케이프(\")를 실제 쌍따옴표로 변환
+            cleanText = cleanText.replace(/\\"/g, '"');
+
+            builder.addChapter(item.title, cleanText);
             logger.log(`✅ 복호화 성공: ${item.title}`, 'Downloader');
         } else {
-            logger.error(`⚠️ 복호화 실패 (스킵): ${item.title}`, 'Downloader');
+            throw new Error(`복호화 실패 (API 응답 없음)`);
         }
 
         await sleep(policy.min, policy.max);
@@ -123,8 +135,7 @@ export async function processItem(item, builder, siteInfo, iframe, parser, serie
 
     if (isNovel) {
         if (!extractedData.content) {
-            LogBox.getInstance().error(`⚠️ 텍스트 추출 실패: ${finalTitle}`, 'Downloader');
-            return;
+            throw new Error(`텍스트 본문 추출 실패 (DOM 또는 API 모두 감지 불가)`);
         }
         builder.addChapter(finalTitle, extractedData.content);
     } 
@@ -133,8 +144,7 @@ export async function processItem(item, builder, siteInfo, iframe, parser, serie
         const mergedUrls = extractedData.urls;
 
         if (mergedUrls.length === 0) {
-            logger.error(`⚠️ 이미지 감지 실패: ${finalTitle} — 해당 챕터 건너뜀`, 'Parser');
-            return;
+            throw new Error(`이미지 URL 감지 실패 (뷰어 컨테이너 또는 속성 탐색 불가)`);
         }
 
         // Fetch Images Parallel
@@ -201,6 +211,8 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
         logger.log('[Anti-Sleep] 자동 시작 실패 (사용자 상호작용 필요)', 'error');
     }
 
+    const failedEpisodes = [];  // [v1.8.1] 완전 실패 리스트
+    const partialFailures = []; // [v1.8.1] 부분 실패 리스트 (이미지 일부 누락)
     const siteInfo = await detectSite();
     if (!siteInfo) {
         alert("지원하지 않는 사이트이거나 다운로드 페이지가 아닙니다.");
@@ -251,9 +263,18 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
             logger.log('⚠️ folderInCbz 정책이 폐기되어 zipOfCbzs(배치)로 전환되었습니다.', 'warn');
         }
 
+        // [v1.8.2] Graceful Fallback for missing Drive configuration
+        if (destination === 'drive' && !isConfigValid()) {
+            alert('구글 드라이브 설정(Folder ID 등)이 누락되었습니다. 임시로 개별 로컬 다운로드 정책으로 전환합니다.');
+            logger.warn('⚠️ 구글 드라이브 설정 누락 감지. 정책을 개별 로컬 다운로드로 자동 전환합니다.', 'System');
+            buildingPolicy = 'individual';
+            destination = 'local';
+        }
+
+        const configNovelFormat = getConfig().novelFormat || 'epub';
         const EXTENSION_MAP = {
-            'Novel': 'epub',
-            'novel': 'epub',
+            'Novel': configNovelFormat,
+            'novel': configNovelFormat,
             'Webtoon': 'cbz',
             'webtoon': 'cbz',
             'Manga': 'cbz',
@@ -475,12 +496,14 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
         document.body.appendChild(iframe);
 
         // [v1.7.1] Novel Single Volume Mode Init
-        const novelMode = getConfig().novelMode;
+        const configParams = getConfig();
+        const novelMode = configParams.novelMode;
+        const novelFormat = configParams.novelFormat || 'epub';
         const isSingleVolume = isNovel && novelMode === 'singleVolume';
-        let masterEpubBuilder = null;
+        let masterNovelBuilder = null;
         if (isSingleVolume) {
-            masterEpubBuilder = new EpubBuilder();
-            logger.log('📙 소설 단행본 합본 모드 활성화 (마지막에 한 번에 저장됩니다)');
+            masterNovelBuilder = novelFormat === 'txt' ? new TxtBuilder() : new EpubBuilder();
+            logger.log(`📙 소설 단행본 합본 모드 활성화 (${novelFormat.toUpperCase()}) (마지막에 한 번에 저장됩니다)`);
         }
 
         // --- Processing Loop ---
@@ -516,21 +539,47 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
             // [v1.6.0] Strategy: Always use a FRESH builder per item for Kavita compatibility
             // [v1.7.1] Except for Novel Single Volume Mode
             if (isSingleVolume) {
-                currentBuilder = masterEpubBuilder;
+                currentBuilder = masterNovelBuilder;
             } else {
-                if (isNovel) currentBuilder = new EpubBuilder();
+                if (isNovel) currentBuilder = novelFormat === 'txt' ? new TxtBuilder() : new EpubBuilder();
                 else currentBuilder = new CbzBuilder();
             }
 
             // Process Item
             try {
-                await processItem(item, currentBuilder, siteInfo, iframe, parser, seriesTitle);
+                const result = await processItem(item, currentBuilder, siteInfo, iframe, parser, seriesTitle);
+                
+                // [v1.8.1] 부분 실패 체크 (이미지 누락 여부)
+                if (currentBuilder && currentBuilder.chapters) {
+                    const latestChapter = currentBuilder.chapters[currentBuilder.chapters.length - 1];
+                    if (latestChapter && Array.isArray(latestChapter.images)) {
+                        const missingCount = latestChapter.images.filter(img => img.isMissing).length;
+                        if (missingCount > 0) {
+                            console.warn(`[Downloader] 부분 실패 감지: ${item.title} (이미지 ${missingCount}개 누락)`);
+                            partialFailures.push({
+                                num: item.num,
+                                title: item.title,
+                                missingCount: missingCount
+                            });
+                        }
+                    }
+                }
+
                 if (isSingleVolume) {
-                    logger.log(`📥 챕터 추가 완료: ${item.title} (현재 ${masterEpubBuilder.chapters.length}개)`, 'Downloader');
+                    const currentSize = currentBuilder.chapters ? currentBuilder.chapters.length : (currentBuilder.content ? currentBuilder.content.split('===').length - 1 : 0);
+                    logger.log(`📥 챕터 추가 완료: ${item.title} (현재 ${currentSize}개)`, 'Downloader');
                 }
             } catch (err) {
                 console.error(err);
-                logger.error(`항목 처리 실패 (${item.title}): ${err.message}`, 'Downloader');
+                const errorMsg = err.message || "알 수 없는 오류";
+                logger.error(`항목 처리 실패 (${item.title}): ${errorMsg}`, 'Downloader');
+                
+                // [v1.8.1] 실패 내역 저장
+                failedEpisodes.push({
+                    num: item.num,
+                    title: item.title,
+                    error: errorMsg
+                });
                 continue; // Skip faulty item but continue loop
             }
 
@@ -578,13 +627,13 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
                     console.log(`[MasterZip] 추가 중: ${fullFilename}.${extension}`);
                     masterZip.file(`${fullFilename}.${extension}`, blob);
                     
-                    // [v1.6.0] 5-Chapter Batching Logic
-                    // Every 5 items (or at the end), save the batch and clear memory
+                    // [v1.8.2] Batching Logic
+                    // Novel: Infinite batch. Webtoon: 20 per batch to prevent OOM
                     const processedCount = i + 1;
                     const isLastItem = (i === list.length - 1);
-                    const BATCH_SIZE = 5;
+                    const BATCH_SIZE = isNovel ? Infinity : 20;
 
-                    if (processedCount % BATCH_SIZE === 0 || isLastItem) {
+                    if ((BATCH_SIZE !== Infinity && processedCount % BATCH_SIZE === 0) || isLastItem) {
                         const batchNum = Math.ceil(processedCount / BATCH_SIZE);
                         const batchFilename = `${rootFolder}_Part${batchNum}`;
                         
@@ -707,9 +756,10 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
         }
 
 
-        // [v1.7.1] Finalize Single Volume EPUB
-        if (isSingleVolume && masterEpubBuilder) {
-            if (masterEpubBuilder.chapters.length > 0) {
+        // [v1.7.1] Finalize Single Volume EPUB/TXT
+        if (isSingleVolume && masterNovelBuilder) {
+            const hasContent = masterNovelBuilder.chapters ? masterNovelBuilder.chapters.length > 0 : masterNovelBuilder.content.length > 0;
+            if (hasContent) {
                 try {
                     // [v1.7.1 Update] Use Chapter Range for Filename instead of "(합본)"
                     // [v1.7.1 Update] Use Chapter Range for Filename instead of "(합본)" - Safe Parsing
@@ -729,14 +779,14 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
                     
                     logger.log(`📚 단행본 조립 및 저장 중... (${finalFilename})`);
                     
-                    const finalZip = await masterEpubBuilder.build({
+                    const finalZip = await masterNovelBuilder.build({
                         series: seriesTitle || rootFolder,
                         title: seriesTitle || rootFolder,
                         writer: siteName
                     });
                     const finalBlob = await finalZip.generateAsync({ type: "blob" });
                     
-                    await saveFile(finalBlob, finalFilename, destination, 'epub', {
+                    await saveFile(finalBlob, finalFilename, destination, extension, {
                         folderName: rootFolder,
                         category: category
                     });
@@ -765,8 +815,11 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
             );
         }
 
-        logger.success(`✅ 다운로드 완료!`);
-        Notifier.notify('TokiSync', `다운로드 완료! (${list.length}개 항목)`);
+        logger.success(`✅ 모든 작업 완료!`);
+        Notifier.notify('TokiSync', `다운로드 완료! (${list.length - failedEpisodes.length}개 성공, ${failedEpisodes.length}개 실패)`);
+
+        // [v1.8.1] 고도화된 실패 리포트 생성 및 저장 (MCP 검토 반영)
+        await generateDownloadReport(seriesTitle || rootFolder, seriesId, list.length, failedEpisodes, partialFailures);
 
     } catch (error) {
         console.error(error);
@@ -871,4 +924,57 @@ async function fetchImages(imageUrls) {
     });
 
     return await Promise.all(promises);
+}
+
+/**
+ * [v1.8.1] 다운로드 실패 리포트 생성 및 다운로드 (MCP 검토 의견 반영)
+ * @private
+ */
+async function generateDownloadReport(seriesTitle, seriesId, listCount, failedEpisodes, partialFailures) {
+    const logger = LogBox.getInstance();
+    if (failedEpisodes.length === 0 && partialFailures.length === 0) return;
+
+    logger.warn(`⚠️ 다운로드 중 일부 오류가 발견되었습니다. 리포트를 생성합니다.`, 'System');
+
+    const timestamp = new Date().toLocaleString();
+    const lines = [
+        `[TokiSync 다운로드 리포트]`,
+        `작품명: ${seriesTitle}`,
+        `일시: ${timestamp}`,
+        `--------------------------------------------------`,
+        `■ 요약 (Summary)`,
+        `- 총 시도: ${listCount}개`,
+        `- 성공: ${listCount - failedEpisodes.length}개`,
+        `- 완전 실패: ${failedEpisodes.length}개 (파일이 생성되지 않음)`,
+        `- 부분 실패: ${partialFailures.length}개 (파일은 생성되었으나 일부 데이터 누락)`,
+        `--------------------------------------------------`,
+    ];
+
+    if (failedEpisodes.length > 0) {
+        lines.push(``, `■ 완전 실패 목록 (Critical Failures)`, `(원인 분석 후 해당 회차만 재시도해 보세요)`);
+        failedEpisodes.forEach(fail => {
+            lines.push(`- [${fail.num}] ${fail.title} : ${fail.error}`);
+        });
+    }
+
+    if (partialFailures.length > 0) {
+        lines.push(``, `■ 부분 실패 목록 (Warnings/Partial Success)`, `(다운로드는 완료되었으나 일부 페이지가 누락된 항목입니다)`);
+        partialFailures.forEach(fail => {
+            lines.push(`- [${fail.num}] ${fail.title} : 이미지 ${fail.missingCount}개 누락`);
+        });
+    }
+
+    lines.push(``, `--------------------------------------------------`, `위 리포트를 참고하여 누락된 회차를 확인하시기 바랍니다.`);
+
+    const reportContent = lines.join('\n');
+    const reportBlob = new Blob([reportContent], { type: 'text/plain;charset=utf-8' });
+    const cleanSeriesTitle = (seriesTitle || "Unknown").replace(/[<>:"/\\|?*]/g, '').trim();
+    const reportFilename = `${cleanSeriesTitle}_다운로드_실패_리포트`;
+
+    try {
+        await saveFile(reportBlob, reportFilename, 'local', 'txt');
+        logger.success(`✅ 실패 리포트 다운로드 완료: ${reportFilename}.txt`);
+    } catch (e) {
+        console.error('[Downloader] 리포트 저장 실패:', e);
+    }
 }

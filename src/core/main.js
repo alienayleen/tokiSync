@@ -1,10 +1,11 @@
 import { tokiDownload, processItem } from './downloader.js';
 import { detectSite, getMaxEpisodes, parseEpisodeRange } from './detector.js'; 
-import { showConfigModal, getConfig, setConfig } from './config.js';
+import { showConfigModal, getConfig, setConfig, isConfigValid } from './config.js';
 import { LogBox, markDownloadedItems, MenuModal } from './ui.js';
 import { extractEpisodeData } from './extractor.js';
 import { EpubBuilder } from './epub.js';
 import { CbzBuilder } from './cbz.js';
+import { TxtBuilder } from './txt.js';
 import { fetchHistory } from './gas.js';
 import { ParserFactory } from './parsers/ParserFactory.js';
 import { getOAuthToken } from './network.js';
@@ -235,8 +236,11 @@ export async function main() {
                 // 2. 빌더 생성 (카테고리에 따라)
                 const isNovel = (siteInfo.category === 'Novel' || siteInfo.category === 'novel');
                 let builder;
+                let extension = 'cbz';
                 if (isNovel) {
-                    builder = new EpubBuilder(seriesTitle, { author: "TokiSync" });
+                    const novelFormat = getConfig().novelFormat || 'epub';
+                    builder = novelFormat === 'txt' ? new TxtBuilder() : new EpubBuilder(seriesTitle, { author: "TokiSync" });
+                    extension = novelFormat;
                 } else {
                     builder = new CbzBuilder(title);
                 }
@@ -262,7 +266,6 @@ export async function main() {
                 });
                 
                 const blob = await zip.generateAsync({ type: "blob" });
-                const extension = isNovel ? 'epub' : 'cbz';
                 const filename = `${tempItem.num} - ${title}`;
 
                 await saveFile(blob, filename, 'local', extension, { category: siteInfo.category });
@@ -384,6 +387,11 @@ export async function main() {
             let category = 'Webtoon';
             if (siteInfo.site === '북토끼') category = 'Novel';
             else if (siteInfo.site === '마나토끼') category = 'Manga';
+
+            if (!isConfigValid()) {
+                console.log('[TokiSync] GAS 설정을 찾을 수 없어 이력 동기화를 건너뜁니다.');
+                return;
+            }
 
             console.log(`[TokiSync] Fetching history for: ${rootFolder} (${category})`);
             const history = await fetchHistory(rootFolder, category);

@@ -52,6 +52,41 @@ export class GenericParser extends BaseParser {
         return val;
     }
 
+    /**
+     * [v1.8.1] 동적 레이지 키 탐지 (Toki 등 보안 우회용)
+     * @private
+     */
+    _detectDynamicKey(doc, config) {
+        if (!config || !config.regex) return null;
+        
+        try {
+            // 1. 스크립트 태그 우선 스캔 (성능 및 정확도 최적화)
+            const scripts = doc.querySelectorAll('script');
+            const regex = new RegExp(config.regex, 'i');
+            
+            for (const script of scripts) {
+                const match = (script.textContent || "").match(regex);
+                if (match) {
+                    const key = match[1] || match[0];
+                    console.log(`[GenericParser] 스크립트 내 동적 키 탐지 성공: ${key}`);
+                    return key;
+                }
+            }
+            
+            // 2. 전체 HTML 스캔 (폴백)
+            const html = doc.documentElement.innerHTML || "";
+            const match = html.match(regex);
+            if (match) {
+                const key = match[1] || match[0];
+                console.log(`[GenericParser] HTML 내 동적 키 탐지 성공: ${key}`);
+                return key;
+            }
+        } catch (e) {
+            console.warn('[GenericParser] 동적 키 탐지 중 오류 발생:', e);
+        }
+        return null;
+    }
+
     async getListItems() {
         const listCfg = this.rule.list || {};
         let container = document.querySelector(listCfg.container);
@@ -112,6 +147,15 @@ export class GenericParser extends BaseParser {
     getImageList(iframeDocument) {
         const viewerCfg = this.rule.viewer || {};
 
+        // [v1.8.1] 동적 키 탐지 수행
+        let dynamicLazyAttr = null;
+        if (viewerCfg.keyDiscovery) {
+            const key = this._detectDynamicKey(iframeDocument, viewerCfg.keyDiscovery);
+            if (key) {
+                dynamicLazyAttr = (viewerCfg.keyDiscovery.prefix || 'data-') + key;
+            }
+        }
+
         // 1. 헤드리스(Headless) 정규식 추출 지원 (Next.js 페이로드 등 DOM 미렌더링 대응)
         if (viewerCfg.imageRegex) {
             const html = iframeDocument.documentElement.innerHTML || iframeDocument.body.innerHTML;
@@ -145,7 +189,11 @@ export class GenericParser extends BaseParser {
 
         return imgs.map(img => {
             let foundUrl = null;
-            const lazyAttrs = viewerCfg.lazyAttrOptions || ['data-src', 'data-lazy', 'src'];
+            // [v1.8.1] 동적 키가 발견되면 최우선 순위로 설정하여 탐지 성공률 극대화
+            const lazyAttrs = [
+                ...(dynamicLazyAttr ? [dynamicLazyAttr] : []),
+                ...(viewerCfg.lazyAttrOptions || ['data-src', 'data-lazy', 'src'])
+            ];
 
             for (const attr of lazyAttrs) {
                 const val = img.getAttribute(attr);

@@ -215,8 +215,8 @@ async function uploadViaGASRelay(blob, folderName, fileName, options = {}) {
  * @returns {Promise<string[]>} List of completed episode IDs
  */
 export async function fetchHistory(seriesTitle, category = 'Webtoon') {
+    if (!isConfigValid()) return [];
     const config = getConfig();
-    if (!config.gasUrl) return [];
     const logger = LogBox.getInstance();
 
     console.log(`[GAS] 다운로드 기록 조회 중... (${seriesTitle})`);
@@ -266,8 +266,8 @@ export async function fetchHistory(seriesTitle, category = 'Webtoon') {
  * @returns {Promise<Array>} List of cached episodes
  */
 export async function getBooksByCacheId(cacheFileId) {
+    if (!isConfigValid()) return [];
     const config = getConfig();
-    if (!config.gasUrl) return [];
     const logger = LogBox.getInstance();
 
     console.log(`[GAS] 캐시 파일 직행 조회 중... (${cacheFileId})`);

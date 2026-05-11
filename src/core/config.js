@@ -6,6 +6,7 @@ export const CFG_API_KEY = "TOKI_API_KEY";
 export const CFG_SLEEP_MODE = "TOKI_SLEEP_MODE";
 export const CFG_SMART_SKIP_RATIO = "TOKI_SMART_SKIP_RATIO";
 export const CFG_NOVEL_MODE = "TOKI_NOVEL_MODE";
+export const CFG_NOVEL_FORMAT = "TOKI_NOVEL_FORMAT";
 export const CFG_REMOTE_RULE_URL = "TOKI_REMOTE_RULE_URL";
 export const CFG_CUSTOM_RULES = "TOKI_CUSTOM_RULES";
 
@@ -42,6 +43,7 @@ export function getConfig() {
         sleepMode: GM_getValue(CFG_SLEEP_MODE, "agile"), // default: agile
         smartSkipRatio: parseInt(GM_getValue(CFG_SMART_SKIP_RATIO, "50"), 10), // default 50% of Max
         novelMode: GM_getValue(CFG_NOVEL_MODE, "perChapter"), // default: chapter-by-chapter
+        novelFormat: GM_getValue(CFG_NOVEL_FORMAT, "epub"), // default: EPUB
         remoteRuleUrl: GM_getValue(CFG_REMOTE_RULE_URL, ""),
         customRules: GM_getValue(CFG_CUSTOM_RULES, "[]")
     };
@@ -85,9 +87,25 @@ export function showConfigModal() {
                 border: 1px solid rgba(255, 255, 255, 0.1);
                 box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
                 border-radius: 16px;
-                padding: 24px;
-                width: 400px;
+                padding: 28px;
+                width: 500px;
+                max-height: 85vh;
+                overflow-y: auto;
                 color: #fff;
+            }
+            /* Custom Scrollbar for Modal */
+            .toki-modal-container::-webkit-scrollbar {
+                width: 8px;
+            }
+            .toki-modal-container::-webkit-scrollbar-track {
+                background: transparent;
+            }
+            .toki-modal-container::-webkit-scrollbar-thumb {
+                background: rgba(255, 255, 255, 0.2);
+                border-radius: 4px;
+            }
+            .toki-modal-container::-webkit-scrollbar-thumb:hover {
+                background: rgba(255, 255, 255, 0.4);
             }
             .toki-modal-header {
                 font-size: 20px; font-weight: 600; margin-bottom: 20px;
@@ -187,10 +205,18 @@ export function showConfigModal() {
             </div>
             
             <div class="toki-input-group">
-                <label class="toki-label">소설 패키징 방식 (Novel EPUB)</label>
+                <label class="toki-label">소설 패키징 방식 (Novel Mode)</label>
                 <select id="toki-cfg-novel-mode" class="toki-select">
                     <option value="perChapter">개별 회차 저장 (1회차 = 1파일)</option>
                     <option value="singleVolume">단행본 합본 저장 (선택 범위 = 1파일)</option>
+                </select>
+            </div>
+
+            <div class="toki-input-group">
+                <label class="toki-label">소설 출력 포맷 (Novel Format)</label>
+                <select id="toki-cfg-novel-format" class="toki-select">
+                    <option value="epub">EPUB (전자책 표준)</option>
+                    <option value="txt">TXT (일반 텍스트)</option>
                 </select>
             </div>
 
@@ -228,6 +254,9 @@ export function showConfigModal() {
     const novelModeSelect = document.getElementById('toki-cfg-novel-mode');
     if(novelModeSelect) novelModeSelect.value = config.novelMode;
 
+    const novelFormatSelect = document.getElementById('toki-cfg-novel-format');
+    if(novelFormatSelect) novelFormatSelect.value = config.novelFormat;
+
     document.getElementById('toki-btn-cancel').onclick = () => overlay.remove();
     
     document.getElementById('toki-btn-save').onclick = () => {
@@ -238,6 +267,7 @@ export function showConfigModal() {
         const newSleepMode = document.getElementById('toki-cfg-sleepmode').value;
         const newSmartSkip = document.getElementById('toki-cfg-smartskip').value;
         const newNovelMode = document.getElementById('toki-cfg-novel-mode').value;
+        const newNovelFormat = document.getElementById('toki-cfg-novel-format').value;
         const newRemoteRule = document.getElementById('toki-cfg-remote-rule').value.trim();
         const newCustomRule = document.getElementById('toki-cfg-custom-rule').value.trim() || '[]';
 
@@ -276,6 +306,7 @@ export function showConfigModal() {
         setConfig(CFG_SLEEP_MODE, newSleepMode);
         setConfig(CFG_SMART_SKIP_RATIO, newSmartSkip);
         setConfig(CFG_NOVEL_MODE, newNovelMode);
+        setConfig(CFG_NOVEL_FORMAT, newNovelFormat);
         setConfig(CFG_REMOTE_RULE_URL, newRemoteRule);
         setConfig(CFG_CUSTOM_RULES, validCustomRule);
 
