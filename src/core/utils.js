@@ -516,3 +516,33 @@ export async function getImageDimensions(blob) {
         return { width: 0, height: 0 };
     }
 }
+
+/**
+ * [v1.8.4] GM_xmlhttpRequest 기반의 안전한 Blob Fetcher
+ * 브라우저 fetch()로 인해 발생하는 CORS 및 Referer 차단을 우회합니다.
+ * @param {string} url 
+ * @returns {Promise<Blob>}
+ */
+export async function fetchBlobWithXHR(url) {
+    return new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: url,
+            headers: {
+                "Referer": window.location.origin,
+                "User-Agent": navigator.userAgent
+            },
+            responseType: 'blob',
+            timeout: 30000,
+            onload: (res) => {
+                if (res.status >= 200 && res.status < 300) {
+                    resolve(res.response);
+                } else {
+                    reject(new Error(`HTTP ${res.status}: ${url}`));
+                }
+            },
+            onerror: (err) => reject(new Error(`Network Error: ${url}`)),
+            ontimeout: () => reject(new Error(`Timeout: ${url}`))
+        });
+    });
+}

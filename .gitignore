@@ -36,3 +36,8 @@ google_app_script/TokiSync_Server_Bundle.gs
 
 # AI Agent Context & Brain (Local only)
 brain/
+
+# Graphify Output (Exclude internal state & cache, keep report & html)
+graphify-out/*
+!graphify-out/GRAPH_REPORT.md
+!graphify-out/graph.html

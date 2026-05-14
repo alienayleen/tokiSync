@@ -68,173 +68,96 @@ export function showConfigModal() {
 
     const config = getConfig();
 
-    // -- Styles --
-    const styleId = 'toki-config-style';
-    if (!document.getElementById(styleId)) {
-        const style = document.createElement('style');
-        style.id = styleId;
-        style.innerHTML = `
-            .toki-modal-overlay {
-                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-                background: rgba(0, 0, 0, 0.6);
-                backdrop-filter: blur(5px);
-                z-index: 10000;
-                display: flex; justify-content: center; align-items: center;
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            }
-            .toki-modal-container {
-                background: rgba(30, 32, 35, 0.85);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-                border-radius: 16px;
-                padding: 28px;
-                width: 500px;
-                max-height: 85vh;
-                overflow-y: auto;
-                color: #fff;
-            }
-            /* Custom Scrollbar for Modal */
-            .toki-modal-container::-webkit-scrollbar {
-                width: 8px;
-            }
-            .toki-modal-container::-webkit-scrollbar-track {
-                background: transparent;
-            }
-            .toki-modal-container::-webkit-scrollbar-thumb {
-                background: rgba(255, 255, 255, 0.2);
-                border-radius: 4px;
-            }
-            .toki-modal-container::-webkit-scrollbar-thumb:hover {
-                background: rgba(255, 255, 255, 0.4);
-            }
-            .toki-modal-header {
-                font-size: 20px; font-weight: 600; margin-bottom: 20px;
-                text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
-            }
-            .toki-input-group { margin-bottom: 16px; }
-            .toki-label { display: block; font-size: 12px; color: #aaa; margin-bottom: 6px; }
-            .toki-input, .toki-select, .toki-textarea {
-                width: 100%; padding: 10px;
-                background: rgba(0, 0, 0, 0.3);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 8px;
-                color: #fff; font-size: 14px;
-                box-sizing: border-box;
-            }
-            .toki-textarea {
-                font-family: monospace;
-                font-size: 12px;
-                resize: vertical;
-                min-height: 100px;
-            }
-            .toki-input:focus, .toki-select:focus, .toki-textarea:focus {
-                outline: none; border-color: #6a5acd;
-                box-shadow: 0 0 0 2px rgba(106, 90, 205, 0.3);
-            }
-            .toki-modal-footer {
-                display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px;
-            }
-            .toki-btn {
-                padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer;
-                font-size: 14px; font-weight: 500; transition: all 0.2s;
-            }
-            .toki-btn-cancel { background: transparent; color: #aaa; border: 1px solid rgba(255,255,255,0.1); }
-            .toki-btn-cancel:hover { background: rgba(255,255,255,0.05); color: #fff; }
-            .toki-btn-save {
-                background: linear-gradient(135deg, #6a5acd, #483d8b);
-                color: #fff;
-                box-shadow: 0 4px 15px rgba(106, 90, 205, 0.4);
-            }
-            .toki-btn-save:hover { filter: brightness(1.1); transform: translateY(-1px); }
-        `;
-        document.head.appendChild(style);
-    }
-
-    // -- HTML Structure --
+    // -- HTML Structure (v1.9.1 Glassmorphism) --
     const overlay = document.createElement('div');
     overlay.id = 'toki-config-modal';
     overlay.className = 'toki-modal-overlay';
     
     overlay.innerHTML = `
-        <div class="toki-modal-container">
-            <div class="toki-modal-header">TokiSync 설정</div>
+        <div class="toki-modal toki-modal-container" style="padding: 32px; width: 520px; max-height: 85vh; overflow-y: auto;">
+            <div class="toki-modal-header" style="border:none; margin-bottom: 24px;">
+                <div class="toki-modal-title" style="font-size: 20px;">🛠️ 상세 설정 (Advanced)</div>
+            </div>
             
-            <div class="toki-input-group">
+            <div class="toki-section-title" style="margin-top:0;">Cloud & Storage</div>
+            <div class="toki-control-group">
                 <label class="toki-label">GAS Script ID</label>
                 <input type="text" id="toki-cfg-gas-id" class="toki-input" placeholder="AKfycb..." value="${config.gasId}">
             </div>
 
-            <div class="toki-input-group">
+            <div class="toki-control-group">
                 <label class="toki-label">Google Drive Folder ID</label>
                 <input type="text" id="toki-cfg-folder" class="toki-input" placeholder="Folder ID" value="${config.folderId}">
             </div>
 
-            <div class="toki-input-group">
+            <div class="toki-control-group">
                 <label class="toki-label">API Key (보안)</label>
                 <input type="password" id="toki-cfg-apikey" class="toki-input" placeholder="API Key" value="${config.apiKey}">
             </div>
 
-            <div class="toki-input-group">
+            <div class="toki-section-title">Global Policies</div>
+            <div class="toki-control-group">
                 <label class="toki-label">다운로드 정책</label>
                 <select id="toki-cfg-policy" class="toki-select">
-                    <option value="individual">1. 개별 파일 (Individual)</option>
-                    <option value="zipOfCbzs">2. 챕터 묶음 (ZIP of CBZs)</option>
-                    <option value="native">3. 자동 분류 (Native)</option>
-                    <option value="drive">4. 드라이브 업로드 (GoogleDrive)</option>
-                    <option value="folderInCbz" style="display:none;">[구버전] 통합 파일 (Folder in CBZ/EPUB)</option>
+                    <option value="individual">개별 파일 (Individual)</option>
+                    <option value="zipOfCbzs">챕터 묶음 (ZIP of CBZs)</option>
+                    <option value="native">자동 분류 (Native)</option>
+                    <option value="drive">드라이브 업로드 (GoogleDrive)</option>
                 </select>
             </div>
 
-            <div class="toki-input-group">
+            <div class="toki-control-group">
                 <label class="toki-label">다운로드 속도</label>
                 <select id="toki-cfg-sleepmode" class="toki-select">
                     <option value="agile">빠름 (1-3초)</option>
                     <option value="cautious">신중 (2-5초)</option>
                     <option value="thorough">철저 (3-8초)</option>
+                    <option value="slow">느림 (5-15초)</option>
+                    <option value="very_slow">매우 느림 (10-30초)</option>
                 </select>
             </div>
 
-            <div class="toki-input-group">
-                <label class="toki-label">Smart Skip 민감도 (최고 용량 기준)</label>
+            <div class="toki-control-group">
+                <label class="toki-label">Smart Skip 민감도</label>
                 <select id="toki-cfg-smartskip" class="toki-select">
-                    <option value="90">90% (매우 민감: 최고 용량의 90% 미만 재다운로드)</option>
-                    <option value="80">80% (민감: 최고 용량의 80% 미만 재다운로드)</option>
-                    <option value="70">70% (보통: 최고 용량의 70% 미만 재다운로드)</option>
-                    <option value="50">50% (기본: 최고 용량 대비 반토막 난 파일만 감지)</option>
+                    <option value="90">90% (매우 민감)</option>
+                    <option value="80">80% (민감)</option>
+                    <option value="70">70% (보통)</option>
+                    <option value="50">50% (기본)</option>
                 </select>
             </div>
             
-            <div class="toki-input-group">
-                <label class="toki-label">소설 패키징 방식 (Novel Mode)</label>
-                <select id="toki-cfg-novel-mode" class="toki-select">
-                    <option value="perChapter">개별 회차 저장 (1회차 = 1파일)</option>
-                    <option value="singleVolume">단행본 합본 저장 (선택 범위 = 1파일)</option>
-                </select>
+            <div class="toki-section-title">Format & Rules</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                <div class="toki-control-group">
+                    <label class="toki-label">소설 포맷</label>
+                    <select id="toki-cfg-novel-format" class="toki-select">
+                        <option value="epub">EPUB</option>
+                        <option value="txt">TXT</option>
+                    </select>
+                </div>
+                <div class="toki-control-group">
+                    <label class="toki-label">소설 패키징</label>
+                    <select id="toki-cfg-novel-mode" class="toki-select">
+                        <option value="perChapter">개별 회차</option>
+                        <option value="singleVolume">범위 합본</option>
+                    </select>
+                </div>
             </div>
 
-            <div class="toki-input-group">
-                <label class="toki-label">소설 출력 포맷 (Novel Format)</label>
-                <select id="toki-cfg-novel-format" class="toki-select">
-                    <option value="epub">EPUB (전자책 표준)</option>
-                    <option value="txt">TXT (일반 텍스트)</option>
-                </select>
-            </div>
-
-            <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 20px 0;">
-
-            <div class="toki-input-group">
+            <div class="toki-control-group">
                 <label class="toki-label">원격 파싱 룰 URL (JSON)</label>
                 <input type="text" id="toki-cfg-remote-rule" class="toki-input" placeholder="https://example.com/rules.json" value="${config.remoteRuleUrl}">
             </div>
 
-            <div class="toki-input-group">
+            <div class="toki-control-group">
                 <label class="toki-label">커스텀 파싱 룰 (JSON Array)</label>
-                <textarea id="toki-cfg-custom-rule" class="toki-textarea" placeholder="[{...}]">${config.customRules}</textarea>
+                <textarea id="toki-cfg-custom-rule" class="toki-textarea" style="min-height: 120px; font-family: monospace;" placeholder="[{...}]">${config.customRules}</textarea>
             </div>
 
-            <div class="toki-modal-footer">
-                <button id="toki-btn-cancel" class="toki-btn toki-btn-cancel">취소</button>
-                <button id="toki-btn-save" class="toki-btn toki-btn-save">저장</button>
+            <div class="toki-modal-footer" style="display: flex; gap: 12px; margin-top: 32px;">
+                <button id="toki-btn-cancel" class="toki-btn-action toki-btn-secondary" style="flex: 1; height: 52px;">취소</button>
+                <button id="toki-btn-save" class="toki-btn-action" style="flex: 1; height: 52px; background: var(--toki-primary);">설정 저장하기</button>
             </div>
         </div>
     `;
