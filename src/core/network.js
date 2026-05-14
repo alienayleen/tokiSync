@@ -26,7 +26,8 @@ async function fetchToken() {
             data: JSON.stringify({
                 folderId: config.folderId,
                 type: 'view_get_token',
-                apiKey: config.apiKey
+                apiKey: config.apiKey,
+                protocolVersion: 3
             }),
             headers: { 'Content-Type': 'text/plain' },
             timeout: 30000,
@@ -104,7 +105,7 @@ async function getOrCreateFolder(folderName, parentId, token, category = 'Webtoo
     // 1. Check for legacy folder in root (migration compatibility)
     const legacySearchUrl = `https://www.googleapis.com/drive/v3/files?` +
         `q=name='${encodeURIComponent(folderName)}' and '${parentId}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'` +
-        `&fields=files(id,name)`;
+        `&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`;
     
     const legacyResult = await new Promise((resolve, reject) => {
         GM_xmlhttpRequest({
@@ -133,7 +134,7 @@ async function getOrCreateFolder(folderName, parentId, token, category = 'Webtoo
     const categoryName = category || 'Webtoon';
     const categorySearchUrl = `https://www.googleapis.com/drive/v3/files?` +
         `q=name='${categoryName}' and '${parentId}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'` +
-        `&fields=files(id,name)`;
+        `&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`;
     
     const categoryResult = await new Promise((resolve, reject) => {
         GM_xmlhttpRequest({
@@ -163,7 +164,7 @@ async function getOrCreateFolder(folderName, parentId, token, category = 'Webtoo
         const createCategoryResult = await new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
                 method: 'POST',
-                url: 'https://www.googleapis.com/drive/v3/files',
+                url: 'https://www.googleapis.com/drive/v3/files?supportsAllDrives=true',
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
@@ -205,7 +206,7 @@ async function getOrCreateFolder(folderName, parentId, token, category = 'Webtoo
 
     const seriesSearchUrl = `https://www.googleapis.com/drive/v3/files?` +
         `q=${queryPart} and '${categoryFolderId}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'` +
-        `&fields=files(id,name)`;
+        `&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`;
     
     const seriesResult = await new Promise((resolve, reject) => {
         GM_xmlhttpRequest({
@@ -246,7 +247,7 @@ async function getOrCreateFolder(folderName, parentId, token, category = 'Webtoo
     const createResult = await new Promise((resolve, reject) => {
         GM_xmlhttpRequest({
             method: 'POST',
-            url: 'https://www.googleapis.com/drive/v3/files',
+            url: 'https://www.googleapis.com/drive/v3/files?supportsAllDrives=true',
             headers: {
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json'
@@ -279,7 +280,7 @@ async function getOrCreateThumbnailFolder(token, parentId) {
     const thumbName = '_Thumbnails';
     const searchUrl = `https://www.googleapis.com/drive/v3/files?` +
         `q=name='${thumbName}' and '${parentId}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'` +
-        `&fields=files(id,name)`;
+        `&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`;
     
     const result = await new Promise((resolve, reject) => {
         GM_xmlhttpRequest({
@@ -302,7 +303,7 @@ async function getOrCreateThumbnailFolder(token, parentId) {
     const createResult = await new Promise((resolve, reject) => {
         GM_xmlhttpRequest({
             method: 'POST',
-            url: 'https://www.googleapis.com/drive/v3/files',
+            url: 'https://www.googleapis.com/drive/v3/files?supportsAllDrives=true',
             headers: {
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json'
@@ -404,7 +405,7 @@ export async function uploadDirect(blob, folderName, fileName, metadata = {}) {
         try {
             const searchUrl = `https://www.googleapis.com/drive/v3/files?` +
                 `q=name='${finalFileName}' and '${targetFolderId}' in parents and trashed=false` +
-                `&fields=files(id,name)`;
+                `&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`;
             
             const searchRes = await new Promise((res, rej) => {
                 GM_xmlhttpRequest({
@@ -432,8 +433,8 @@ export async function uploadDirect(blob, folderName, fileName, metadata = {}) {
         };
 
         const sessionUrl = existingFileId 
-            ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=resumable`
-            : `https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable`;
+            ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=resumable&supportsAllDrives=true`
+            : `https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true`;
 
         uploadUrl = await new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
@@ -519,7 +520,7 @@ export async function fetchHistoryDirect(seriesTitle, category = 'Webtoon') {
         const searchUrl = `https://www.googleapis.com/drive/v3/files?` +
             `q='${currentSeriesFolderId}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'` +
             `&fields=files(id,name,size)` +
-            `&pageSize=1000`;
+            `&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true`;
             
         const result = await new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
@@ -622,7 +623,7 @@ export async function checkSingleHistoryDirect(folderId, episodeNumStr) {
         const searchUrl = `https://www.googleapis.com/drive/v3/files?` +
             `q=${encodeURIComponent(query)} and '${folderId}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'` +
             `&fields=files(id,size,name)` +
-            `&pageSize=10`; // Safe margin if multiple files contain the number
+            `&pageSize=10&supportsAllDrives=true&includeItemsFromAllDrives=true`; // Safe margin if multiple files contain the number
             
         const result = await new Promise((resolve, reject) => {
             GM_xmlhttpRequest({

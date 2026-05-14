@@ -1,4 +1,4 @@
-import { sleep, waitIframeLoad, saveFile, getCommonPrefix, scrollToLoad } from './utils.js';
+import { sleep, waitIframeLoad, saveFile, getCommonPrefix, scrollToLoad, fetchBlobWithXHR } from './utils.js';
 import { extractEpisodeData } from './extractor.js';
 import { ParserFactory } from './parsers/ParserFactory.js';
 import { detectSite } from './detector.js';
@@ -360,8 +360,7 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
                 const thumbnailUrl = parser.getThumbnailUrl();
                 if (thumbnailUrl) {
                     logger.log('📷 시리즈 썸네일 업로드 중...');
-                    const thumbResponse = await fetch(thumbnailUrl);
-                    const thumbBlob = await thumbResponse.blob();
+                    const thumbBlob = await fetchBlobWithXHR(thumbnailUrl);
                     
                     // Upload as 'cover.jpg' - network.js will auto-redirect to _Thumbnails/{ID}.jpg
                     // saveFile(data, filename, type, extension, metadata)
@@ -845,8 +844,7 @@ async function fetchImages(imageUrls) {
         
         while (retries > 0) {
             try {
-                const response = await fetch(src);
-                const blob = await response.blob();
+                const blob = await fetchBlobWithXHR(src);
                 
                 if (blob.size === 0) {
                     throw new Error("빈 이미지 데이터 (Blob size 0)");

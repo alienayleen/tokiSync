@@ -4,8 +4,11 @@
  */
 
 import { startSilentAudio, stopSilentAudio, isAudioRunning } from './anti_sleep.js';
-import { getConfig } from './config.js';
+import { getConfig, setConfig } from './config.js';
 import { ParserFactory } from './parsers/ParserFactory.js';
+import { RuleManager } from './parsers/RuleManager.js';
+import { GenericParser } from './parsers/GenericParser.js';
+import { extractEpisodeData } from './extractor.js';
 
 export class LogBox {
     static instance = null;
@@ -26,144 +29,7 @@ export class LogBox {
         if (!document.getElementById(styleId)) {
             const style = document.createElement('style');
             style.id = styleId;
-            style.innerHTML = `
-                #toki-logbox {
-                    position: fixed; bottom: 90px; right: 100px;
-                    width: 320px; height: 200px;
-                    background: rgba(0, 0, 0, 0.85);
-                    color: #0f0; font-family: monospace; font-size: 11px;
-                    border: 1px solid #333; border-radius: 8px;
-                    padding: 0; z-index: 9999;
-                    display: none; flex-direction: column;
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-                    backdrop-filter: blur(2px);
-                }
-                #toki-logbox-header {
-                    padding: 5px 10px; background: rgba(255,255,255,0.1);
-                    border-bottom: 1px solid #333;
-                    display: flex; justify-content: space-between; align-items: center;
-                    cursor: move; /* Dragging not implemented yet but visual cue */
-                }
-                #toki-logbox-title { font-weight: bold; color: #fff; }
-                #toki-logbox-controls span { cursor: pointer; margin-left: 8px; color: #aaa; }
-                #toki-logbox-controls span:hover { color: #fff; }
-                #toki-logbox-content {
-                    flex: 1; overflow-y: auto; padding: 10px; margin: 0;
-                    list-style: none;
-                }
-                #toki-logbox-content li { margin-bottom: 2px; word-break: break-all; }
-                #toki-logbox-content li.critical { color: #ff3333; font-weight: bold; background: rgba(255,50,50,0.1); padding: 1px 3px; border-radius: 2px; }
-                #toki-logbox-content li.error { color: #ff5555; }
-                #toki-logbox-content li.warn { color: #ffaa00; }
-                #toki-logbox-content li.success { color: #55ff55; }
-                
-                /* Scrollbar */
-                #toki-logbox-content::-webkit-scrollbar { width: 6px; }
-                #toki-logbox-content::-webkit-scrollbar-track { background: transparent; }
-                #toki-logbox-content::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
-
-                /* --- MenuModal Styles (v1.5.0) --- */
-                .toki-modal-overlay {
-                    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-                    background: rgba(0, 0, 0, 0.6);
-                    backdrop-filter: blur(4px);
-                    z-index: 9999;
-                    display: flex; justify-content: center; align-items: center;
-                    opacity: 0; animation: tokiFadeIn 0.2s forwards;
-                }
-                .toki-modal {
-                    width: 520px; max-width: 95%;
-                    background: rgba(30, 32, 35, 0.95);
-                    border: 1px solid rgba(255, 255, 255, 0.1);
-                    border-radius: 16px;
-                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-                    overflow: hidden;
-                    display: flex; flex-direction: column;
-                    transform: translateY(20px); animation: tokiSlideUp 0.3s forwards;
-                }
-                .toki-modal-header {
-                    padding: 18px 24px;
-                    background: rgba(255, 255, 255, 0.05);
-                    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-                    display: flex; justify-content: space-between; align-items: center;
-                }
-                .toki-modal-title { font-size: 20px; font-weight: 600; color: #fff; display: flex; align-items: center; gap: 8px; }
-                .toki-modal-close {
-                    background: none; border: none; color: #aaa;
-                    font-size: 20px; cursor: pointer; padding: 4px;
-                }
-                .toki-modal-close:hover { color: white; }
-                
-                .toki-modal-body { padding: 0; max-height: 80vh; overflow-y: auto; }
-                
-                /* Tabs (v1.8.1) */
-                .toki-tabs {
-                    display: flex; background: rgba(0,0,0,0.2);
-                    border-bottom: 1px solid rgba(255,255,255,0.1);
-                }
-                .toki-tab-btn {
-                    flex: 1; padding: 14px; background: none; border: none;
-                    color: #888; font-size: 14px; font-weight: 600; cursor: pointer;
-                    transition: all 0.2s; border-bottom: 2px solid transparent;
-                    display: flex; justify-content: center; align-items: center; gap: 6px;
-                }
-                .toki-tab-btn:hover { color: #ddd; background: rgba(255,255,255,0.05); }
-                .toki-tab-btn.active {
-                    color: #fff; border-bottom-color: #6a5acd;
-                    background: rgba(106, 90, 205, 0.1);
-                }
-                .toki-tab-content { display: none; padding: 24px; animation: tokiFadeIn 0.2s forwards; }
-                .toki-tab-content.active { display: block; }
-
-                /* Controls */
-                .toki-control-group { margin-bottom: 15px; }
-                .toki-control-group:last-child { margin-bottom: 0px; }
-                .toki-label { display: block; font-size: 11px; color: #aaa; margin-bottom: 6px; }
-                .toki-select {
-                    width: 100%; padding: 8px;
-                    background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.1);
-                    border-radius: 6px; color: #fff; font-size: 13px;
-                }
-                .toki-btn-action {
-                    width: 100%; padding: 10px;
-                    background: linear-gradient(135deg, #6a5acd, #483d8b);
-                    border: none; border-radius: 6px;
-                    color: #fff; font-size: 14px; font-weight: 500;
-                    cursor: pointer; display: flex; justify-content: center; align-items: center; gap: 8px;
-                    transition: filter 0.2s;
-                }
-                .toki-btn-action:hover { filter: brightness(1.1); }
-                .toki-btn-secondary { background: rgba(255,255,255,0.1); color: #ddd; }
-                .toki-btn-secondary:hover { background: rgba(255,255,255,0.15); color: #fff; }
-                
-                /* Range Input */
-                .toki-range-input {
-                    width: 100%; padding: 8px 10px;
-                    background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.15);
-                    border-radius: 6px; color: #fff; font-size: 13px; font-family: monospace;
-                    transition: border-color 0.2s;
-                    box-sizing: border-box;
-                }
-                .toki-range-input:focus { outline: none; border-color: #6a5acd; }
-                .toki-range-hint { font-size: 11px; color: #666; margin-top: 5px; }
-
-                /* FAB */
-                .toki-fab {
-                    position: fixed; bottom: 30px; right: 100px;
-                    width: 56px; height: 56px;
-                    background: #6a5acd; border-radius: 50%;
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-                    display: flex; justify-content: center; align-items: center;
-                    cursor: pointer; transition: transform 0.2s, background 0.2s;
-                    z-index: 9998;
-                }
-                .toki-fab:hover { background: #483d8b; transform: scale(1.05); }
-                .toki-fab svg { width: 24px; height: 24px; fill: white; }
-
-                @keyframes tokiFadeIn { to { opacity: 1; } }
-                @keyframes tokiSlideUp { to { transform: translateY(0); } }
-            `;
-            document.head.appendChild(style);
+            style.innerHTML = `@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');:root{--toki-primary:#2563eb;--toki-primary-dark:#1d4ed8;--toki-accent:#facc15;--toki-bg:rgba(248,250,252,.9);--toki-text:#1e293b;--toki-text-muted:#64748b;--toki-border:rgba(255,255,255,.6);--toki-shadow:0 25px 50px -12px rgba(0,0,0,.25);--toki-font:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}#toki-logbox{position:fixed;bottom:100px;right:30px;width:480px;height:350px;background:var(--toki-bg);color:var(--toki-text);font-family:'Cascadia Code',Consolas,monospace;font-size:12px;border:1px solid var(--toki-border);border-radius:16px;z-index:9999;display:none;flex-direction:column;box-shadow:var(--toki-shadow);backdrop-filter:blur(20px);transition:all .3s cubic-bezier(.4,0,.2,1)}#toki-logbox-header{padding:12px 16px;background:rgba(255,255,255,.4);border-bottom:1px solid rgba(0,0,0,.05);display:flex;justify-content:space-between;align-items:center;border-top-left-radius:16px;border-top-right-radius:16px;cursor:move}#toki-logbox-title{font-weight:700;font-size:13px;letter-spacing:-.01em}#toki-logbox-controls span{cursor:pointer;margin-left:12px;color:var(--toki-text-muted);font-size:14px;transition:transform .2s,color .2s;display:inline-block}#toki-logbox-controls span:hover{color:var(--toki-primary);transform:scale(1.15)}#toki-logbox-content{flex:1;overflow-y:auto;padding:12px;margin:0;list-style:none}#toki-logbox-content li{margin-bottom:4px;word-break:break-all;padding:4px 8px;border-radius:6px;line-height:1.4}#toki-logbox-content li.critical{color:#be123c;font-weight:700;background:rgba(225,29,72,.1);border-left:3px solid #e11d48}#toki-logbox-content li.error{color:#e11d48}#toki-logbox-content li.warn{color:#d97706}#toki-logbox-content li.success{color:#059669;font-weight:600}.toki-modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(15,23,42,.2);backdrop-filter:blur(12px);z-index:9999;display:flex;justify-content:center;align-items:center;opacity:0;animation:tokiFadeIn .3s cubic-bezier(.4,0,.2,1) forwards}.toki-modal{width:520px;max-width:95%;background:var(--toki-bg);border:1px solid var(--toki-border);border-radius:28px;box-shadow:var(--toki-shadow);overflow:hidden;display:flex;flex-direction:column;transform:translateY(30px) scale(.95);animation:tokiSlideUp .4s cubic-bezier(.16,1,.3,1) forwards;backdrop-filter:blur(30px);color:var(--toki-text);font-family:var(--toki-font)}.toki-modal-header{padding:24px 32px;background:rgba(255,255,255,.4);border-bottom:1px solid rgba(0,0,0,.05);display:flex;justify-content:space-between;align-items:center}.toki-modal-title{font-size:24px;font-weight:800;color:#0f172a;display:flex;align-items:center;gap:12px;letter-spacing:-.03em}.toki-modal-close{background:rgba(0,0,0,.05);border:none;color:var(--toki-text-muted);width:36px;height:36px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .3s cubic-bezier(.4,0,.2,1);font-size:20px}.toki-modal-close:hover{background:#ef4444;color:#fff;transform:rotate(90deg)}.toki-btn-ghost{background:rgba(0,0,0,.05);border:none;color:var(--toki-text-muted);padding:6px 14px;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;font-size:13px;font-weight:600;gap:6px}.toki-btn-ghost:hover{background:rgba(0,0,0,.08);color:var(--toki-text)}.toki-modal-body{padding:0;max-height:75vh;overflow-y:auto}.toki-tabs{display:flex;background:rgba(255,255,255,.3);padding:8px;gap:6px;border-bottom:1px solid rgba(0,0,0,.05)}.toki-tab-btn{flex:1;padding:12px;background:none;border:none;color:var(--toki-text-muted);font-size:14px;font-weight:700;cursor:pointer;transition:all .3s;border-radius:14px;display:flex;justify-content:center;align-items:center;gap:8px}.toki-tab-btn:hover{color:var(--toki-text);background:rgba(255,255,255,.6)}.toki-tab-btn.active{background:#fff;color:var(--toki-primary);box-shadow:0 4px 12px rgba(37,99,235,.15)}.toki-tab-content{display:none;padding:32px;animation:tokiTabFadeIn .4s ease-out}.toki-tab-content.active{display:block}.toki-section-title{font-size:11px;font-weight:800;color:var(--toki-primary);text-transform:uppercase;letter-spacing:.1em;margin:24px 0 12px 4px;opacity:.8}.toki-control-group{margin-bottom:20px;position:relative}.toki-label{display:block;font-size:13px;font-weight:700;color:var(--toki-text-muted);margin-bottom:8px;margin-left:4px}.toki-input,.toki-select{width:100%;padding:14px 18px;background:rgba(255,255,255,.8);border:1px solid rgba(0,0,0,.08);border-radius:16px;color:var(--toki-text)!important;font-size:15px;font-weight:600;appearance:none;transition:all .2s cubic-bezier(.4,0,.2,1);box-shadow:0 2px 4px rgba(0,0,0,.02)}.toki-input:hover,.toki-select:hover{border-color:var(--toki-primary);background-color:#fff;box-shadow:0 4px 12px rgba(37,99,235,.08);color:var(--toki-text)!important}.toki-input:focus,.toki-select:focus{outline:none;border-color:var(--toki-primary);box-shadow:0 0 0 4px rgba(37,99,235,.1);background-color:#fff;color:var(--toki-text)!important}.toki-select{cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2364748b'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 16px center;background-size:16px}.toki-checkbox-wrapper{display:flex;align-items:center;gap:12px;cursor:pointer;padding:8px 4px;user-select:none}.toki-checkbox{width:22px;height:22px;border:2px solid rgba(0,0,0,.1);border-radius:6px;display:flex;align-items:center;justify-content:center;transition:all .2s;background:#fff;position:relative}.toki-checkbox-input{display:none}.toki-checkbox-input:checked + .toki-checkbox{background:var(--toki-primary);border-color:var(--toki-primary)}.toki-checkbox-input:checked + .toki-checkbox::after{content:'✓';color:#fff;font-size:14px;font-weight:900}.toki-checkbox-label{font-size:14px;font-weight:600;color:var(--toki-text)}.toki-btn-action{width:100%;height:56px;background:var(--toki-primary);color:#fff!important;border:none;border-radius:18px;font-size:16px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:12px;transition:all .3s cubic-bezier(.175,.885,.32,1.275);box-shadow:0 8px 15px rgba(37,99,235,.2)}.toki-btn-action:hover{transform:translateY(-3px);box-shadow:0 12px 20px rgba(37,99,235,.35);filter:brightness(1.05);color:#fff!important}.toki-btn-action:active{transform:translateY(-1px)}.toki-btn-secondary{background:rgba(255,255,255,.8);color:#475569!important;border:1px solid rgba(0,0,0,.05);box-shadow:0 1px 2px rgba(0,0,0,.05)}.toki-btn-secondary:hover{background:#fff;color:var(--toki-text)!important}.toki-info-card{background:rgba(255,255,255,.6);border:1px solid rgba(0,0,0,.03);border-radius:20px;padding:20px;margin-bottom:20px;display:flex;flex-direction:column;gap:12px}.toki-info-row{display:flex;justify-content:space-between;align-items:center}.toki-info-label{font-size:13px;color:var(--toki-text-muted)}.toki-info-val{font-size:14px;font-weight:700;color:var(--toki-text)}.toki-status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}.toki-status-online{background:#10b981;box-shadow:0 0 8px #10b981}.toki-fab{position:fixed;bottom:30px;right:30px;width:64px;height:64px;background:linear-gradient(135deg,#2563eb,#0ea5e9);border-radius:20px;box-shadow:0 10px 15px -3px rgba(37,99,235,.4);display:flex;justify-content:center;align-items:center;cursor:pointer;transition:all .3s cubic-bezier(.175,.885,.32,1.275);z-index:9998}.toki-fab:hover{transform:translateY(-5px) rotate(5deg);box-shadow:0 20px 25px -5px rgba(37,99,235,.5)}.toki-fab:active{transform:scale(.9)}.toki-fab svg{width:28px;height:28px;fill:#fff}.toki-tree-modal{width:1100px!important;height:85vh!important}.toki-tree-container{display:flex;flex:1;overflow:hidden;gap:24px;padding:24px;background:rgba(255,255,255,.2)}.toki-tree-view{flex:1.5;overflow-y:auto;background:rgba(255,255,255,.5);border-radius:16px;padding:20px;border:1px solid rgba(0,0,0,.05);font-family:monospace;font-size:13px}.toki-tree-node{margin-left:20px;position:relative;border-left:1px dashed rgba(0,0,0,.1);padding-left:12px}.toki-tree-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;transition:all .2s}.toki-tree-item:hover{background:rgba(37,99,235,.05)}.toki-tree-key{color:#2563eb;font-weight:700;cursor:pointer;min-width:90px}.toki-tree-val{color:#1e293b;background:0 0;border:none;border-bottom:1px solid transparent;width:100%}.toki-tree-val:focus{border-bottom-color:#2563eb;outline:none;background:rgba(37,99,235,.05)}.toki-tree-toggle{cursor:pointer;user-select:none;width:18px;text-align:center;color:#94a3b8;font-weight:700}.toki-tree-toggle:hover{color:#2563eb}.toki-tree-right-panel{flex:1;display:flex;flex-direction:column;gap:20px;background:rgba(255,255,255,.4);padding:20px;border-radius:16px}.toki-tree-json-preview{flex:1;background:#0f172a;color:#e2e8f0;padding:20px;border-radius:16px;font-size:12px;font-family:monospace;border:1px solid rgba(255,255,255,.1);resize:none}.toki-btn-rule{background:0 0;border:1px solid #ddd;padding:6px 12px;border-radius:8px;font-size:12px;cursor:pointer;transition:all .2s}.toki-btn-rule:hover{background:#f8fafc;border-color:#94a3b8}@keyframes tokiFadeIn{from{opacity:0}to{opacity:1}}@keyframes tokiTabFadeIn{from{opacity:0;transform:translateX(10px)}to{opacity:1;transform:translateX(0)}}@keyframes tokiSlideUp{from{opacity:0;transform:translateY(30px) scale(.95)}to{opacity:1;transform:translateY(0) scale(1)}}`;            document.head.appendChild(style);
         }
 
         // -- HTML --
@@ -189,6 +55,13 @@ export class LogBox {
         document.getElementById('toki-btn-report').onclick = () => this.exportReport();
         document.getElementById('toki-btn-clear').onclick = () => this.clear();
         document.getElementById('toki-btn-close').onclick = () => this.hide();
+
+        // ESC Key Support for LogBox
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && this.container.style.display === 'flex') {
+                this.hide();
+            }
+        });
         
         // Anti-Sleep Button
         const audioBtn = document.getElementById('toki-btn-audio');
@@ -210,7 +83,20 @@ export class LogBox {
                     this.error(`[Anti-Sleep] 실패: ${e.message}`);
                 }
             };
+
+            // Sync UI with initial state (if auto-started by downloader)
+            setInterval(() => {
+                const running = isAudioRunning();
+                if (running && audioBtn.textContent === '🔊') {
+                    audioBtn.textContent = '🔇';
+                    audioBtn.title = '백그라운드 모드 (켜짐)';
+                } else if (!running && audioBtn.textContent === '🔇') {
+                    audioBtn.textContent = '🔊';
+                    audioBtn.title = '백그라운드 모드 (꺼짐)';
+                }
+            }, 1000);
         }
+
     }
 
     static getInstance() {
@@ -408,11 +294,15 @@ export class MenuModal {
         // 1. Create FAB
         this.createFAB();
         
-        // 2. Keyboard Shortcut (Ctrl+Shift+T)
+        // 2. Keyboard Shortcut (Ctrl+Shift+T & ESC)
         window.addEventListener('keydown', (e) => {
             if (e.ctrlKey && e.shiftKey && (e.key === 'T' || e.key === 't' || e.code === 'KeyT')) {
                 e.preventDefault();
                 this.toggle();
+            }
+            if (e.key === 'Escape') {
+                const overlay = document.querySelector('.toki-modal-overlay');
+                if (overlay) this.close(overlay);
             }
         });
     }
@@ -448,8 +338,8 @@ export class MenuModal {
         header.innerHTML = `
             <div class="toki-modal-title"><span>⚡ TokiSync</span></div>
             <div style="display: flex; gap: 10px; align-items: center;">
-                <button class="toki-modal-close" style="font-size: 14px; background: rgba(255,255,255,0.1); padding: 4px 8px; border-radius: 4px; display: flex; align-items: center; gap: 4px;" id="toki-btn-viewer-link" title="Open Viewer">
-                    🌐 <span style="font-size: 12px;">Viewer</span>
+                <button class="toki-btn-ghost" id="toki-btn-viewer-link" title="Open Viewer">
+                    🌐 <span>Viewer</span>
                 </button>
                 <button class="toki-modal-close" id="toki-btn-menu-close" title="Close">&times;</button>
             </div>
@@ -462,7 +352,8 @@ export class MenuModal {
         tabsHeader.innerHTML = `
             <button class="toki-tab-btn active" data-tab="download">📥 다운로드</button>
             <button class="toki-tab-btn" data-tab="settings">⚙️ 설정</button>
-            <button class="toki-tab-btn" data-tab="system">📝 시스템</button>
+            <button class="toki-tab-btn" data-tab="history">📊 기록</button>
+            <button class="toki-tab-btn" data-tab="tools">🛠️ 도구</button>
         `;
         modal.appendChild(tabsHeader);
 
@@ -476,105 +367,162 @@ export class MenuModal {
         tabDown.id = 'toki-tab-download';
         tabDown.innerHTML = `
                 <div class="toki-control-group">
-                    <label class="toki-label">에피소드 범위 지정</label>
-                    <input type="text" id="toki-range-input" class="toki-range-input"
-                        placeholder="예: 1,2,4-10,15 (비우면 전체)">
-                    <div class="toki-range-hint">쉼표(,)로 개별 번호, 하이픈(-)으로 연속 범위 지정</div>
+                    <label class="toki-label">빠른 작업</label>
+                    <button class="toki-btn-action" id="toki-btn-down-current" style="height: 52px; background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);">
+                        <span>🚀 현재 회차 즉시 다운로드</span>
+                    </button>
                 </div>
+                <hr style="border: 0; border-top: 1px solid rgba(0,0,0,0.05); margin: 24px 0;">
                 <div class="toki-control-group">
-                    <label class="toki-label" style="display:flex; align-items:center; gap:8px; cursor:pointer; color: #ddd; font-size: 13px;">
-                        <input type="checkbox" id="toki-chk-force-overwrite" style="accent-color:#facc15; width: 16px; height: 16px;"> ⚠️ 강제 재다운로드 (기존 파일 덮어쓰기)
+                    <label class="toki-label">에피소드 범위 지정</label>
+                    <input type="text" id="toki-range-input" class="toki-input"
+                        placeholder="예: 1,2,4-10,15 (비우면 전체)">
+                    <div style="font-size: 11px; margin-top: 8px; color: #94a3b8; margin-left: 4px;">쉼표(,)로 개별 번호, 하이픈(-)으로 연속 범위 지정</div>
+                </div>
+                <div class="toki-control-group" style="margin-bottom: 24px;">
+                    <label class="toki-checkbox-wrapper">
+                        <input type="checkbox" id="toki-chk-force-overwrite" class="toki-checkbox-input">
+                        <span class="toki-checkbox"></span>
+                        <span class="toki-checkbox-label">⚠️ 강제 재다운로드 (파일 덮어쓰기)</span>
                     </label>
                 </div>
-                <button class="toki-btn-action" id="toki-btn-down-range" style="margin-top: 20px; height: 48px;">
-                    <span>선택 다운로드 시작</span>
-                </button>
-                <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 20px 0;">
-                <button class="toki-btn-action toki-btn-secondary" id="toki-btn-down-all" style="height: 44px;">
-                    <span>전체 다운로드 (All Items)</span>
-                </button>
+                <div style="display: flex; gap: 12px;">
+                    <button class="toki-btn-action" id="toki-btn-down-range" style="flex: 1.4; height: 52px;">
+                        <span>선택 다운로드</span>
+                    </button>
+                    <button class="toki-btn-action toki-btn-secondary" id="toki-btn-down-all" style="flex: 1; height: 52px;">
+                        <span>전체</span>
+                    </button>
+                </div>
         `;
         body.appendChild(tabDown);
 
-        // 2. Settings Tab
+        // 2. Settings Tab (Unified v1.9.1)
         const tabSettings = document.createElement('div');
         tabSettings.className = 'toki-tab-content';
         tabSettings.id = 'toki-tab-settings';
         tabSettings.innerHTML = `
+            <div class="toki-section-title" style="margin-top:0;">Download Settings</div>
             <div class="toki-control-group">
-                <label class="toki-label">다운로드 저장 방식</label>
+                <label class="toki-label">저장 정책</label>
                 <select id="toki-sel-policy" class="toki-select">
-                    <option value="individual">1. 개별 파일 (Individual)</option>
-                    <option value="zipOfCbzs">2. 챕터 묶음 (ZIP of CBZs)</option>
-                    <option value="native">3. 자동 분류 (Native)</option>
-                    <option value="drive">4. 드라이브 업로드 (GoogleDrive)</option>
+                    <option value="individual">개별 파일</option>
+                    <option value="zipOfCbzs">챕터 묶음</option>
+                    <option value="native">자동 분류</option>
+                    <option value="drive">드라이브</option>
                 </select>
             </div>
-            <div id="toki-native-helper" style="display:none; margin-bottom: 20px; padding: 12px; background: rgba(255,165,0,0.1); border: 1px solid rgba(255,165,0,0.3); border-radius: 8px;">
-                <div style="font-size: 11px; color: #ffa500; margin-bottom: 10px; line-height: 1.4;">
-                    ⚠️ Native 모드는 Tampermonkey 설정에서 <b>'Download Mode: Browser API'</b> 활성화가 필요합니다.
-                </div>
-                <button class="toki-btn-action toki-btn-secondary" id="toki-btn-test-native" style="font-size: 12px; height: 32px;">
-                    📂 자동 분류 기능 테스트
-                </button>
-            </div>
+            
             <div class="toki-control-group">
-                <label class="toki-label">다운로드 속도 (대기 시간)</label>
+                <label class="toki-label">다운로드 속도</label>
                 <select id="toki-sel-speed" class="toki-select">
-                        <option value="agile">빠름 (1-3초)</option>
-                        <option value="cautious">신중 (2-5초)</option>
-                        <option value="thorough">철저 (3-8초)</option>
-                        <option value="slow">느림 (5-15초)</option>
-                        <option value="very_slow">매우 느림 (10-30초)</option>
+                    <option value="agile">빠름</option>
+                    <option value="cautious">신중</option>
+                    <option value="thorough">철저</option>
+                    <option value="slow">느림</option>
+                    <option value="very_slow">매우 느림</option>
                 </select>
             </div>
-            <div class="toki-control-group">
-                <label class="toki-label">소설 패키징 정책</label>
-                <select id="toki-sel-novel-mode" class="toki-select">
-                        <option value="perChapter">개별 회차 저장 (1회차 = 1파일)</option>
-                        <option value="singleVolume">단행본 합본 저장 (범위 = 1파일)</option>
-                </select>
-            </div>
-            <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.05); margin: 20px 0;">
-            <div class="toki-control-group">
-                <button class="toki-btn-action toki-btn-secondary" id="toki-btn-advanced" style="font-size: 13px; height: 40px;">
-                    🛠️ 고급 설정 상세 (경로, API키, 필터)
+
+            <div id="toki-native-helper" style="display:none; margin: -10px 0 20px 0; padding: 14px; background: rgba(37, 99, 235, 0.05); border: 1px solid rgba(37, 99, 235, 0.1); border-radius: 18px;">
+                <div style="font-size: 12px; color: var(--toki-primary); margin-bottom: 10px; line-height: 1.5; font-weight: 500;">
+                    ⚠️ Native 모드는 브라우저 설정 변경이 필요합니다.
+                </div>
+                <button class="toki-btn-action toki-btn-secondary" id="toki-btn-test-native" style="height: 36px; font-size: 12px; border-radius: 12px;">
+                    📂 기능 동작 테스트 실행
                 </button>
             </div>
+
+            <div class="toki-section-title">Novel Settings</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                <div class="toki-control-group">
+                    <label class="toki-label">소설 포맷</label>
+                    <select id="toki-sel-novel-format" class="toki-select">
+                        <option value="epub">EPUB</option>
+                        <option value="txt">TXT</option>
+                    </select>
+                </div>
+                <div class="toki-control-group">
+                    <label class="toki-label">Smart Skip</label>
+                    <select id="toki-sel-smartskip" class="toki-select">
+                        <option value="90">90% (민감)</option>
+                        <option value="70">70% (보통)</option>
+                        <option value="50">50% (기본)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="toki-control-group">
+                <label class="toki-label">소설 패키징</label>
+                <select id="toki-sel-novel-mode" class="toki-select">
+                    <option value="perChapter">회차별 개별 저장</option>
+                    <option value="singleVolume">범위 합본 저장</option>
+                </select>
+            </div>
+
+            <div class="toki-section-title">Configuration</div>
+            <button class="toki-btn-action toki-btn-secondary" id="toki-btn-advanced" style="height: 52px; font-size: 14px; font-weight: 700; border-style: dashed; background: rgba(0,0,0,0.02); border-radius: 20px;">
+                🛠️ 상세 주소 및 API 키 설정 (Advanced)
+            </button>
         `;
         body.appendChild(tabSettings);
 
-        // 3. System Tab
-        const tabSystem = document.createElement('div');
-        tabSystem.className = 'toki-tab-content';
-        tabSystem.id = 'toki-tab-system';
-        tabSystem.innerHTML = `
-                <div class="toki-control-group">
-                    <button class="toki-btn-action toki-btn-secondary" id="toki-btn-log" style="height: 40px;">
-                        <span>로그창 표시/숨기기</span>
-                    </button>
+        // 3. History Tab (NEW)
+        const tabHistory = document.createElement('div');
+        tabHistory.className = 'toki-tab-content';
+        tabHistory.id = 'toki-tab-history';
+        tabHistory.innerHTML = `
+            <div class="toki-info-card">
+                <div class="toki-info-row">
+                    <span class="toki-info-label">동기화 상태</span>
+                    <span class="toki-info-val"><span class="toki-status-dot toki-status-online"></span>연결됨</span>
                 </div>
-                <div class="toki-control-group">
-                        <button class="toki-btn-action toki-btn-secondary" id="toki-btn-migration" style="font-size: 13px; height: 40px;">
-                        📂 기존 파일명 표준화 (Migration)
-                    </button>
+                <div class="toki-info-row">
+                    <span class="toki-info-label">마지막 동기화</span>
+                    <span class="toki-info-val" id="toki-txt-last-sync">-</span>
                 </div>
+            </div>
+            <div class="toki-control-group">
+                <button class="toki-btn-action" id="toki-btn-sync-now" style="height: 48px;">
+                    <span>🔄 지금 즉시 동기화</span>
+                </button>
+            </div>
+            <p style="font-size: 11px; color: #94a3b8; text-align: center; line-height: 1.6;">
+                구글 드라이브의 데이터를 기반으로 목록에 완료 표시(✅)를 업데이트합니다.
+            </p>
+        `;
+        body.appendChild(tabHistory);
+
+        // 4. Tools Tab (Renamed from System)
+        const tabTools = document.createElement('div');
+        tabTools.className = 'toki-tab-content';
+        tabTools.id = 'toki-tab-tools';
+        tabTools.innerHTML = `
                 <div class="toki-control-group">
-                    <button class="toki-btn-action toki-btn-secondary" id="toki-btn-thumb-optim" style="font-size: 13px; height: 40px;">
-                        🔄 썸네일 최적화 및 캐시 갱신
-                    </button>
+                    <label class="toki-label">파일 관리</label>
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <button class="toki-btn-action toki-btn-secondary" id="toki-btn-migration" style="height: 44px; justify-content: flex-start; padding-left: 20px;">
+                            📂 기존 파일명 표준화 (Migration)
+                        </button>
+                        <button class="toki-btn-action toki-btn-secondary" id="toki-btn-thumb-optim" style="height: 44px; justify-content: flex-start; padding-left: 20px;">
+                            🔄 썸네일 통합 및 캐 최적화
+                        </button>
+                    </div>
                 </div>
-                <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.05); margin: 20px 0;">
-                <div class="toki-control-group" style="display: flex; gap: 10px;">
-                    <button class="toki-btn-action toki-btn-secondary" id="toki-btn-debug-extract" style="flex: 1; font-size: 12px; background: rgba(255, 255, 255, 0.05); border: 1px dashed rgba(255, 255, 255, 0.2);">
-                        🧪 추출 테스트 (Debug)
-                    </button>
-                    <button class="toki-btn-action" id="toki-btn-debug-download" style="flex: 1.5; font-size: 13px; background: #2563eb; color: white;">
-                        🚀 현재 회차 즉시 다운로드
-                    </button>
+                <hr style="border: 0; border-top: 1px solid rgba(0,0,0,0.05); margin: 24px 0;">
+                <div class="toki-control-group">
+                    <label class="toki-label">시스템 도구</label>
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <button class="toki-btn-action toki-btn-secondary" id="toki-btn-log" style="height: 44px; justify-content: flex-start; padding-left: 20px;">
+                            📝 실시간 로그창 토글
+                        </button>
+                        <button class="toki-btn-action" id="toki-btn-tree-editor" style="height: 44px; background: #6366f1; justify-content: flex-start; padding-left: 20px;">
+                            🧩 파싱 규칙 편집기 (Tree Editor)
+                        </button>
+                    </div>
                 </div>
         `;
-        body.appendChild(tabSystem);
+        body.appendChild(tabTools);
 
         modal.appendChild(body);
         document.body.appendChild(overlay);
@@ -604,18 +552,24 @@ export class MenuModal {
         });
 
         // Headers
-        document.getElementById('toki-btn-menu-close').onclick = () => this.close(overlay);
-        document.getElementById('toki-btn-viewer-link').onclick = () => {
+        const closeBtn = document.getElementById('toki-btn-menu-close');
+        if (closeBtn) closeBtn.onclick = () => this.close(overlay);
+        
+        const viewerLink = document.getElementById('toki-btn-viewer-link');
+        if (viewerLink) viewerLink.onclick = () => {
              if(this.handlers.openViewer) this.handlers.openViewer();
         };
 
-        // Download
-        document.getElementById('toki-btn-down-all').onclick = () => {
+        // 1. Download Tab
+        const downAllBtn = document.getElementById('toki-btn-down-all');
+        if (downAllBtn) downAllBtn.onclick = () => {
             const force = document.getElementById('toki-chk-force-overwrite').checked;
             if(this.handlers.downloadAll) this.handlers.downloadAll(force);
             this.close(overlay);
         };
-        document.getElementById('toki-btn-down-range').onclick = () => {
+
+        const downRangeBtn = document.getElementById('toki-btn-down-range');
+        if (downRangeBtn) downRangeBtn.onclick = () => {
             const spec = document.getElementById('toki-range-input').value.trim();
             const force = document.getElementById('toki-chk-force-overwrite').checked;
             if (this.handlers.downloadRange) {
@@ -624,12 +578,23 @@ export class MenuModal {
             this.close(overlay);
         };
 
-        // Settings
+        const downCurrentBtn = document.getElementById('toki-btn-down-current');
+        if (downCurrentBtn) downCurrentBtn.onclick = () => {
+             if(this.handlers.downloadCurrent) this.handlers.downloadCurrent();
+             this.close(overlay);
+        };
+
+        const testExtractBtn = document.getElementById('toki-btn-test-extract');
+        if (testExtractBtn) testExtractBtn.onclick = () => {
+             if(this.handlers.testExtraction) this.handlers.testExtraction();
+        };
+
+        // 2. Settings Tab
         const selPolicy = document.getElementById('toki-sel-policy');
         const selSpeed = document.getElementById('toki-sel-speed');
         const selNovelTerm = document.getElementById('toki-sel-novel-mode');
 
-        // Load Initial Values (Need to fetch via handler or GM)
+        // Load Initial Values
         if (this.handlers.getConfig) {
             const cfg = this.handlers.getConfig();
             if (cfg.policy && selPolicy) selPolicy.value = cfg.policy;
@@ -637,31 +602,32 @@ export class MenuModal {
             if (cfg.novelMode && selNovelTerm) selNovelTerm.value = cfg.novelMode;
         }
 
-        selPolicy.onchange = () => { 
-            if(this.handlers.setConfig) this.handlers.setConfig('TOKI_DOWNLOAD_POLICY', selPolicy.value);
+        if (selPolicy) {
+            selPolicy.onchange = () => { 
+                if(this.handlers.setConfig) this.handlers.setConfig('TOKI_DOWNLOAD_POLICY', selPolicy.value);
+                this.updateNativeHelper(selPolicy.value);
+            };
             this.updateNativeHelper(selPolicy.value);
-        };
-        this.updateNativeHelper(selPolicy.value);
+        }
         
-        // Native Test Button
-        const testBtn = document.getElementById('toki-btn-test-native');
-        if (testBtn) {
-            testBtn.onclick = async () => {
+        const testNativeBtn = document.getElementById('toki-btn-test-native');
+        if (testNativeBtn) {
+            testNativeBtn.onclick = async () => {
                 if (this.handlers.testNativeDownload) {
-                    testBtn.disabled = true;
-                    testBtn.textContent = '⏳ 테스트 중...';
+                    testNativeBtn.disabled = true;
+                    testNativeBtn.textContent = '⏳ 테스트 중...';
                     const success = await this.handlers.testNativeDownload();
                     if (success) {
-                        testBtn.textContent = '✅ 테스트 성공 (폴더 확인)';
-                        testBtn.style.color = '#55ff55';
+                        testNativeBtn.textContent = '✅ 테스트 성공 (폴더 확인)';
+                        testNativeBtn.style.color = '#55ff55';
                     } else {
-                        testBtn.textContent = '❌ 테스트 실패 (설정 확인)';
-                        testBtn.style.color = '#ff5555';
+                        testNativeBtn.textContent = '❌ 테스트 실패 (설정 확인)';
+                        testNativeBtn.style.color = '#ff5555';
                     }
                     setTimeout(() => {
-                        testBtn.disabled = false;
-                        testBtn.textContent = '📂 자동 분류 기능 테스트';
-                        testBtn.style.color = '';
+                        testNativeBtn.disabled = false;
+                        testNativeBtn.textContent = '📂 자동 분류 기능 테스트';
+                        testNativeBtn.style.color = '';
                     }, 3000);
                 }
             };
@@ -670,33 +636,51 @@ export class MenuModal {
         if (selSpeed) selSpeed.onchange = () => { if(this.handlers.setConfig) this.handlers.setConfig('TOKI_SLEEP_MODE', selSpeed.value); };
         if (selNovelTerm) selNovelTerm.onchange = () => { if(this.handlers.setConfig) this.handlers.setConfig('TOKI_NOVEL_MODE', selNovelTerm.value); };
 
-        document.getElementById('toki-btn-advanced').onclick = () => {
+        const advancedBtn = document.getElementById('toki-btn-advanced');
+        if (advancedBtn) advancedBtn.onclick = () => {
             if(this.handlers.openSettings) this.handlers.openSettings();
-            // Typically advanced settings opens another modal, so we might want to close this one or keep it behind.
-            // Let's keep it open or close it? 
-            // Existing logic: showConfigModal() removes existing modal? 
-            // Let's close this menu for clarity.
             this.close(overlay); 
         };
-        document.getElementById('toki-btn-migration').onclick = () => {
+
+        // 3. History Tab
+        const syncBtn = document.getElementById('toki-btn-sync-now');
+        if (syncBtn) {
+            syncBtn.onclick = async () => {
+                if (this.handlers.syncHistory) {
+                    syncBtn.disabled = true;
+                    syncBtn.innerHTML = '<span>⏳ 동기화 중...</span>';
+                    await this.handlers.syncHistory();
+                    syncBtn.disabled = false;
+                    syncBtn.innerHTML = '<span>🔄 지금 즉시 동기화</span>';
+                    
+                    const timeEl = document.getElementById('toki-txt-last-sync');
+                    if (timeEl) timeEl.textContent = new Date().toLocaleTimeString();
+                }
+            };
+        }
+
+        // 4. Tools Tab
+        const migrationBtn = document.getElementById('toki-btn-migration');
+        if (migrationBtn) migrationBtn.onclick = () => {
             if(this.handlers.migrateFilenames) this.handlers.migrateFilenames();
             this.close(overlay);
         };
 
-        // System
-        document.getElementById('toki-btn-log').onclick = () => {
-            if(this.handlers.toggleLog) this.handlers.toggleLog();
-        };
-        document.getElementById('toki-btn-debug-extract').onclick = () => {
-             if(this.handlers.testExtraction) this.handlers.testExtraction();
-        };
-        document.getElementById('toki-btn-debug-download').onclick = () => {
-             if(this.handlers.downloadCurrent) this.handlers.downloadCurrent();
-             this.close(overlay);
-        };
-         document.getElementById('toki-btn-thumb-optim').onclick = () => {
+        const thumbBtn = document.getElementById('toki-btn-thumb-optim');
+        if (thumbBtn) thumbBtn.onclick = () => {
             if(this.handlers.migrateThumbnails) this.handlers.migrateThumbnails();
             this.close(overlay);
+        };
+
+        const logBtn = document.getElementById('toki-btn-log');
+        if (logBtn) logBtn.onclick = () => {
+            if(this.handlers.toggleLog) this.handlers.toggleLog();
+        };
+
+        const treeEditorBtn = document.getElementById('toki-btn-tree-editor');
+        if (treeEditorBtn) treeEditorBtn.onclick = () => {
+            const editor = new TreeRuleEditor();
+            editor.show();
         };
     }
 
@@ -744,7 +728,7 @@ export async function markDownloadedItems(historyList) {
         return;
     }
 
-    const items = parser.getListItems();
+    const items = await parser.getListItems();
     let markedCount = 0;
 
     items.forEach(li => {
@@ -768,26 +752,8 @@ export async function markDownloadedItems(historyList) {
                 }
 
                 if (isDownloaded) {
-                    // Visual Indicator
-                    element.style.opacity = '0.6';
-                    element.style.backgroundColor = 'rgba(0, 255, 0, 0.05)';
-                    
-                    // Add Badge if not exists
-                    if (!element.querySelector('.toki-badge')) {
-                        const badge = document.createElement('span');
-                        badge.className = 'toki-badge';
-                        badge.innerText = '✅';
-                        badge.style.marginLeft = '5px';
-                        badge.style.fontSize = '12px';
-                        
-                        // Priority: Link element inside the list item
-                        const linkEl = element.querySelector('a');
-                        if (linkEl) {
-                            linkEl.prepend(badge);
-                        } else {
-                            element.prepend(badge);
-                        }
-                    }
+                    // Visual Indicator (v1.9.1 Class-based)
+                    element.classList.add('toki-downloaded'); 
                     markedCount++;
                 }
             }
@@ -798,4 +764,305 @@ export async function markDownloadedItems(historyList) {
 
     
     console.log(`[UI] ${markedCount}개 항목에 다운로드 완료 표시 적용.`);
+}
+
+/**
+ * TreeRuleEditor (v1.9.0)
+ * Specialist UI for managing parsing rules with a tree-style interface.
+ */
+export class TreeRuleEditor {
+    constructor() {
+        this.rules = RuleManager.getCustomRules();
+        this.overlay = null;
+        this.hints = {
+            'id': '사이트 고유 ID (영문/숫자)',
+            'name': '표시용 이름',
+            'urlPattern': '적용할 URL 정규표현식',
+            'category': 'Webtoon / Manga / Novel',
+            'meta': '작품 정보를 추출하는 규칙 그룹',
+            'selector': 'CSS 셀렉터 (예: .title, #info)',
+            'attr': '추출할 속성 (비워두면 텍스트)',
+            'regex': '데이터 정제용 정규식 그룹',
+            'list': '회차 목록을 추출하는 규칙 그룹',
+            'container': '목록 전체를 감싸는 부모 요소',
+            'item': '각 회차 줄 요소 (li 등)',
+            'viewer': '본문 내용을 추출하는 규칙 그룹',
+            'images': '웹툰 이미지 또는 소설 본문 요소'
+        };
+    }
+
+    show() {
+        this.overlay = document.createElement('div');
+        this.overlay.className = 'toki-modal-overlay';
+        this.overlay.style.zIndex = '10002';
+        
+        this.overlay.innerHTML = `
+            <div class="toki-modal toki-tree-modal">
+                <div class="toki-modal-header">
+                    <div class="toki-modal-title">🧩 파싱 규칙 관리자 (Tree Editor)</div>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="toki-btn-rule" id="tree-btn-export">📤 내보내기</button>
+                        <button class="toki-btn-rule" id="tree-btn-import">📥 가져오기</button>
+                        <button class="toki-modal-close" id="tree-close-btn">&times;</button>
+                    </div>
+                </div>
+                <div class="toki-tree-container">
+                    <div class="toki-tree-view" id="tree-root"></div>
+                    
+                    <div class="toki-tree-right-panel">
+                        <div style="display: flex; justify-content: space-between; align-items: center; color: #888; font-size: 12px;">
+                            <span>📄 JSON 미리보기</span>
+                            <span id="tree-json-status" style="color: #4ade80;">✓ Valid</span>
+                        </div>
+                        <textarea class="toki-tree-json-preview" id="tree-json-editor" spellcheck="false"></textarea>
+                        
+                        <div class="toki-test-bench" style="margin-top: 0;">
+                            <div class="toki-label" style="margin-bottom: 5px;">🧪 즉시 테스트</div>
+                            <div style="display: flex; gap: 8px;">
+                                <input type="text" id="tree-test-url" class="toki-input-compact" style="flex: 1;" placeholder="주소 입력" value="${window.location.href}">
+                                <button class="toki-btn-rule" id="tree-btn-test" style="border-color: #4ade80; color: #4ade80;">실행</button>
+                            </div>
+                            <div id="tree-test-result" class="toki-test-result">규칙 수정 후 바로 테스트해보세요.</div>
+                        </div>
+                        
+                        <div style="display: flex; gap: 10px;">
+                            <button class="toki-btn-action" id="tree-btn-save" style="background: #6a5acd; font-weight: bold;">저장 및 적용</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(this.overlay);
+        this.render();
+        this.bindEvents();
+    }
+
+    render() {
+        const root = this.overlay.querySelector('#tree-root');
+        root.innerHTML = '';
+        
+        const mainNode = document.createElement('div');
+        mainNode.innerHTML = `<div class="toki-tree-item"><span class="toki-tree-key">Rules [Array]</span><button class="toki-tree-btn-small" id="tree-add-rule">➕ 룰 추가</button></div>`;
+        root.appendChild(mainNode);
+
+        const listNode = document.createElement('div');
+        listNode.className = 'toki-tree-node';
+        this.rules.forEach((rule, idx) => {
+            listNode.appendChild(this.renderNode(rule, `[${idx}]`, rule.name || rule.id || `Rule ${idx + 1}`));
+        });
+        root.appendChild(listNode);
+
+        this.updateJsonPreview();
+    }
+
+    renderNode(data, path, label = '') {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'toki-tree-node-wrapper';
+
+        const item = document.createElement('div');
+        item.className = 'toki-tree-item';
+        
+        const isObject = data !== null && typeof data === 'object';
+        const toggle = document.createElement('span');
+        toggle.className = 'toki-tree-toggle';
+        toggle.textContent = isObject ? '▼' : '•';
+        
+        const keySpan = document.createElement('span');
+        keySpan.className = 'toki-tree-key';
+        keySpan.textContent = label || path.split('.').pop();
+        if (this.hints[keySpan.textContent]) {
+            keySpan.title = this.hints[keySpan.textContent];
+        }
+
+        item.appendChild(toggle);
+        item.appendChild(keySpan);
+
+        if (!isObject) {
+            const input = document.createElement('input');
+            input.className = 'toki-tree-val';
+            input.value = data;
+            input.dataset.path = path;
+            input.oninput = (e) => this.updateValue(path, e.target.value);
+            item.appendChild(input);
+        } else {
+            const actions = document.createElement('div');
+            actions.className = 'toki-tree-actions';
+            
+            const btnDel = document.createElement('button');
+            btnDel.className = 'toki-tree-btn-small';
+            btnDel.textContent = '🗑️';
+            btnDel.onclick = () => this.removeNode(path);
+            actions.appendChild(btnDel);
+            
+            item.appendChild(actions);
+        }
+
+        wrapper.appendChild(item);
+
+        if (isObject) {
+            const children = document.createElement('div');
+            children.className = 'toki-tree-node';
+            Object.keys(data).forEach(key => {
+                children.appendChild(this.renderNode(data[key], `${path}.${key}`, key));
+            });
+            wrapper.appendChild(children);
+
+            toggle.onclick = () => {
+                const isHidden = children.style.display === 'none';
+                children.style.display = isHidden ? 'block' : 'none';
+                toggle.textContent = isHidden ? '▼' : '▶';
+            };
+        }
+
+        return wrapper;
+    }
+
+    updateValue(path, val) {
+        const parts = path.split('.');
+        let current = this.rules;
+        
+        for (let i = 0; i < parts.length; i++) {
+            let p = parts[i];
+            if (p.startsWith('[') && p.endsWith(']')) {
+                p = parseInt(p.substring(1, p.length - 1));
+            }
+            
+            if (i === parts.length - 1) {
+                current[p] = val;
+            } else {
+                current = current[p];
+            }
+        }
+        this.updateJsonPreview();
+    }
+
+    removeNode(path) {
+        if (!confirm(`노드(${path})를 삭제하시겠습니까?`)) return;
+        
+        const parts = path.split('.');
+        if (parts.length === 1) { // Root rule
+            const idx = parseInt(parts[0].substring(1, parts[0].length - 1));
+            this.rules.splice(idx, 1);
+        } else {
+            let current = this.rules;
+            for (let i = 0; i < parts.length - 1; i++) {
+                let p = parts[i];
+                if (p.startsWith('[') && p.endsWith(']')) p = parseInt(p.substring(1, p.length - 1));
+                current = current[p];
+            }
+            const last = parts[parts.length - 1];
+            delete current[last];
+        }
+        this.render();
+    }
+
+    updateJsonPreview() {
+        const editor = this.overlay.querySelector('#tree-json-editor');
+        editor.value = JSON.stringify(this.rules, null, 2);
+    }
+
+    bindEvents() {
+        const overlay = this.overlay;
+        
+        overlay.querySelector('#tree-close-btn').onclick = () => overlay.remove();
+        
+        overlay.querySelector('#tree-add-rule').onclick = () => {
+            this.rules.push({
+                id: 'new_site_' + Date.now(),
+                name: '새 사이트',
+                urlPattern: '',
+                category: 'Webtoon',
+                meta: { title: { selector: '' } },
+                list: { container: '', item: '' },
+                viewer: { images: { selector: '' } }
+            });
+            this.render();
+        };
+
+        overlay.querySelector('#tree-json-editor').oninput = (e) => {
+            const status = overlay.querySelector('#tree-json-status');
+            try {
+                const parsed = JSON.parse(e.target.value);
+                if (Array.isArray(parsed)) {
+                    this.rules = parsed;
+                    status.textContent = '✓ Valid';
+                    status.style.color = '#4ade80';
+                    if (this.renderTimer) clearTimeout(this.renderTimer);
+                    this.renderTimer = setTimeout(() => this.render(), 1000);
+                }
+            } catch (err) {
+                status.textContent = '⚠ Invalid JSON';
+                status.style.color = '#ff5555';
+            }
+        };
+
+        overlay.querySelector('#tree-btn-save').onclick = () => {
+            RuleManager.saveCustomRules(this.rules);
+            alert('파싱 규칙이 성공적으로 저장되었습니다.');
+            overlay.remove();
+        };
+
+        overlay.querySelector('#tree-btn-export').onclick = () => {
+            const blob = new Blob([JSON.stringify(this.rules, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `tokisync_rules_${new Date().toISOString().split('T')[0]}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        };
+
+        overlay.querySelector('#tree-btn-import').onclick = () => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.onchange = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    try {
+                        const imported = JSON.parse(ev.target.result);
+                        const rules = Array.isArray(imported) ? imported : (imported.rules || []);
+                        const mode = confirm('기존 규칙과 합치시겠습니까? (취소 시 전체 덮어쓰기)') ? 'merge' : 'overwrite';
+                        
+                        if (mode === 'overwrite') {
+                            this.rules = rules;
+                        } else {
+                            RuleManager.bulkImport(rules, 'merge');
+                            this.rules = RuleManager.getCustomRules();
+                        }
+                        this.render();
+                    } catch (err) {
+                        alert('JSON 파싱 오류: ' + err.message);
+                    }
+                };
+                reader.readAsText(file);
+            };
+            input.click();
+        };
+
+        overlay.querySelector('#tree-btn-test').onclick = async () => {
+            const res = overlay.querySelector('#tree-test-result');
+            res.textContent = '⏳ 파싱 테스트 중...';
+            try {
+                const url = overlay.querySelector('#tree-test-url').value;
+                const domain = new URL(url).origin;
+                const rule = this.rules.find(r => new RegExp(r.urlPattern, 'i').test(url));
+                if (!rule) throw new Error('해당 URL에 맞는 규칙이 트리 내에 없습니다.');
+
+                const parser = new GenericParser(domain, rule);
+                const result = await extractEpisodeData(document, parser, { site: 'test', category: rule.category }, false);
+                
+                res.innerHTML = `
+                    <div style="color: #4ade80">성공!</div>
+                    <div>• 제목: ${result.title || 'N/A'}</div>
+                    <div>• 항목 수: ${result.urls?.length || (result.content ? '1 (Text)' : '0')}</div>
+                `;
+            } catch (e) {
+                res.textContent = '❌ 실패: ' + e.message;
+            }
+        };
+    }
 }

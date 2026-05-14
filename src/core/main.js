@@ -1,14 +1,14 @@
 import { tokiDownload, processItem } from './downloader.js';
 import { detectSite, getMaxEpisodes, parseEpisodeRange } from './detector.js'; 
 import { showConfigModal, getConfig, setConfig, isConfigValid } from './config.js';
-import { LogBox, markDownloadedItems, MenuModal } from './ui.js';
+import { LogBox, markDownloadedItems, MenuModal, TreeRuleEditor } from './ui.js';
 import { extractEpisodeData } from './extractor.js';
 import { EpubBuilder } from './epub.js';
 import { CbzBuilder } from './cbz.js';
 import { TxtBuilder } from './txt.js';
 import { fetchHistory } from './gas.js';
 import { ParserFactory } from './parsers/ParserFactory.js';
-import { getOAuthToken } from './network.js';
+import { getOAuthToken, fetchHistoryDirect } from './network.js';
 
 import { getCommonPrefix, blobToArrayBuffer, saveFile } from './utils.js';
 
@@ -16,6 +16,10 @@ export async function main() {
     console.log("🚀 TokiDownloader Loaded (New Core v1.7.4)");
     
     const logger = LogBox.getInstance();
+
+    // -- 0. Pre-detection & Core States --
+    const siteInfo = await detectSite();
+    if(!siteInfo) return; 
 
     // -- Helper Functions for Menu Actions --
 
@@ -140,6 +144,67 @@ export async function main() {
         }
     };
 
+    // -- History Sync (Async) & Cross-Tab Auto Refresh --
+    let lastSyncTime = Date.now();
+    let isSyncing = false;
+
+    const syncHistory = async () => {
+        if (isSyncing) return;
+        isSyncing = true;
+        try {
+            const parser = await ParserFactory.getParser();
+            if (!parser) return;
+            const list = await parser.getListItems();
+            console.log(`[TokiSync] Found ${list.length} list items`);
+            if (list.length === 0) {
+                console.warn('[TokiSync] No list items found, skipping history sync');
+                return;
+            }
+
+            const first = parser.parseListItem(list[0]);
+            const last = parser.parseListItem(list[list.length - 1]);
+
+            const idMatch = document.URL.match(/\/(novel|webtoon|comic)\/([0-9]+)/);
+            const seriesId = idMatch ? idMatch[2] : "0000";
+
+            // Determine Root Folder Name (Unified with Downloader)
+            const rootFolder = parser.getFormattedTitle(seriesId, first.title, last.title, getCommonPrefix);
+
+            const category = siteInfo.category || 'Webtoon';
+
+            if (!isConfigValid()) {
+                console.log('[TokiSync] GAS 설정을 찾을 수 없어 이력 동기화를 건너뜁니다.');
+                return;
+            }
+
+            console.log(`[TokiSync] Fetching history for: ${rootFolder} (${category})`);
+            
+            // [v1.9.1] Use fetchHistoryDirect for faster & more reliable sync
+            const result = await fetchHistoryDirect(rootFolder, category);
+            
+            if (result.success) {
+                console.log(`[TokiSync] Received ${result.data.length} history items via Direct API`);
+                if (result.data.length > 0) {
+                    await markDownloadedItems(result.data);
+                } else {
+                    console.log('[TokiSync] No history items found in Drive');
+                }
+            } else {
+                // Fallback to Legacy GAS if Direct fails
+                console.warn('[TokiSync] Direct history fetch failed, trying legacy GAS relay...');
+                const legacyHistory = await fetchHistory(rootFolder, category);
+                if (legacyHistory && legacyHistory.length > 0) {
+                    await markDownloadedItems(legacyHistory);
+                }
+            }
+        } catch (e) {
+            console.warn('[TokiSync] History check failed:', e);
+        } finally {
+            isSyncing = false;
+            lastSyncTime = Date.now();
+        }
+    };
+
     // -- 1. Initialize MenuModal --
     new MenuModal({
         onDownload: () => {}, // Not used directly, specific methods below
@@ -172,6 +237,7 @@ export async function main() {
         },
         migrateFilenames: runFilenameMigration,
         migrateThumbnails: runThumbnailMigration,
+        syncHistory: syncHistory,
         testNativeDownload: async () => {
             try {
                 const testBlob = new Blob(["TokiSync Native Mode Test File"], { type: "text/plain" });
@@ -282,6 +348,10 @@ export async function main() {
     // -- 2. Register Legacy Menu Commands (Fallback) --
     if (typeof GM_registerMenuCommand !== 'undefined') {
         GM_registerMenuCommand('⚙️ 설정 (Settings)', () => showConfigModal());
+        GM_registerMenuCommand('🧩 파싱 규칙 관리', () => {
+            const editor = new TreeRuleEditor();
+            editor.show();
+        });
         GM_registerMenuCommand('📜 로그창 토글 (Log)', () => logger.toggle());
         GM_registerMenuCommand('🌐 Viewer 열기', openViewer);
         GM_registerMenuCommand('📥 전체 다운로드', () => {
@@ -355,60 +425,6 @@ export async function main() {
         }
     });
 
-    const siteInfo = await detectSite();
-    if(!siteInfo) return; 
-
-    // -- 4. History Sync (Async) & Cross-Tab Auto Refresh --
-    let lastSyncTime = Date.now();
-    let isSyncing = false;
-
-    const syncHistory = async () => {
-        if (isSyncing) return;
-        isSyncing = true;
-        try {
-            const parser = await ParserFactory.getParser();
-            if (!parser) return;
-            const list = await parser.getListItems();
-            console.log(`[TokiSync] Found ${list.length} list items`);
-            if (list.length === 0) {
-                console.warn('[TokiSync] No list items found, skipping history sync');
-                return;
-            }
-
-            const first = parser.parseListItem(list[0]);
-            const last = parser.parseListItem(list[list.length - 1]);
-
-            const idMatch = document.URL.match(/\/(novel|webtoon|comic)\/([0-9]+)/);
-            const seriesId = idMatch ? idMatch[2] : "0000";
-
-            // Determine Root Folder Name (Unified with Downloader)
-            const rootFolder = parser.getFormattedTitle(seriesId, first.title, last.title, getCommonPrefix);
-
-            let category = 'Webtoon';
-            if (siteInfo.site === '북토끼') category = 'Novel';
-            else if (siteInfo.site === '마나토끼') category = 'Manga';
-
-            if (!isConfigValid()) {
-                console.log('[TokiSync] GAS 설정을 찾을 수 없어 이력 동기화를 건너뜁니다.');
-                return;
-            }
-
-            console.log(`[TokiSync] Fetching history for: ${rootFolder} (${category})`);
-            const history = await fetchHistory(rootFolder, category);
-            console.log(`[TokiSync] Received ${history.length} history items`);
-            if (history.length > 0) {
-                await markDownloadedItems(history);
-            } else {
-                console.log('[TokiSync] No history items to mark');
-            }
-        } catch (e) {
-            console.warn('[TokiSync] History check failed:', e);
-        } finally {
-            isSyncing = false;
-            lastSyncTime = Date.now();
-        }
-    };
-
     // Initial load
     console.log('[TokiSync] Starting history sync...');
     syncHistory();
@@ -426,6 +442,3 @@ export async function main() {
         }
     });
 }
-
-// Auto-run main if imported? Or let index.js call it.
-// Since we are refactoring, likely index.js will just import and call main().

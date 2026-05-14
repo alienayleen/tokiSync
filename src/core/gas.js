@@ -230,7 +230,8 @@ export async function fetchHistory(seriesTitle, category = 'Webtoon') {
                 folderId: config.folderId,
                 folderName: seriesTitle,
                 category: category,
-                apiKey: config.apiKey
+                apiKey: config.apiKey,
+                protocolVersion: 3
             }),
             headers: { "Content-Type": "text/plain" },
             timeout: 30000,
@@ -279,7 +280,8 @@ export async function getBooksByCacheId(cacheFileId) {
             data: JSON.stringify({
                 type: "view_get_books_by_cache",
                 cacheFileId: cacheFileId,
-                apiKey: config.apiKey
+                apiKey: config.apiKey,
+                protocolVersion: 3
             }),
             headers: { "Content-Type": "text/plain" },
             timeout: 10000,
@@ -328,7 +330,8 @@ export async function initUpdateUploadViaGASRelay(fileId, fileName) {
                 type: "init_update", 
                 fileId: fileId,
                 fileName: fileName,
-                apiKey: config.apiKey
+                apiKey: config.apiKey,
+                protocolVersion: 3
             }),
             headers: { "Content-Type": "text/plain" },
             timeout: 30000,
@@ -379,7 +382,8 @@ export async function getMergeIndexFragment(sourceId) {
                 type: "view_get_merge_index",
                 folderId: config.folderId,
                 sourceId: sourceId,
-                apiKey: config.apiKey
+                apiKey: config.apiKey,
+                protocolVersion: 3
             }),
             headers: { "Content-Type": "text/plain" },
             timeout: 10000,
