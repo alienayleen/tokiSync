@@ -670,6 +670,7 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
                             while (start < totalSize) {
                                 const end = Math.min(start + CHUNK_SIZE, totalSize);
                                 const chunkBuffer = buffer.slice(start, end);
+                                const bytes = new Uint8Array(chunkBuffer);
                                 
                                 // High-speed Base64 encode
                                 let binary = "";
