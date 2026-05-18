@@ -34,6 +34,11 @@ export function getConfig() {
         ? `https://script.google.com/macros/s/${finalGasId}/exec` 
         : gasUrl;
 
+    let remoteRuleUrl = GM_getValue(CFG_REMOTE_RULE_URL, "");
+    if (!remoteRuleUrl || remoteRuleUrl.trim() === "") {
+        remoteRuleUrl = "https://pray4skylark.github.io/tokiSync/rules.json";
+    }
+
     return {
         gasId: finalGasId,
         gasUrl: finalGasUrl,
@@ -44,7 +49,7 @@ export function getConfig() {
         smartSkipRatio: parseInt(GM_getValue(CFG_SMART_SKIP_RATIO, "50"), 10), // default 50% of Max
         novelMode: GM_getValue(CFG_NOVEL_MODE, "perChapter"), // default: chapter-by-chapter
         novelFormat: GM_getValue(CFG_NOVEL_FORMAT, "epub"), // default: EPUB
-        remoteRuleUrl: GM_getValue(CFG_REMOTE_RULE_URL, ""),
+        remoteRuleUrl: remoteRuleUrl,
         customRules: GM_getValue(CFG_CUSTOM_RULES, "[]")
     };
 }

@@ -1023,33 +1023,110 @@ export class TreeRuleEditor {
         };
 
         overlay.querySelector('#tree-btn-import').onclick = () => {
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.json';
-            input.onchange = (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (ev) => {
-                    try {
-                        const imported = JSON.parse(ev.target.result);
-                        const rules = Array.isArray(imported) ? imported : (imported.rules || []);
-                        const mode = confirm('기존 규칙과 합치시겠습니까? (취소 시 전체 덮어쓰기)') ? 'merge' : 'overwrite';
-                        
-                        if (mode === 'overwrite') {
-                            this.rules = rules;
-                        } else {
-                            RuleManager.bulkImport(rules, 'merge');
-                            this.rules = RuleManager.getCustomRules();
-                        }
-                        this.render();
-                    } catch (err) {
-                        alert('JSON 파싱 오류: ' + err.message);
-                    }
-                };
-                reader.readAsText(file);
+            const selectOverlay = document.createElement('div');
+            selectOverlay.className = 'toki-modal-overlay';
+            selectOverlay.style.zIndex = '20002'; // Above Tree Editor
+            selectOverlay.onclick = (e) => { if(e.target === selectOverlay) selectOverlay.remove(); };
+            
+            selectOverlay.innerHTML = `
+                <div class="toki-modal toki-compact-modal" style="max-width: 400px; padding: 24px;">
+                    <div class="toki-modal-header" style="margin-bottom: 20px;">
+                        <div class="toki-modal-title" style="font-size: 16px;">📥 규칙 가져오기 방식 선택</div>
+                        <button class="toki-modal-close" id="import-select-close" title="닫기">&times;</button>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;">
+                        <button class="toki-btn-action toki-btn-lavender" id="import-choose-file">
+                            📂 로컬 JSON 파일 선택
+                        </button>
+                        <button class="toki-btn-action toki-btn-secondary" id="import-choose-url">
+                            🌐 원격 URL 주소 입력
+                        </button>
+                    </div>
+                    <div id="import-url-input-container" class="toki-hidden" style="margin-top: 16px; border-top: 1px solid rgba(255, 255, 255, 0.1); padding-top: 16px;">
+                        <div class="toki-control-group" style="margin-bottom: 16px;">
+                            <label class="toki-label">원격 규칙 URL 주소</label>
+                            <input type="text" id="import-url-input" class="toki-input" placeholder="https://..." value="https://pray4skylark.github.io/tokiSync/rules.json">
+                        </div>
+                        <button class="toki-btn-action" id="import-btn-fetch" style="width: 100%;">
+                            <span>가져오기 실행</span>
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(selectOverlay);
+
+            selectOverlay.querySelector('#import-select-close').onclick = () => selectOverlay.remove();
+
+            const handleRulesImport = (rules) => {
+                const rulesArr = Array.isArray(rules) ? rules : (rules.rules || []);
+                if (!Array.isArray(rulesArr) || rulesArr.length === 0) {
+                    alert('가져올 규칙이 유효하지 않거나 비어 있습니다.');
+                    return;
+                }
+                const mode = confirm('기존 규칙과 합치시겠습니까? (취소 시 전체 덮어쓰기)') ? 'merge' : 'overwrite';
+                if (mode === 'overwrite') {
+                    this.rules = rulesArr;
+                } else {
+                    RuleManager.bulkImport(rulesArr, 'merge');
+                    this.rules = RuleManager.getCustomRules();
+                }
+                this.render();
+                selectOverlay.remove();
             };
-            input.click();
+
+            // File selection
+            selectOverlay.querySelector('#import-choose-file').onclick = () => {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = '.json';
+                input.onchange = (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        try {
+                            const imported = JSON.parse(ev.target.result);
+                            handleRulesImport(imported);
+                        } catch (err) {
+                            alert('JSON 파싱 오류: ' + err.message);
+                        }
+                    };
+                    reader.readAsText(file);
+                };
+                input.click();
+            };
+
+            // URL input toggle
+            selectOverlay.querySelector('#import-choose-url').onclick = () => {
+                const container = selectOverlay.querySelector('#import-url-input-container');
+                container.classList.remove('toki-hidden');
+            };
+
+            // Fetch remote URL
+            selectOverlay.querySelector('#import-btn-fetch').onclick = async () => {
+                const url = selectOverlay.querySelector('#import-url-input').value.trim();
+                if (!url) {
+                    alert('URL을 입력해주세요.');
+                    return;
+                }
+                const fetchBtn = selectOverlay.querySelector('#import-btn-fetch');
+                fetchBtn.disabled = true;
+                fetchBtn.innerHTML = '<span>⏳ 가져오는 중...</span>';
+                
+                try {
+                    const fetched = await RuleManager.fetchRemoteRules(url);
+                    if (fetched) {
+                        handleRulesImport(fetched);
+                    } else {
+                        alert('원격 규칙을 가져오는데 실패했습니다. URL 주소 및 네트워크 상태를 확인하세요.');
+                    }
+                } catch (err) {
+                    alert('오류 발생: ' + err.message);
+                } finally {
+                    fetchBtn.disabled = false;
+                    fetchBtn.innerHTML = '<span>가져오기 실행</span>';
+                }
+            };
         };
 
         overlay.querySelector('#tree-btn-test').onclick = async () => {
