@@ -1,4 +1,4 @@
-import { CFG_CUSTOM_RULES } from '../config.js';
+import { CFG_CUSTOM_RULES, CFG_REMOTE_RULE_URL } from '../config.js';
 
 /**
  * RuleManager
@@ -15,12 +15,44 @@ export class RuleManager {
     static async getRules() {
         let rules = [...this.#builtInRules];
 
-        // 1. Load Custom Rules from GM storage
+        // 1. Fetch Remote Rules (Background cache update & retrieval)
+        let remoteRules = [];
+        const cacheStr = typeof GM_getValue !== 'undefined' ? GM_getValue("TOKI_REMOTE_RULES_CACHE", "") : "";
+        let hasCache = false;
+
+        if (cacheStr) {
+            try {
+                remoteRules = JSON.parse(cacheStr);
+                hasCache = true;
+            } catch (e) {}
+        }
+
+        const configUrl = typeof GM_getValue !== 'undefined' ? GM_getValue(CFG_REMOTE_RULE_URL, "") : "";
+        const targetUrl = configUrl.trim() || "https://pray4skylark.github.io/tokiSync/rules.json";
+
+        const updatePromise = this.fetchRemoteRules(targetUrl).then(fetched => {
+            if (fetched) return fetched;
+            return null;
+        });
+
+        if (!hasCache) {
+            const fetched = await updatePromise;
+            if (fetched) remoteRules = fetched;
+        } else {
+            // Background update
+            updatePromise.catch(() => {});
+        }
+
+        if (remoteRules.length > 0) {
+            rules = [...remoteRules, ...rules];
+        }
+
+        // 2. Load Custom Rules from GM storage
         if (typeof GM_getValue !== 'undefined') {
             const customStr = GM_getValue(CFG_CUSTOM_RULES, '[]');
             try {
                 const customRules = JSON.parse(customStr);
-                if (Array.isArray(customRules)) {
+                if (Array.isArray(customRules) && customRules.length > 0) {
                     // Custom rules at the beginning to take precedence during matching
                     rules = [...customRules, ...rules];
                 }
@@ -131,5 +163,40 @@ export class RuleManager {
             }
         }
         return null;
+    }
+
+    /**
+     * Fetch rules from remote URL
+     */
+    static async fetchRemoteRules(url) {
+        return new Promise((resolve) => {
+            if (typeof GM_xmlhttpRequest === 'undefined') {
+                resolve(null);
+                return;
+            }
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: url,
+                onload: (res) => {
+                    try {
+                        const data = JSON.parse(res.responseText);
+                        let rules = data.rules || data;
+                        if (Array.isArray(rules)) {
+                            if (typeof GM_setValue !== 'undefined') {
+                                GM_setValue("TOKI_REMOTE_RULES_CACHE", JSON.stringify(rules));
+                            }
+                            resolve(rules);
+                        } else {
+                            resolve(null);
+                        }
+                    } catch (e) {
+                        console.error('[RuleManager] Parse remote rules failed:', e);
+                        resolve(null);
+                    }
+                },
+                onerror: () => resolve(null),
+                ontimeout: () => resolve(null)
+            });
+        });
     }
 }

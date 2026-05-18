@@ -13,13 +13,11 @@ import { getOAuthToken, fetchHistoryDirect } from './network.js';
 import { getCommonPrefix, blobToArrayBuffer, saveFile } from './utils.js';
 
 export async function main() {
-    console.log("🚀 TokiDownloader Loaded (New Core v1.9.41)");
+    console.log("🚀 TokiDownloader Loaded (New Core v1.9.5)");
     
     const logger = LogBox.getInstance();
 
-    // -- 0. Pre-detection & Core States --
-    const siteInfo = await detectSite();
-    if(!siteInfo) return; 
+    // -- 0. Core Logic starts after helper function definitions --
 
     // -- Helper Functions for Menu Actions --
 
@@ -150,6 +148,29 @@ export async function main() {
             console.error(e);
         }
     };
+
+    // -- 1. GM Menus (Must be registered early to prevent deadlocks) --
+    if (typeof GM_registerMenuCommand !== 'undefined') {
+        GM_registerMenuCommand('⚙️ 설정 (Settings)', () => showConfigModal());
+        GM_registerMenuCommand('🧩 파싱 규칙 관리', () => {
+            const editor = new TreeRuleEditor();
+            editor.show();
+        });
+        GM_registerMenuCommand('📜 로그창 토글 (Log)', () => logger.toggle());
+        GM_registerMenuCommand('🌐 Viewer 열기', openViewer);
+        GM_registerMenuCommand('📥 전체 다운로드', () => {
+            const config = getConfig();
+            tokiDownload(undefined, config.policy);
+        });
+        GM_registerMenuCommand('📂 파일명 표준화 (Migration)', runFilenameMigration);
+    }
+
+    // -- 2. Pre-detection & Core States --
+    const siteInfo = await detectSite();
+    if(!siteInfo) {
+        console.warn('[TokiSync] 사이트 매칭 실패. 탬퍼몽키 메뉴를 통해 설정을 확인하세요.');
+        return; 
+    }
 
     // -- History Sync (Async) & Cross-Tab Auto Refresh --
     let lastSyncTime = Date.now();
@@ -351,21 +372,6 @@ export async function main() {
     });
 
 
-    // -- 2. Register Legacy Menu Commands (Fallback) --
-    if (typeof GM_registerMenuCommand !== 'undefined') {
-        GM_registerMenuCommand('⚙️ 설정 (Settings)', () => showConfigModal());
-        GM_registerMenuCommand('🧩 파싱 규칙 관리', () => {
-            const editor = new TreeRuleEditor();
-            editor.show();
-        });
-        GM_registerMenuCommand('📜 로그창 토글 (Log)', () => logger.toggle());
-        GM_registerMenuCommand('🌐 Viewer 열기', openViewer);
-        GM_registerMenuCommand('📥 전체 다운로드', () => {
-            const config = getConfig();
-            tokiDownload(undefined, config.policy);
-        });
-        GM_registerMenuCommand('📂 파일명 표준화 (Migration)', runFilenameMigration);
-    }
 
     // -- 3. Bridge Listener --
     window.addEventListener("message", async (event) => {

@@ -6,7 +6,7 @@ const fs = require('fs');
 const METADATA_MAIN = `// ==UserScript==
 // @name         TokiSync (Link to Drive)
 // @namespace    http://tampermonkey.net/
-// @version      1.9.41
+// @version      1.9.5
 // @description  Toki series sites -> Google Drive syncing tool (Bundled)
 // @author       pray4skylark
 // @updateURL    https://pray4skylark.github.io/tokiSync/tokiSync.user.js
@@ -81,6 +81,20 @@ const METADATA_NEW_CORE = `// ==UserScript==
 // @license      MIT
 // ==/UserScript==
 `;
+
+// Copy rules.sample.json to docs/rules.json for remote distribution
+try {
+  const destDir = path.resolve(__dirname, 'docs');
+  if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+  
+  fs.copyFileSync(
+    path.resolve(__dirname, 'src/core/parsers/rules.sample.json'),
+    path.resolve(__dirname, 'docs/rules.json')
+  );
+  console.log("✅ Copied rules.sample.json to docs/rules.json");
+} catch (e) {
+  console.error("❌ Failed to copy rules.json:", e.message);
+}
 
 module.exports = {
   mode: 'production',

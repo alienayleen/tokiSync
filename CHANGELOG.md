@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.9.5] - 2026-05-18
+
+### ✨ 파싱 규칙 가져오기(Import) 다중 선택 모달 도입 및 초기 데드락 제거
+- **가져오기 방식 다변화 (모달 팝업)**: 트리 에디터의 "가져오기" 클릭 시 로컬 JSON 파일과 원격 URL을 자유롭게 선택하여 가져올 수 있는 Glassmorphism 스타일 모달을 구축했습니다.
+- **초기 사용자 메뉴 데드락 해제**: 사이트 감지(`detectSite`) 동작 전 Tampermonkey 전역 메뉴(`GM_registerMenuCommand`)를 즉시 등록하여, 신규 사이트나 지원되지 않는 도메인에서도 설정 모달 및 규칙 편집기를 자유롭게 호출해 교착 상태(Deadlock)를 돌파할 수 있도록 수정했습니다.
+- **원격 URL 캐싱 아키텍처**: 페이지 렌더링을 블로킹하지 않도록 로컬 캐시를 우선 반환한 뒤 백그라운드에서 비동기로 원격 규칙을 갱신하는 라이프사이클을 확립했습니다.
+
 ## [v1.9.41] - 2026-05-18
 
 ### 🐛 GAS 번들 빌더 누락 핫픽스 (DriveAccessService 해결)
