@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.9.41] - 2026-05-18
+
+### 🐛 GAS 번들 빌더 누락 핫픽스 (DriveAccessService 해결)
+- **번들 구성 정상화**: 구글 앱스 스크립트(GAS)용 단일 번들 파일(`TokiSync_Server_Bundle.gs`) 빌드 시 `DriveAccessService.gs` 파일이 번들러 소스 리스트(`build_bundle.cjs`)에서 누락되었던 문제를 발견하고 수정했습니다.
+- **설치 오류 해결**: v1.8.0 이후 신규 설치하는 사용자가 번들 파일을 복사해서 사용할 때 발생하던 `ReferenceError: DriveAccessService is not defined` 런타임 에러가 완전히 해소되었습니다.
+
 ## [v1.9.4] - 2026-05-17
 
 ### ✨ 제너릭 파서 고도화 및 도메인 유연성 확보
