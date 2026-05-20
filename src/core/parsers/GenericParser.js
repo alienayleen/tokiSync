@@ -236,6 +236,21 @@ export class GenericParser extends BaseParser {
                 return [];
             }
         }
+
+        // [v1.9.5] 광고 및 불필요 요소 제거 (exclude / remove)
+        const excludeRule = viewerCfg.exclude || viewerCfg.remove;
+        if (excludeRule) {
+            const excludeSelectors = Array.isArray(excludeRule) ? excludeRule : [excludeRule];
+            for (const selector of excludeSelectors) {
+                try {
+                    const targets = container.querySelectorAll(selector);
+                    targets.forEach(el => el.remove());
+                } catch (e) {
+                    console.warn(`[GenericParser] 요소 제거 실패 (셀렉터: ${selector}):`, e);
+                }
+            }
+        }
+
         const imgs = Array.from(container.querySelectorAll(viewerCfg.imageItem || 'img'));
 
         return imgs.map(img => {

@@ -43,21 +43,7 @@ export async function processItem(item, builder, siteInfo, iframe, parser, serie
         const text = await fetchNovelText(item.src, viewerCfg.decryptApi || {});
 
         if (text) {
-            let cleanText = text;
-            
-            // 1. 앞부분 껍데기 제거 (text 또는 html 형식을 모두 지원하며, 문자열 시작 부분만 타겟팅)
-            cleanText = cleanText.replace(/^\{"kind"\s*:\s*"(text|html)"\s*,\s*"(text|html)"\s*:\s*"/, '');
-            
-            // 2. 뒷부분 껍데기 제거 (", "css":"" } 또는 "} 로 끝나는 모든 경우 대응)
-            cleanText = cleanText.replace(/"\s*(,\s*"css"\s*:\s*""\s*)?\}$/, '');
-            
-            // 3. 줄바꿈 이스케이프(\n)를 실제 줄바꿈으로 변환
-            cleanText = cleanText.replace(/\\n/g, '\n');
-            
-            // 4. 따옴표 이스케이프(\")를 실제 쌍따옴표로 변환
-            cleanText = cleanText.replace(/\\"/g, '"');
-
-            builder.addChapter(item.title, cleanText);
+            builder.addChapter(item.title, text);
             logger.log(`✅ 복호화 성공: ${item.title}`, 'Downloader');
         } else {
             throw new Error(`복호화 실패 (API 응답 없음)`);

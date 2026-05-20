@@ -1,3 +1,36 @@
+/**
+ * 소설 본문의 HTML 태그를 제거하고 가독성 좋게 줄바꿈을 문단 단위로 정제하는 함수
+ */
+function cleanNovelParagraphs(html) {
+    if (!html) return "";
+
+    // 1. HTML 태그를 줄바꿈 및 공백으로 치환
+    let text = html
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/p>/gi, '\n')
+        .replace(/<\/div>/gi, '\n')
+        .replace(/<[^>]+>/g, ''); // 나머지 HTML 태그 완전 제거
+
+    // 2. HTML 엔티티 치환
+    text = text
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&')
+        .replace(/&quot;/g, '"');
+
+    // 3. 각 줄의 좌우 공백 트리밍 및 유령 문자 정리
+    text = text
+        .split('\n')
+        .map(line => line.trim())
+        .join('\n');
+
+    // 4. 3개 이상 과도한 연속 줄바꿈을 2개(\n\n, 빈 줄 1개)로 제한
+    text = text.replace(/\n{3,}/g, '\n\n');
+
+    return text.trim();
+}
+
 export class TxtBuilder {
     constructor() {
         this.content = "";
@@ -5,7 +38,7 @@ export class TxtBuilder {
 
     addChapter(title, textContent) {
         this.content += `\n\n=== ${title} ===\n\n`;
-        this.content += textContent;
+        this.content += cleanNovelParagraphs(textContent);
     }
 
     async build(metadata = {}) {
