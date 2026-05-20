@@ -149,8 +149,25 @@ export async function fetchNovelText(episodeUrl, config = {}, _isRetry = false) 
         const data = await resp.json();
         if (!data.ok || !data.payload) return null;
 
-        // 6. XOR 복호화
-        return xorDecrypt(data.payload, xorKey);
+        // 6. XOR 복호화 및 후처리 정제 (JSON 껍데기 제거 및 이스케이프 복원)
+        const rawText = xorDecrypt(data.payload, xorKey);
+        if (!rawText) return null;
+
+        let cleanText = rawText;
+        
+        // 1) 앞부분 JSON 껍데기 제거 (text/html 형식 모두 대응)
+        cleanText = cleanText.replace(/^\{"kind"\s*:\s*"(text|html)"\s*,\s*"(text|html)"\s*:\s*"/, '');
+        
+        // 2) 뒷부분 JSON 껍데기 제거 (", "css":"" } 또는 "} 로 끝나는 모든 경우 대응)
+        cleanText = cleanText.replace(/"\s*(,\s*"css"\s*:\s*""\s*)?\}$/, '');
+        
+        // 3) 줄바꿈 이스케이프(\n) 복원
+        cleanText = cleanText.replace(/\\n/g, '\n');
+        
+        // 4) 따옴표 이스케이프(\") 복원
+        cleanText = cleanText.replace(/\\"/g, '"');
+
+        return cleanText;
 
     } catch (e) {
         console.error('[Decryptor] 복호화 과정 중 예외 발생:', e);
