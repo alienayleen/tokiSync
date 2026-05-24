@@ -6,7 +6,7 @@ const fs = require('fs');
 const METADATA_MAIN = `// ==UserScript==
 // @name         TokiSync (Link to Drive)
 // @namespace    http://tampermonkey.net/
-// @version      1.10.1
+// @version      1.20.0
 // @description  Toki series sites -> Google Drive syncing tool (Bundled)
 // @author       pray4skylark
 // @updateURL    https://pray4skylark.github.io/tokiSync/tokiSync.user.js
@@ -42,7 +42,7 @@ const METADATA_MAIN = `// ==UserScript==
 // @connect      *
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip-utils/0.1.0/jszip-utils.js
-// @run-at       document-end
+// @run-at       document-start
 // @license      MIT
 // ==/UserScript==
 `;
@@ -77,7 +77,7 @@ const METADATA_NEW_CORE = `// ==UserScript==
 // @connect      127.0.0.1
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip-utils/0.1.0/jszip-utils.js
-// @run-at       document-end
+// @run-at       document-start
 // @license      MIT
 // ==/UserScript==
 `;

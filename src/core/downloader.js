@@ -10,7 +10,7 @@ import { getConfig, isConfigValid } from './config.js';
 import { startSilentAudio, stopSilentAudio } from './anti_sleep.js';
 import { fetchHistory, refreshCacheAfterUpload, getBooksByCacheId, initUpdateUploadViaGASRelay, getMergeIndexFragment } from './gas.js';
 import { fetchHistoryDirect, checkSingleHistoryDirect } from './network.js';
-import { fetchNovelText } from './novel-decryptor.js';
+import { fetchNovelText, fetchComicImages, closeActivePopup } from './novel-decryptor.js';
 
 // Sleep Policy Presets
 const SLEEP_POLICIES = {
@@ -21,141 +21,89 @@ const SLEEP_POLICIES = {
     very_slow: { min: 10000, max: 30000 } // 매우 느림 (10-30초)
 };
 
-// Processing Loop에 해당되는 로직을 분리 한다.
 export async function processItem(item, builder, siteInfo, iframe, parser, seriesTitle = "", targetDoc = null) {
     const { category } = siteInfo;
     const isNovel = (category === 'Novel' || category === 'novel');
     const viewerCfg = parser.rule.viewer || {};
-    const fetchMethod = viewerCfg.fetchMethod || (isNovel ? 'xhr' : 'iframe');
 
-    // Apply Dynamic Sleep based on Policy
+    const logger = LogBox.getInstance();
     const config = getConfig();
     let policy = SLEEP_POLICIES[config.sleepMode] || SLEEP_POLICIES.agile;
 
-    let iframeDoc = targetDoc;
-    let isStaticDoc = false;
+    if (isNovel) {
+        logger.log(`[소설] 추출 중: ${item.title}`, 'Downloader');
 
-    // [전략 B] fetchMethod === 'api'는 targetDoc 여부와 무관하게 항상 API 경로 우선
-    if (fetchMethod === 'api') {
-        const logger = LogBox.getInstance();
-        logger.log(`[API] 직접 복호화 시도 중 (대기: ${policy.min / 1000}~${policy.max / 1000}초): ${item.title}`, 'Downloader');
-
-        const text = await fetchNovelText(item.src, viewerCfg.decryptApi || {});
+        const text = await fetchNovelText(item.src, {
+            ...(viewerCfg.decryptApi || {}),
+            viewerCfg: viewerCfg
+        });
 
         if (text) {
             builder.addChapter(item.title, text);
-            logger.log(`✅ 복호화 성공: ${item.title}`, 'Downloader');
+            logger.log(`✅ 추출 성공: ${item.title}`, 'Downloader');
         } else {
-            throw new Error(`복호화 실패 (API 응답 없음)`);
+            throw new Error(`추출 실패 (본문 응답 없음)`);
         }
 
         await sleep(policy.min, policy.max);
-        return; // DOM 파이프라인 완전 우회
-    }
-
-    if (!iframeDoc) {
-        if (fetchMethod === 'xhr') {
-            const logger = LogBox.getInstance();
-            logger.log(`[XHR] 문서 파싱 중...`, 'Downloader');
-            
-            const responseText = await new Promise((resolve, reject) => {
-                if (typeof GM_xmlhttpRequest === 'undefined') {
-                    reject(new Error("GM_xmlhttpRequest 권한이 없습니다. iframe 폴백을 설정해주세요."));
-                    return;
-                }
-                GM_xmlhttpRequest({
-                    method: 'GET',
-                    url: item.src,
-                    headers: { "Referer": window.location.origin },
-                    onload: (res) => resolve(res.responseText),
-                    onerror: (err) => reject(new Error("네트워크 오류: " + (err.statusText || 'Unknown')))
-                });
-            });
-
-            const parserObj = new DOMParser();
-            iframeDoc = parserObj.parseFromString(responseText, "text/html");
-            isStaticDoc = true;
-
-            await sleep(policy.min, policy.max);
-        } else {
-            await waitIframeLoad(iframe, item.src, viewerCfg);
-            await sleep(policy.min, policy.max);
-            
-            try {
-                const win = iframe.contentWindow;
-                if (!win) throw new Error("NoWindow");
-                iframeDoc = win.document;
-                const title = iframeDoc.title; // CORS/Access Check
-                
-                // [v1.8.1] 만약 내용이 아예 없거나 보안 차단 문구가 보인다면 에러 발생시켜 XHR로 유도
-                if (!title || title.includes('403') || title.includes('Cloudflare')) {
-                    if (iframeDoc.body.innerHTML.length < 100) {
-                        throw new Error("IframeBlockedOrEmpty");
-                    }
-                }
-            } catch (e) {
-                console.warn('[Downloader] iframe 접근 차단 감지(CORS). XHR 방식으로 즉시 폴백합니다.', e);
-                const responseText = await new Promise((resolve, reject) => {
-                    GM_xmlhttpRequest({
-                        method: 'GET',
-                        url: item.src,
-                        headers: { "Referer": window.location.origin },
-                        onload: (res) => resolve(res.responseText),
-                        onerror: (err) => reject(new Error("XHR 폴백 실패: " + (err.statusText || 'Unknown')))
-                    });
-                });
-                const parserObj = new DOMParser();
-                iframeDoc = parserObj.parseFromString(responseText, "text/html");
-                isStaticDoc = true;
-            }
-        }
-    }
-
-    // --- [v1.8.2] 1단계: 모듈화된 파이프라인(Extractor) 호출 ---
-    const extractedData = await extractEpisodeData(iframeDoc, parser, siteInfo, isStaticDoc, item.src);
-    
-    // 메타데이터가 뷰어에서 추출되었다면 활용 (단건 다운로드 등)
-    const finalTitle = extractedData.episodeTitle && extractedData.episodeTitle !== "UnknownEpisode" 
-                       ? extractedData.episodeTitle 
-                       : item.title;
-
-    if (isNovel) {
-        if (!extractedData.content) {
-            throw new Error(`텍스트 본문 추출 실패 (DOM 또는 API 모두 감지 불가)`);
-        }
-        builder.addChapter(finalTitle, extractedData.content);
     } 
     else {
-        const logger = LogBox.getInstance();
-        const mergedUrls = extractedData.urls;
+        logger.log(`[만화] 추출 중: ${item.title}`, 'Downloader');
 
-        if (mergedUrls.length === 0) {
-            throw new Error(`이미지 URL 감지 실패 (뷰어 컨테이너 또는 속성 탐색 불가)`);
+        // 자식 팝업 내부에서 스크롤 로드 및 이미지 다운로드까지 전담하여 ArrayBuffer 패키지 회신
+        const popupImages = await fetchComicImages(item.src, {
+            viewerCfg: viewerCfg
+        });
+
+        if (popupImages && popupImages.length > 0) {
+            // 부모 탭에서 ArrayBuffer 패키지를 Blob 배열로 환원 (MIME 형식 기반 확장자 유입)
+            const resolvedImages = popupImages.map(img => {
+                const getExtFromMime = (mime) => {
+                    if (!mime) return '.jpg';
+                    const lower = mime.toLowerCase();
+                    if (lower.includes('png')) return '.png';
+                    if (lower.includes('webp')) return '.webp';
+                    if (lower.includes('gif')) return '.gif';
+                    return '.jpg';
+                };
+
+                const mimeType = img.type || 'image/jpeg';
+                const ext = getExtFromMime(mimeType);
+
+                if (img.data) {
+                    return {
+                        url: img.url,
+                        blob: new Blob([img.data], { type: mimeType }),
+                        ext: ext,
+                        isMissing: false
+                    };
+                } else {
+                    return {
+                        url: img.url,
+                        blob: new Blob([]),
+                        ext: ext,
+                        isMissing: true
+                    };
+                }
+            });
+
+            // 제목 정제 규칙 적용
+            let chapterTitleOnly = item.title;
+            if (seriesTitle && chapterTitleOnly.startsWith(seriesTitle)) {
+                chapterTitleOnly = chapterTitleOnly.replace(seriesTitle, '').trim();
+            }
+
+            const chapterMatch = chapterTitleOnly.match(/(\d+)화/);
+            const chapterNum = chapterMatch ? chapterMatch[1].padStart(4, '0') : item.num;
+            const cleanChapterTitle = `${chapterNum} ${chapterTitleOnly}`;
+
+            builder.addChapter(cleanChapterTitle, resolvedImages);
+            logger.log(`✅ 추출 및 다운로드 성공: ${item.title} (이미지 ${resolvedImages.length}개)`, 'Downloader');
+        } else {
+            throw new Error(`추출 실패 (이미지 팝업 패키지 획득 불가)`);
         }
 
-        // Fetch Images Parallel
-        let images = await fetchImages(mergedUrls);
-        
-        // [v1.7.3] Deep Fallback: 기준 하향 (70KB -> 30KB) 및 누락 확인
-        const suspiciousCount = images.filter(img => img.blob.size < 30000 || img.isMissing).length;
-        if (suspiciousCount > mergedUrls.length / 2) {
-            logger.warn(`[Deep Fallback] 다수의 저용량 이미지 감지 (${suspiciousCount}/${mergedUrls.length}). 2초 후 강제 재스크롤 재시도...`, 'System');
-            await sleep(2000); // v1.7.2: 5s -> 2s
-            await scrollToLoad(iframeDoc, 12000); // 더 길게 대기
-            const finalRetryUrls = parser.getImageList(iframeDoc);
-            images = await fetchImages(finalRetryUrls);
-        }
-
-        // Add chapter to builder
-        let chapterTitleOnly = item.title;
-        if (seriesTitle && chapterTitleOnly.startsWith(seriesTitle)) {
-            chapterTitleOnly = chapterTitleOnly.replace(seriesTitle, '').trim();
-        }
-
-        const chapterMatch = chapterTitleOnly.match(/(\d+)화/);
-        const chapterNum = chapterMatch ? chapterMatch[1].padStart(4, '0') : item.num;
-        const cleanChapterTitle = `${chapterNum} ${chapterTitleOnly}`;
-        builder.addChapter(cleanChapterTitle, images);
+        await sleep(policy.min, policy.max);
     }
 }
 
@@ -809,6 +757,13 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
         stopSilentAudio();
         logger.log('[Anti-Sleep] 백그라운드 모드 자동 종료');
         
+        // [Cleanup 팝업 세션] 다운로드 종료 후 액티브 팝업 폐쇄
+        try {
+            closeActivePopup();
+        } catch (popupErr) {
+            console.warn('[Downloader] 팝업 클린업 실패:', popupErr);
+        }
+
         // Cleanup
         const iframe = document.querySelector('iframe');
         if (iframe) iframe.remove();
