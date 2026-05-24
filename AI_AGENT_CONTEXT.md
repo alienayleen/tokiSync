@@ -36,6 +36,7 @@ This document is the **single source of truth (SSOT)** for the project's static 
   - **Virtual Scroll**: Must use `aspect-ratio` to preserve layout height even when images are unmounted from DOM.
   - **Scroll Mode Exclusion**: Auto-crop (`clip-path`) must be disabled in scroll mode to maintain vertical continuity of webtoon content.
   - **RootMargin Expansion**: 고속 스크롤 대응을 위해 마진을 `3000px`로 확장.
+  - **Dynamic Min-Height Calibration (v1.20.0)**: 스크롤 뷰어에서 이미지 로드 완료 시 `minHeight` 속성을 `auto`로 즉시 환원하여, 플레이스홀더 제약으로 인한 이미지 가로세로 비율 왜곡 및 찌그러짐 현상을 영구 차단한다.
 - **Cinematic Design**: The viewer follows a glassmorphism aesthetic with subtle animations and a premium feel.
 
 ---
@@ -136,8 +137,10 @@ GitHub 공식 릴리즈 발행 시, 자동 생성되는 소스 코드 외에 다
 
 ---
 
-### 7. 파서 설계 및 확장 규칙 (v1.7.2)
+### 7. 파서 설계 및 확장 규칙 (v1.20.0)
 
+- **Controller-Worker IPC 수집 (v1.20.0)**: 보안 강화 도메인의 암호화 API 및 봇 감지 우회를 위해 `postMessage` 기반의 팝업 IPC 통신망을 기동하여 최종 렌더링된 소설/만화 데이터를 캡처하고, Shadow DOM 내 불필요한 style/script 노이즈가 제거된 클린 텍스트를 정제한다.
+- **XOR Decryption (v1.20.0)**: 신형 복호화 사양에 대응하기 위해 JWT 토큰의 1부(XOR 키) 및 동적 Nonce를 자동 추출 및 디코딩하여 실시간 XOR 복호화 엔진에 적용한다.
 - **Decoupling First**: 사이트별 DOM 구조 의존적인 모든 로직(목록 추출, 제목 파싱, 이미지 리스트 수집 등)은 반드시 `src/core/parsers/` 내의 파서 클래스에서 처리한다.
 - **Inheritance Pattern**: 모든 파서는 `BaseParser`를 상속받아 인터페이스 일관성을 유지하며, 공통 로직(더미 이미지 필터, 제목 정규화 등)은 부모 클래스의 메서드를 재사용한다.
 - **Dynamic LazyKey Tracking (v1.7.3)**: 사이트가 이미지 URL 속성명을 랜덤하게 변경하는 경우(안티 스크래핑), 파서는 소스 스크립트 정규식 매칭 및 이미지 속성 역추적(Backtracking)을 통해 실시간으로 키를 탐지해야 한다.

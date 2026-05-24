@@ -12,7 +12,7 @@
            @error="onImgError(idx)"
            class="v2-img block w-full h-auto"
            :loading="idx <= (markerIndex || 0) ? 'eager' : 'lazy'"
-           :style="{ minHeight: avgHeight > 0 ? avgHeight + 'px' : '200px' }">
+           :style="{ minHeight: loadedImages.has(idx) ? 'auto' : (avgHeight > 0 ? avgHeight + 'px' : '200px') }">
            
     </div>
 
@@ -30,12 +30,14 @@ const props = defineProps({
 
 const emit = defineEmits(['ready', 'heuristic-ready']);
 const loadedCount = ref(0);
+const loadedImages = ref(new Set()); // Track individually loaded images to release min-height constraints
 const firstThreeHeights = ref({});
 const avgHeight = ref(0);
 
 function onImgLoad(idx) {
   try {
     loadedCount.value++;
+    loadedImages.value.add(idx); // Register image as fully loaded
     
     // [v2.8] Heuristic: Capture RENDERED height for the first 3 images
     const el = document.querySelector(`[data-locator="${idx}"] img`);
@@ -61,6 +63,7 @@ function onImgLoad(idx) {
 function onImgError(idx) {
   console.error(`[V2:ImageRenderer] Failed to load image ${idx}`);
   loadedCount.value++;
+  loadedImages.value.add(idx); // Register even if failed to release min-height placeholder constraint
 }
 
 onMounted(async () => {

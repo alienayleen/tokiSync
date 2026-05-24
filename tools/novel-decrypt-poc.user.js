@@ -50,9 +50,10 @@
         return b64urlEncode(new Uint8Array(sig));
     }
 
-    function xorDecrypt(payloadB64, keyB64) {
+    function xorDecrypt(payloadB64, token) {
         const payload = b64urlDecode(payloadB64);
-        const key = b64urlDecode(keyB64);
+        const xorKey = token.split('.')[0];
+        const key = new TextEncoder().encode(xorKey);
         const result = new Uint8Array(payload.length);
         for (let i = 0; i < payload.length; i++) {
             result[i] = payload[i] ^ key[i % key.length];
@@ -63,6 +64,29 @@
     function getNvCookie() {
         const match = document.cookie.match(/(?:^|;\s*)nv=([^;]*)/);
         return match ? decodeURIComponent(match[1]) : null;
+    }
+
+    function getValidNonce(token) {
+        try {
+            const base64UrlPayload = token.split('.')[0];
+            const base64Payload = base64UrlPayload.replace(/-/g, '+').replace(/_/g, '/');
+            const binStr = atob(base64Payload);
+            const bytes = new Uint8Array(binStr.length);
+            for (let i = 0; i < binStr.length; i++) {
+                bytes[i] = binStr.charCodeAt(i);
+            }
+            const decodedString = new TextDecoder('utf-8').decode(bytes);
+            const tokenData = JSON.parse(decodedString);
+
+            if (tokenData && tokenData.nonce) {
+                console.log("[Decryptor] 신형 토큰 감지 - 내장된 Nonce 추출 완료:", tokenData.nonce);
+                return tokenData.nonce;
+            }
+        } catch (e) {
+            console.warn("[Decryptor] 토큰 디코딩 중 오류 발생, 기존 폴백 적용:", e);
+        }
+        console.log("[Decryptor] 구형 토큰 감지 - 랜덤 Nonce를 생성합니다.");
+        return b64urlEncode(crypto.getRandomValues(new Uint8Array(24)));
     }
 
     function getIdsFromUrl(url) {
@@ -101,10 +125,9 @@
                 cookie = getNvCookie();
                 if (!cookie) { L('❌ 쿠키 발급 실패.'); return { ok: false, log: log.join('\n') }; }
             }
-            const xorKey = cookie.split('.')[0];
 
             // 3. HMAC
-            const nonce = b64urlEncode(crypto.getRandomValues(new Uint8Array(24)));
+            const nonce = getValidNonce(token);
             const proof = await hmacSign(cookie, `${token}.${nonce}.${navigator.userAgent}`);
 
             // 4. API
@@ -128,8 +151,11 @@
             const json = await resp.json();
             if (!json.ok || !json.payload) { L('❌ API 성공했으나 payload 없음'); return { ok: false, log: log.join('\n') }; }
 
-            // 5. XOR
-            const text = xorDecrypt(json.payload, xorKey);
+            // 5. XOR 복호화 및 URI 디코딩 정제
+            let text = xorDecrypt(json.payload, token);
+            if (text.startsWith('%')) {
+                text = decodeURIComponent(text);
+            }
             const preview = text.substring(0, 50).replace(/\n/g, ' ') + '...';
             L(`✅ 성공! (${text.length}자) - "${preview}"`);
 
