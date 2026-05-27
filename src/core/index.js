@@ -1,6 +1,7 @@
 import { main } from './main.js';
 import { getConfig } from './config.js';
 import { scrollToLoad, fetchBlobWithXHR, blobToArrayBuffer, waitForContent, sleep } from './utils.js';
+import { getQueue, addEpisodesToQueue, updateQueueItem, clearQueue, removeCompletedItems, getQueueStats } from './queue.js';
 
 (async function () {
     'use strict';
@@ -62,6 +63,18 @@ import { scrollToLoad, fetchBlobWithXHR, blobToArrayBuffer, waitForContent, slee
     window.clearTokiLogs = function() {
         localStorage.removeItem('TOKI_DEBUG_LOGS');
         originalConsole.log("🗑️ 텍스트 로그 초기화 완료.");
+    };
+
+    // =============================================================
+    // 📊 [멀티큐] 영속성 큐 인터페이스 전역 노출 (디버그 및 UI 연동용)
+    // =============================================================
+    window.tokiQueue = {
+        getQueue,
+        addEpisodesToQueue,
+        updateQueueItem,
+        clearQueue,
+        removeCompletedItems,
+        getQueueStats
     };
 
 
