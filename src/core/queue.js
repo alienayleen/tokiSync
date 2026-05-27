@@ -1,9 +1,13 @@
 /**
  * tokiSync v1.21.0 - Persistent Multi-Queue Batch Core
- * 영속성 디스크 큐 코어 엔진
+ * 영속성 디스크 큐 및 이벤트 기반 세마포어 스케줄러 엔진
  */
 
 const STORAGE_KEY = 'tokisync_download_queue';
+const MAX_CONCURRENCY = 2; // 최대 동시 다운로드 수
+
+// 임시 팝업 창 참조 보관용 맵 (Liveness check 및 재활용 루프 대비)
+const activeWorkers = new Map();
 
 // Tampermonkey 환경 및 Node.js/일반 브라우저 환경 간의 영속성 호환 래퍼
 const getRawQueue = () => {
@@ -37,7 +41,6 @@ const saveRawQueue = (queue) => {
 
 /**
  * 대기열 전체 목록 조회
- * @returns {Array} QueueItem 배열
  */
 export const getQueue = () => {
   return getRawQueue();
@@ -45,9 +48,6 @@ export const getQueue = () => {
 
 /**
  * 에피소드 대기열 다중 추가
- * @param {Array} episodes { title, url, episodeNum } 구조의 배열
- * @param {string} novelTitle 작품명
- * @returns {number} 추가된 아이템 개수
  */
 export const addEpisodesToQueue = (episodes, novelTitle) => {
   const queue = getRawQueue();
@@ -65,7 +65,7 @@ export const addEpisodesToQueue = (episodes, novelTitle) => {
         episodeTitle: ep.title,
         episodeUrl: ep.url,
         status: 'pending',
-        progressPercent: 0, // 🌟 실시간 다운로드 진행률 (0 ~ 100)
+        progressPercent: 0,
         retryCount: 0,
         addedAt: Date.now()
       });
@@ -81,9 +81,6 @@ export const addEpisodesToQueue = (episodes, novelTitle) => {
 
 /**
  * 특정 큐 아이템 상태 및 정보 갱신
- * @param {string} id 아이템 고유 ID
- * @param {Object} updates 변경할 필드셋 ({ status, progressPercent, retryCount, errorMsg, ... })
- * @returns {boolean} 갱신 성공 여부
  */
 export const updateQueueItem = (id, updates) => {
   const queue = getRawQueue();
@@ -103,9 +100,6 @@ export const updateQueueItem = (id, updates) => {
 
 /**
  * 특정 큐 아이템의 실시간 진행률 고속 갱신
- * @param {string} id 아이템 고유 ID
- * @param {number} percent 0 ~ 100 사이의 진행 백분율
- * @returns {boolean} 갱신 성공 여부
  */
 export const updateQueueItemProgress = (id, percent) => {
   const sanitizedPercent = Math.min(100, Math.max(0, Math.round(percent)));
@@ -148,4 +142,136 @@ export const getQueueStats = () => {
   });
 
   return stats;
+};
+
+// =============================================================
+// 🚦 [2단계] 백그라운드 세마포어 및 이벤트 기반 스케줄러 구현
+// =============================================================
+
+let isSchedulerRunning = false;
+
+// 인간 행동 모방 랜덤 지연시간(Jitter Delay) 유틸리티
+const sleepJitter = (minMs, maxMs) => {
+  const delay = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+  return new Promise(resolve => setTimeout(resolve, delay));
+};
+
+/**
+ * 1회성 스케줄링 기동 검사 (세마포어 알고리즘)
+ */
+export const runSchedulerOnce = async () => {
+  if (isSchedulerRunning) return;
+  isSchedulerRunning = true;
+
+  try {
+    const queue = getRawQueue();
+    
+    // Liveness Check: 실제 열려있는 팝업 중 닫힌 팝업이 있는지 감지하여 failed 전이
+    for (const [id, popupRef] of activeWorkers.entries()) {
+      if (popupRef && popupRef.closed) {
+        console.warn(`[Queue Scheduler] ⚠️ 자식 팝업 비정상 종료 감지: ${id}`);
+        activeWorkers.delete(id);
+        const item = queue.find(i => i.id === id);
+        if (item && item.status === 'processing') {
+          const nextRetry = item.retryCount + 1;
+          updateQueueItem(id, { 
+            status: nextRetry >= 3 ? 'failed' : 'pending', 
+            retryCount: nextRetry,
+            errorMsg: '자식 팝업 창이 비정상적으로 강제 종료되었습니다.' 
+          });
+        }
+      }
+    }
+
+    // 1. 현재 processing(작업 중) 상태인 큐 아이템의 개수를 산출
+    const currentProcessing = queue.filter(item => item.status === 'processing');
+
+    // 2. 동시성 임계값(MAX_CONCURRENCY = 2) 도달 시 즉시 대기 차단
+    if (currentProcessing.length >= MAX_CONCURRENCY) {
+      isSchedulerRunning = false;
+      return;
+    }
+
+    // 3. pending(대기 중) 상태인 첫 번째 에피소드 추출
+    const nextItem = queue.find(item => item.status === 'pending');
+    if (!nextItem) {
+      isSchedulerRunning = false;
+      return;
+    }
+
+    // 4. 인간 행동 모사를 위한 1.5초~3초 랜덤 지연 완충
+    console.log(`[Queue Scheduler] 🛡️ 안전 지연 대기 시작 (Target: ${nextItem.episodeTitle})`);
+    await sleepJitter(1500, 3000);
+
+    // 5. 팝업 실행 및 상태 갱신
+    console.log(`[Queue Scheduler] 🚀 팝업 기동: ${nextItem.episodeTitle} (${nextItem.episodeUrl})`);
+    updateQueueItem(nextItem.id, { status: 'processing' });
+    
+    // 실제 팝업 기동 가교 함수 호출
+    const popupRef = openEpisodePopup(nextItem.episodeUrl, nextItem.id);
+    if (popupRef) {
+      activeWorkers.set(nextItem.id, popupRef);
+    } else {
+      // 팝업 차단 등으로 창 생성 실패 시 즉시 failed 처리
+      updateQueueItem(nextItem.id, { 
+        status: 'failed', 
+        errorMsg: '브라우저 팝업 차단막에 의해 창 생성에 실패했습니다.' 
+      });
+    }
+
+  } catch (err) {
+    console.error('[Queue Scheduler] Error in scheduling loop:', err);
+  } finally {
+    isSchedulerRunning = false;
+  }
+};
+
+// 팝업 기동 가교 (window.open 래퍼)
+const openEpisodePopup = (url, id) => {
+  try {
+    // Node.js 테스트 환경 등 윈도우 객체가 실존하지 않는 환경에서의 안전 예외처리
+    if (typeof window === 'undefined' || typeof window.open === 'undefined') {
+      // 가상 Mocking 반환
+      return { closed: false };
+    }
+    
+    // 봇 감지 회피 절충안 규격 (500x800, right-aligned)
+    const width = 500;
+    const height = 800;
+    const left = window.screen.width - width - 50;
+    const top = 100;
+    
+    const popupRef = window.open(
+      url, 
+      `tokisync_novel_worker_${id}`.replace(/[^a-zA-Z0-9_]/g, ''), 
+      `width=${width},height=${height},left=${left},top=${top},noopener=false,scrollbars=yes,resizable=yes`
+    );
+    return popupRef;
+  } catch (e) {
+    console.error('[Queue Scheduler] Popup launch failed:', e);
+    return null;
+  }
+};
+
+/**
+ * 이벤트 기반 백그라운드 세마포어 스케줄러 등록
+ */
+export const initQueueScheduler = () => {
+  // 1. Tampermonkey 네이티브 비동기 스토리지 리스너 감시 활성화
+  if (typeof GM_addValueChangeListener !== 'undefined') {
+    GM_addValueChangeListener(STORAGE_KEY, (key, oldValue, newValue, remote) => {
+      // 대기열 변동 이벤트가 오면 1회성 스케줄러 즉시 발동
+      runSchedulerOnce();
+    });
+    console.log('[TokiSync Queue] 🚦 이벤트 기반(Event-Driven) 고성능 스케줄러가 활성화되었습니다.');
+  } else {
+    // Fallback: GM API가 없는 가상 유닛 테스트/샌드박스 환경에서는 2초 주기 폴링 작동
+    setInterval(() => {
+      runSchedulerOnce();
+    }, 2000);
+    console.warn('[TokiSync Queue] ⚠️ GM_addValueChangeListener 미지원 환경. 2초 폴링 스케줄러로 기동합니다.');
+  }
+
+  // 초기 기동 시에도 즉시 1회 검사
+  runSchedulerOnce();
 };
