@@ -215,7 +215,7 @@ export function initWorkerExtractor() {
                             const chunkPromises = chunk.map(async (url, index) => {
                                 const globalIndex = i + index;
                                 try {
-                                    const imgBlob = await fetchBlobWithXHR(url);
+                                    const imgBlob = await fetchBlobWithXHR(url, window.location.href);
                                     const arrayBuffer = await blobToArrayBuffer(imgBlob);
                                     processedCount++;
 

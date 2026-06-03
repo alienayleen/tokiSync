@@ -445,33 +445,25 @@ export const runSchedulerOnce = async () => {
         activeWorkers.set(nextItem.id, recycledPopup);
 
         try {
-            // [CORS 우회 우주 표준 기법] 기존 window.name을 타겟으로 window.open을 호출하면
-            // 새 창을 띄우지 않고 동일 팝업창 내에서 URL 리다이렉션이 성공하며, 팝업 차단막도 우회합니다!
-            const width = 400;
-            const height = 600;
-            const left = window.screen.width - width - 50;
-            const top = 100;
-            
-            const updatedPopup = window.open(
-                nextItem.episodeUrl,
-                targetWindowName,
-                `width=${width},height=${height},left=${left},top=${top},noopener=false,scrollbars=yes,resizable=yes`
-            );
-            
-            if (updatedPopup) {
-                // 통신 식별자 갱신
-                updatedPopup.name = newWindowName;
-                activeWorkers.set(nextItem.id, updatedPopup);
-            }
-        } catch (err) {
-            console.error('[Queue Scheduler] 릴레이 window.open 우회 실패, 일반 리다이렉션 시도:', err);
+            // [우회 극대화] window.open 대신 window 객체 참조를 직접 제어하여 100% 확실하게 기존 팝업창을 재사용합니다.
+            console.log(`[Queue Scheduler] location.replace로 팝업 리다이렉션 시도: ${nextItem.episodeUrl}`);
             try {
+                recycledPopup.location.replace(nextItem.episodeUrl);
+            } catch (replaceErr) {
+                console.warn('[Queue Scheduler] location.replace 제한 감지 -> location.href 폴백 시도:', replaceErr);
                 recycledPopup.location.href = nextItem.episodeUrl;
-                recycledPopup.name = newWindowName;
-                activeWorkers.set(nextItem.id, recycledPopup);
-            } catch (hrefErr) {
-                console.error('[Queue Scheduler] 팝업 릴레이 강제 실패:', hrefErr);
             }
+            
+            // 통신용 window.name 갱신 시도 (크로스 도메인 보안 경계 등으로 예외 시 대비하여 안전 조치)
+            try {
+                recycledPopup.name = newWindowName;
+            } catch (nameErr) {
+                console.warn('[Queue Scheduler] recycledPopup.name 설정 실패 (무시 가능):', nameErr);
+            }
+            
+            activeWorkers.set(nextItem.id, recycledPopup);
+        } catch (err) {
+            console.error('[Queue Scheduler] 팝업 릴레이 강제 실패:', err);
         }
     } else {
         // 가용 팝업이 없을 때만 물리적 open 수행 (최초 진입 시 2회만 동작)
