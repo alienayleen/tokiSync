@@ -1621,10 +1621,11 @@ export class FormRuleEditor {
     }
 
     render() {
+        const scriptVer = typeof __SCRIPT_VERSION__ !== 'undefined' ? __SCRIPT_VERSION__ : '1.22.0';
         this.overlay.innerHTML = `
             <div class="toki-modal toki-form-editor-modal">
                 <div class="toki-modal-header">
-                    <div class="toki-modal-title">📝 간편 규칙 편집기 (Form Editor) <span class="toki-text-xs">v1.21.0</span></div>
+                    <div class="toki-modal-title">📝 간편 규칙 편집기 (Form Editor) <span class="toki-text-xs">v${scriptVer}</span></div>
                     <div class="toki-flex-row-8">
                         <button class="toki-btn-rule" id="form-btn-export">📤 내보내기</button>
                         <button class="toki-btn-rule" id="form-btn-import">📥 가져오기</button>

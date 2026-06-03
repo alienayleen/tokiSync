@@ -2,12 +2,13 @@ const path = require('path');
 const webpack = require('webpack');
 const fs = require('fs');
 const TerserPlugin = require('terser-webpack-plugin');
+const pkg = require('./package.json');
 
 // Metadata Block
 const METADATA_MAIN = `// ==UserScript==
 // @name         TokiSync (Link to Drive)
 // @namespace    http://tampermonkey.net/
-// @version      1.22.0
+// @version      \${pkg.components.script}
 // @description  Toki series sites -> Google Drive syncing tool (Bundled)
 // @author       pray4skylark
 // @updateURL    https://pray4skylark.github.io/tokiSync/tokiSync.user.js
@@ -127,6 +128,11 @@ module.exports = {
     ],
   },
   plugins: [
+    new webpack.DefinePlugin({
+      __SCRIPT_VERSION__: JSON.stringify(pkg.components.script),
+      __VIEWER_VERSION__: JSON.stringify(pkg.components.viewer),
+      __GAS_VERSION__: JSON.stringify(pkg.components.gas)
+    }),
     new webpack.BannerPlugin({
       banner: METADATA_MAIN,
       raw: true,
