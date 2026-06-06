@@ -184,7 +184,14 @@ function View_Dispatcher(data) {
             Debug.log(`[MergeIndex] Error creating fragment: ${mergeErr.toString()}`);
             resultBody = { updated: true, seriesId: seriesId, mergeStatus: "failed", error: mergeErr.toString() };
         }
-      }
+    } else if (action === "view_update_metadata") {
+      if (!data.seriesId) throw new Error("seriesId is required");
+      if (!data.metadata) throw new Error("metadata is required");
+      resultBody = View_updateMetadata(data.seriesId, data.metadata, folderId);
+    } else if (action === "view_upload_thumbnail") {
+      if (!data.seriesId) throw new Error("seriesId is required");
+      if (!data.base64Data) throw new Error("base64Data is required");
+      resultBody = View_uploadThumbnail(data.seriesId, data.base64Data, folderId);
     } else {
       throw new Error("Unknown Viewer Action: " + action);
     }
