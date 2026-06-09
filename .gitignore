@@ -19,6 +19,11 @@ docs/js/backup/*
 docs_old/
 src/old_core/
 
+# Local Analysis Documents (Private)
+doc_refactoring_report.md
+gas_v3_refactoring_analysis.md
+walkthrough.md
+
 # Temporary build artifacts
 dist/
 docs/
@@ -28,3 +33,15 @@ PROJECT_HANDOVER_MASTER.md
 .DS_Store
 # Generated GAS Bundle (CI가 빌드 후 GitHub Pages에 배포)
 google_app_script/TokiSync_Server_Bundle.gs
+
+# AI Agent Context & Brain (Local only)
+brain/
+
+# Graphify Output (Exclude internal state & cache, keep report & html)
+graphify-out/*
+!graphify-out/GRAPH_REPORT.md
+!graphify-out/graph.html
+
+.sem/
+
+scratch/

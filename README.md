@@ -1,62 +1,79 @@
-# ⚡️ TokiSync (토끼싱크) v1.5.6
+# ⚡️ TokiSync (토끼싱크) v1.22.1
 
 **북토끼, 뉴토끼, 마나토끼**의 콘텐츠를 **구글 드라이브로 직접 업로드**하고, **전용 웹 뷰어**를 통해 편리하게 관리/열람할 수 있는 올인원 솔루션입니다.
 
-> **🚀 v1.5.6 업데이트:**
-> **배포 파이프라인 및 안정성 확보**: GitHub Actions 배포 충돌 해결 및 GAS 구글 드라이브 중복 생성 버그 픽스.
+> **🚀 v1.22.1 업데이트 요약:**
+> - **대기열 찌꺼기 간섭 방지 및 프리체크 도입**: 수집 완료 후 잔존하는 이전 큐 이력이 새로운 다운로드 시 중복 방지 스킵으로 작동하는 문제를 방지하기 위해 스마트 프리체크 필터를 적용했습니다.
+> - **참조 버그 핫픽스**: `downloader.js` 내부에서 `config` 변수가 정의되지 않아 런타임에 에러가 발생하던 ReferenceError를 해결했습니다.
 
 ---
 
 ## ✨ 주요 기능
 
-### 📥 수집기 (UserScript) - v1.5.6
+### 📥 수집기 (UserScript) - v1.22.1
 
-- **📱 통합 메뉴 모달 (New)**: `Ctrl+Shift+T` 또는 우측 하단 버튼으로 모든 기능을 한 곳에서 제어.
-- **🚀 Direct Drive Access**: GAS 서버의 병목 없이 **구글 드라이브 API로 직접 데이터를 전송**합니다.
-- **🛡️ 차단 방지 시스템**:
-  - **Anti-Sleep**: 백그라운드에서도 멈춤 없이 다운로드가 지속됩니다.
-  - **Captcha 감지**: Cloudflare/캡차 발생 시 자동으로 일시정지하고 알림을 보냅니다.
-- **⚡️ Zero-Config 뷰어 연동**: 로컬/웹 뷰어 접속 시 API Key 자동 주입.
-- **🔄 스마트 동기화**: 중복 없이 신규 회차만 다운로드.
-- **☁️ 구글 드라이브 직통 업로드**: PC 저장공간 최소화.
+- **🔒 차세대 팝업 IPC 및 보안 우회 수집**: 팝업창을 통한 Controller-Worker 통신 모델로 봇 감지를 회피하고 미디어를 수집합니다.
+- **🛠 토큰 기반 XOR 소설 복호화**: 최신 API 변경에 긴급 대응하여 JWT 토큰 및 동적 Nonce를 자동 분석해 소설을 복호화합니다.
+- **🧩 지능형 제너릭 파서**: `idMatch` 하드코딩 완전 탈피, 카테고리 기반 Fallback ID 자동 탐색 및 정규식 동적 조립.
+- **🛡️ 광고 이미지 원천 차단**: DOM 컨테이너 기반 수집 시 `imageRegex`와의 상호 배타성 검증 강화를 통한 광고 완벽 배제.
+- **✨ Glassmorphism UI**: 블러(Blur) 효과와 반투명 레이아웃을 적용한 프리미엄 디자인 시스템.
+- **🔄 Direct Sync Engine**: GAS를 거치지 않는 Direct Drive API v3 활용으로 이력 동기화 속도 3배 향상.
+- **⚙️ 소설 출력 포맷 선택**: EPUB 표준 포맷 및 일반 텍스트(TXT) 지원.
 
-### 📡 서버 (GAS API) - v1.5.6
+### 📡 서버 (GAS API) - v1.22.0
 
-- **📚 읽기 이력 동기화 (New)**: `read_history.json`을 통한 기기 간 열람 이력 공유.
+- **📚 읽기 이력 동기화**: `read_history.json`을 통한 기기 간 열람 이력 공유.
+- **🔑 OAuth 토큰 발급**: 클라이언트의 Direct Access를 위한 고속 권한 위임.
+- **📦 대용량 Resumable Upload**: 5GB+ 대용량 파일 지원 및 자가 회복 로직.
 
-- **🔑 OAuth 토큰 발급 (New)**: 클라이언트의 Direct Access를 위한 권한 위임.
-- **🛡️ Fallback 시스템**: Direct Access 실패 시 기존 방식을 통한 안전한 중계 처리.
-- **🔒 API Key 보안**: 전체 API 인증 강제.
-- **📦 대용량 Resumable Upload**: 5GB+ 파일 지원.
+### 📊 뷰어 2.0 (Cinematic & Refined) - v1.22.0
 
-### 📊 뷰어 2.0 (Cinematic Update) - v1.5.6
+- **📐 스크롤 이미지 정밀 렌더링**: 이미지 로딩 완료 여부에 따른 동적 min-height 스위칭으로 웹툰 비율 찌그러짐을 완벽 해소.
+- **📖 소설 전용 설정**: 테마(Light/Sepia/Dark), 폰트 크기, 줄 간격 조절 기능을 포함한 플로팅 툴바 이식.
+- **🎯 정밀 위치 동기화 (Locator)**: DOM 기반 정밀 트래킹으로 설정 변경이나 에피소드 전환 후에도 읽던 문단을 정확히 유지.
+- **🚀 Download Manager (Modal UI)**: 시청 중에도 진행 상황을 즉시 확인하고 제어할 수 있는 슬라이드업 모달 전용 UI.
+- **⚡️ Zero-Waste Network**: 뷰어 종료/이동 시 지연 없는 즉시 저장(Flush) 및 불필요한 요청 중단.
 
-- **🎥 Cinematic Experience**: 글래스모피즘 UI와 몰입형 에피소드 상세 페이지 제공.
-- **🚀 Tech Stack**: **Vue 3 + Tailwind CSS** 기반의 SPA 구조.
-- **📱 오프라인 강화 (New)**: IndexedDB(Dexie.js)를 활용한 라이브러리/에피소드 캐싱 및 열람 이력 기록.
+
+---
+
+## 📢 브랜치 운영 가이드
+
+프로젝트의 안정적인 배포 관리를 위해 브랜치 전략이 표준 **Git Flow** 모델로 운영됩니다.
+
+* **`main` (Production / Stable)**: 
+  - **오직 검증 완료된 정식 안정 버전**만 관리되는 실서비스 배포 브랜치입니다.
+  - 정식 릴리즈 태그는 이 브랜치에 부여됩니다.
+  - 🌟 **정식 배포판 타겟**: [stable 뷰어](https://pray4skylark.github.io/tokiSync/) 및 관련 에셋
+* **`develop` (Integration / Dev)**:
+  - **모든 새로운 기능 개발 및 통합**을 진행하는 중심 개발 브랜치입니다.
+  - 🧪 **개발용 배포판 타겟**: [dev 개발 빌드 뷰어](https://pray4skylark.github.io/tokiSync/dev/) 및 관련 에셋
 
 ---
 
 ## ⚙️ 설치 가이드 (Quick Start)
 
-자세한 단계별 설치 방법은 **[INSTALL_GUIDE.md](./INSTALL_GUIDE.md)** 문서를 참고하세요.
+자세한 단계별 설치 방법은 **[설치 가이드 (INSTALL_GUIDE.md)](./documentation/guides/INSTALL_GUIDE.md)** 문서를 참고하세요.
 
 ### 1. 📡 GAS 서버 배포
 
-1. [TokiSync_Server_Bundle.gs](https://github.com/pray4skylark/tokiSync/blob/gh-pages/TokiSync_Server_Bundle.gs) 코드를 복사하여 [Google Apps Script](https://script.google.com/)에 붙여넣습니다. (최근 릴리즈 기준 코드)
+1. **[TokiSync_Server_Bundle.gs (정식 버전)](https://pray4skylark.github.io/tokiSync/TokiSync_Server_Bundle.gs)** 코드를 복사하여 [Google Apps Script](https://script.google.com/)에 붙여넣습니다.
+   - 🧪 *(선택 사항)* 최신 기능 사전 테스트를 원하시면 **[개발 빌드(Dev)](https://pray4skylark.github.io/tokiSync/dev/TokiSync_Server_Bundle.gs)** 코드를 사용하세요.
 2. **프로젝트 설정** > **스크립트 속성**에서 `API_KEY`를 추가하고 원하는 비밀번호를 입력합니다.
 3. `배포` > `새 배포` > `웹 앱` 선택 후 `Anyone (모든 사용자)` 권한으로 배포합니다.
 
 ### 2. 📥 UserScript (수집기) 설치
 
 1. 브라우저에 [Tampermonkey](https://www.tampermonkey.net/) 확장 프로그램을 설치합니다.
-2. 👉 **[TokiSync UserScript (Stable) 설치](https://pray4skylark.github.io/tokiSync/tokiSync.user.js)** 링크를 클릭하여 스크립트를 추가합니다.
+2. 다음 링크 중 하나를 선택하여 UserScript를 설치합니다:
+   - 🌟 **[TokiSync UserScript (Stable 정식 버전)](https://pray4skylark.github.io/tokiSync/tokiSync.user.js)** (권장)
+   - 🧪 **[TokiSync UserScript (Dev 개발 빌드)](https://pray4skylark.github.io/tokiSync/dev/tokiSync.user.js)** (최신 기능 테스트)
 3. 웹툰 사이트 접속 후 메뉴에서 **설정**을 열고 `GAS URL`, `Folder ID`, `API Key`를 입력합니다.
 
 ### 3. 📊 뷰어 실행
 
-- 👉 **[TokiSync 웹 뷰어 접속](https://pray4skylark.github.io/tokiSync/)**
-- (선택 사항) 최신 개발 버전을 원하시면 **[TokiSync 개발 뷰어(Dev)](https://pray4skylark.github.io/tokiSync/dev/)** 로 접속하세요.
+- 🌟 **[TokiSync 웹 뷰어 (Stable 정식 버전)](https://pray4skylark.github.io/tokiSync/)** (권장)
+- 🧪 **[TokiSync 웹 뷰어 (Dev 개발 빌드)](https://pray4skylark.github.io/tokiSync/dev/)** (최신 기능 테스트)
 
 ---
 
@@ -73,6 +90,16 @@
 1. 뷰어 URL로 접속합니다.
 2. (첫 접속 시) UserScript가 없다면 **설정 모달**에 API Key 등을 입력합니다.
 3. 라이브러리에서 표지를 클릭하여 감상합니다.
+
+---
+
+## 📂 문서 지도 (Documentation Map)
+
+프로젝트에 대한 더 자세한 정보는 `documentation/` 폴더 내의 문서들을 확인하세요.
+
+- **[가이드 (Guides)](./documentation/guides/)**: [설치 방법](./documentation/guides/INSTALL_GUIDE.md), [동적 파싱 규칙 작성](./documentation/guides/DYNAMIC_RULE_GUIDE.md) 등
+- **[보고서 (Reports)](./documentation/reports/)**: 최신 릴리즈 분석, 리팩토링 보고서, 워크스루 등
+- **[아카이브 (Archive)](./documentation/archive/)**: 과거 업데이트 이력, 참고 자료 등
 
 ---
 

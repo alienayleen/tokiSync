@@ -4,8 +4,11 @@
     <!-- Download Progress Overlay -->
     <transition name="fade">
       <div v-if="isDownloading" class="fixed inset-0 z-[200] bg-black/90 flex flex-col items-center justify-center text-white">
-        <div class="w-16 h-16 border-4 border-zinc-800 border-t-blue-500 rounded-full animate-spin mb-8"></div>
-        <p class="text-sm font-bold text-zinc-400 tracking-wider uppercase">{{ downloadProgress || '준비 중...' }}</p>
+        <div class="w-16 h-16 border-4 border-zinc-800 border-t-theme-accent rounded-full animate-spin mb-8"></div>
+        <p class="text-sm font-bold text-zinc-400 tracking-wider uppercase mb-8">{{ downloadProgress || '준비 중...' }}</p>
+        <button @click="exitViewer" class="px-8 py-3 bg-red-500/20 hover:bg-red-500/40 text-red-500 border border-red-500/50 rounded-2xl text-sm font-black transition-all uppercase tracking-widest">
+          취소하고 나가기
+        </button>
       </div>
     </transition>
 
@@ -24,7 +27,7 @@
           </button>
 
           <div class="min-w-0 overflow-hidden text-center">
-            <p class="text-[8px] md:text-[9px] font-black tracking-[0.3em] md:tracking-[0.5em] uppercase text-blue-500 mb-0.5 truncate">{{ selectedItem?.name || selectedItem?.title }}</p>
+            <p class="text-[8px] md:text-[9px] font-black tracking-[0.3em] md:tracking-[0.5em] uppercase text-theme-accent mb-0.5 truncate">{{ selectedItem?.name || selectedItem?.title }}</p>
             <p class="text-xs md:text-sm font-black viewer-toolbar-title uppercase tracking-tighter truncate">{{ currentEpisode?.name || currentEpisode?.title }}</p>
           </div>
 
@@ -60,8 +63,22 @@
 
         <!-- Scroll Mode -->
         <div v-if="viewerData.mode === 'scroll'" class="max-w-4xl w-full">
-          <img v-for="(src, i) in viewerContent.images" :key="i" :src="src"
-               class="w-full h-auto block select-none shadow-2xl border-b border-white/5" loading="lazy">
+          <div v-for="(src, i) in viewerContent.images" :key="i" 
+               class="w-full relative"
+               :style="{ aspectRatio: aspectRatioMap[i] || 'auto', minHeight: aspectRatioMap[i] ? 'auto' : '800px' }"
+               :ref="el => { if (el && viewerDefaults.virtualScroll) observeElement(el); }"
+               :data-index="i">
+            
+            <!-- Render if Virtual Scroll is OFF OR if current image is visible -->
+            <img v-if="!viewerDefaults.virtualScroll || isVisible(i)" :src="src"
+                 @load="onImageLoaded(i, src, $event)"
+                 class="w-full h-auto block select-none shadow-2xl transition-opacity duration-300">
+            
+            <!-- Placeholder for virtual scroll -->
+            <div v-else-if="viewerDefaults.virtualScroll" class="absolute inset-0 flex items-center justify-center bg-zinc-900/10">
+              <div class="w-8 h-8 border-2 border-zinc-800 border-t-zinc-600 rounded-full animate-spin"></div>
+            </div>
+          </div>
           <!-- End of Chapter: 다음 화 안내 인라인 섹션 -->
           <div class="next-ep-guide">
             <p class="next-ep-guide-label">End of Chapter</p>
@@ -102,25 +119,40 @@
           </transition>
           <!-- 일반 페이지 렌더링 -->
           <template v-if="!showNextEpisodeGuide">
-          <div class="spread-layout" :dir="viewerDefaults.rtl ? 'rtl' : 'ltr'">
+          <div class="spread-layout">
             <template v-if="viewerDefaults.spread && currentSlotData">
               <!-- Slot-based: single (cover etc.) → 1 image -->
               <template v-if="currentSlotData.type === 'single'">
-                <img :key="'s'+currentSlotIndex" :src="currentSlotData.images[0]" class="single-image shadow-2xl">
+                <img :key="'s'+currentSlotIndex" :src="currentSlotData.images[0]" 
+                     @load="viewerDefaults.autoCrop ? loadBounds(currentSlotData.pages[0], currentSlotData.images[0]) : null"
+                     class="single-image shadow-2xl transition-all duration-500"
+                     :style="(viewerDefaults.autoCrop && imageBoundsMap[currentSlotData.pages[0]]) ? { clipPath: `inset(${imageBoundsMap[currentSlotData.pages[0]].top}% ${imageBoundsMap[currentSlotData.pages[0]].right}% ${imageBoundsMap[currentSlotData.pages[0]].bottom}% ${imageBoundsMap[currentSlotData.pages[0]].left}%)` } : {}">
               </template>
               <!-- Slot-based: spread (wide image) → full width -->
               <template v-else-if="currentSlotData.type === 'spread'">
-                <img :key="'s'+currentSlotIndex" :src="currentSlotData.images[0]" class="spread-wide-image shadow-2xl">
+                <img :key="'s'+currentSlotIndex" :src="currentSlotData.images[0]" 
+                     @load="viewerDefaults.autoCrop ? loadBounds(currentSlotData.pages[0], currentSlotData.images[0]) : null"
+                     class="spread-wide-image shadow-2xl transition-all duration-500"
+                     :style="(viewerDefaults.autoCrop && imageBoundsMap[currentSlotData.pages[0]]) ? { clipPath: `inset(${imageBoundsMap[currentSlotData.pages[0]].top}% ${imageBoundsMap[currentSlotData.pages[0]].right}% ${imageBoundsMap[currentSlotData.pages[0]].bottom}% ${imageBoundsMap[currentSlotData.pages[0]].left}%)` } : {}">
               </template>
               <!-- Slot-based: pair → 2 images side by side -->
               <template v-else-if="currentSlotData.type === 'pair'">
-                <img :key="'s'+currentSlotIndex+'a'" :src="currentSlotData.images[0]" class="spread-image shadow-2xl">
-                <img :key="'s'+currentSlotIndex+'b'" :src="currentSlotData.images[1]" class="spread-image shadow-2xl">
+                <img :key="'s'+currentSlotIndex+'a'" :src="currentSlotData.images[0]" 
+                     @load="viewerDefaults.autoCrop ? loadBounds(currentSlotData.pages[0], currentSlotData.images[0]) : null"
+                     class="spread-image shadow-2xl transition-all duration-500"
+                     :style="(viewerDefaults.autoCrop && imageBoundsMap[currentSlotData.pages[0]]) ? { clipPath: `inset(${imageBoundsMap[currentSlotData.pages[0]].top}% ${imageBoundsMap[currentSlotData.pages[0]].right}% ${imageBoundsMap[currentSlotData.pages[0]].bottom}% ${imageBoundsMap[currentSlotData.pages[0]].left}%)` } : {}">
+                <img :key="'s'+currentSlotIndex+'b'" :src="currentSlotData.images[1]" 
+                     @load="viewerDefaults.autoCrop ? loadBounds(currentSlotData.pages[1], currentSlotData.images[1]) : null"
+                     class="spread-image shadow-2xl transition-all duration-500"
+                     :style="(viewerDefaults.autoCrop && imageBoundsMap[currentSlotData.pages[1]]) ? { clipPath: `inset(${imageBoundsMap[currentSlotData.pages[1]].top}% ${imageBoundsMap[currentSlotData.pages[1]].right}% ${imageBoundsMap[currentSlotData.pages[1]].bottom}% ${imageBoundsMap[currentSlotData.pages[1]].left}%)` } : {}">
               </template>
             </template>
             <template v-else>
               <!-- Single page mode (no spread) -->
-              <img v-if="currentImage" :key="'p'+currentPage" :src="currentImage" class="single-image shadow-2xl">
+              <img v-if="currentImage" :key="'p'+currentPage" :src="currentImage" 
+                   @load="viewerDefaults.autoCrop ? loadBounds(currentPage - 1, currentImage) : null"
+                   class="single-image shadow-2xl transition-all duration-500"
+                   :style="(viewerDefaults.autoCrop && imageBoundsMap[currentPage - 1]) ? { clipPath: `inset(${imageBoundsMap[currentPage - 1].top}% ${imageBoundsMap[currentPage - 1].right}% ${imageBoundsMap[currentPage - 1].bottom}% ${imageBoundsMap[currentPage - 1].left}%)` } : {}">
             </template>
           </div>
           </template>
@@ -196,7 +228,7 @@
           <template v-if="!isNovelMode">
             <button @click="viewerDefaults.rtl = !viewerDefaults.rtl" :class="viewerDefaults.rtl ? 'viewer-toolbar-active' : ''">RTL</button>
           </template>
-          <span class="text-blue-500 font-black">{{ viewerData.mode === 'scroll' ? scrollProgress + '%' : currentPage + ' / ' + totalPages }}</span>
+          <span class="text-theme-accent font-black">{{ viewerData.mode === 'scroll' ? scrollProgress + '%' : currentPage + ' / ' + totalPages }}</span>
         </div>
 
         <!-- Novel Settings Row -->
@@ -227,10 +259,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
+import { ref, reactive, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
 import { useStore } from '../composables/useStore';
 import { useViewerInput } from '../composables/useViewerInput';
 import { useKeyboard } from '../composables/useKeyboard';
+import { useVirtualScroll } from '../composables/useVirtualScroll';
+import { useAutoCrop } from '../composables/useAutoCrop';
 
 const {
   showViewerControls, showEpisodeModal,
@@ -248,6 +282,33 @@ const {
   setNovelTheme, adjustFontSize, setLineHeight, toggleNovelSpread,
 } = useStore();
 
+const { initObserver, observeElement, unobserveElement, isVisible, cleanup: cleanupVirtual } = useVirtualScroll();
+const { getBounds } = useAutoCrop();
+
+// Cache for image bounds [index] -> { top, right, bottom, left }
+const imageBoundsMap = reactive({});
+// Cache for image aspect ratio to prevent virtual scroll jumping
+const aspectRatioMap = reactive({});
+const imageRefs = ref([]);
+
+async function loadBounds(index, url) {
+  if (imageBoundsMap[index]) return;
+  const bounds = await getBounds(selectedItem.value.id, currentEpisode.value.id, index, url);
+  if (bounds) imageBoundsMap[index] = bounds;
+}
+
+function onImageLoaded(index, url, event) {
+  // Capture aspect ratio on actual load
+  const img = event.target;
+  if (img && img.naturalWidth && img.naturalHeight) {
+    aspectRatioMap[index] = `${img.naturalWidth}/${img.naturalHeight}`;
+  }
+  // Optional AutoCrop logic (스크롤 모드에서는 상하 연결 레이아웃 유지 목적으로 작동 안 함)
+  if (viewerDefaults.autoCrop && viewerData.mode !== 'scroll') {
+    loadBounds(index, url);
+  }
+}
+
 const isNovelMode = computed(() => viewerContent.value?.type === 'text');
 
 const currentImage = computed(() => {
@@ -261,7 +322,7 @@ const currentSlotData = computed(() => {
   const slot = pageSlots.value[currentSlotIndex.value];
   if (!slot) return null;
   const images = slot.pages.map(idx => viewerContent.value?.images[idx]).filter(Boolean);
-  return { type: slot.type, images };
+  return { type: slot.type, images, pages: slot.pages };
 });
 
 // --- Novel Column Pagination ---
@@ -307,6 +368,21 @@ watch(() => viewerContent.value, () => {
     novelCurrentPage.value = 0;
     nextTick(() => setTimeout(recalcNovelPages, 100));
   }
+  // [v1.7.0] [취약점 2 수정] 화 전환 시 가상 스크롤 옵저버 재시작
+  if (viewerData.mode === 'scroll' && viewerDefaults.virtualScroll) {
+    cleanupVirtual();
+    nextTick(() => initObserver());
+  }
+});
+
+// Watch for mode or virtual scroll setting toggle to prevent memory leak
+watch(() => [viewerData.mode, viewerDefaults.virtualScroll], ([newMode, newVirtualScroll]) => {
+  if (newMode === 'scroll' && newVirtualScroll) {
+    cleanupVirtual();
+    nextTick(() => initObserver());
+  } else {
+    cleanupVirtual();
+  }
 });
 
 // Watch slider (currentPage) changes → sync novelCurrentPage
@@ -327,6 +403,7 @@ let resizeObserver = null;
 onMounted(() => {
   input.attach();
   keyboard.attach();
+  initObserver();
 
   // ResizeObserver for re-pagination on window resize
   resizeObserver = new ResizeObserver(() => {
@@ -343,6 +420,7 @@ onUnmounted(() => {
   input.detach();
   keyboard.detach();
   cleanupBlobUrls();
+  cleanupVirtual();
   if (resizeObserver) resizeObserver.disconnect();
 });
 </script>

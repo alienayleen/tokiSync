@@ -13,6 +13,7 @@ const OUTPUT_FILE = path.join(__dirname, "TokiSync_Server_Bundle.gs");
 const FILES = [
   "Main.gs",
   "Utils.gs",
+  "DriveAccessService.gs",
   "SyncService.gs",
   "UploadService.gs",
   "View_Dispatcher.gs",

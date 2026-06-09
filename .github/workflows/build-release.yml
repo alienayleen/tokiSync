@@ -2,15 +2,14 @@ name: Build and Deploy (Dev & Prod)
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
+    tags: ['v*']
     paths:
       - "src/**"
       - "package.json"
       - "webpack.core.config.cjs"
       - "vite.config.js"
       - ".github/workflows/**"
-  release:
-    types: [published]
 
 permissions:
   contents: write # 릴리스 자산 업로드 및 배포를 위해 필요
@@ -20,6 +19,8 @@ permissions:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4 # v3에서 v4로 업그레이드 (Node 20 환경 최적화)
@@ -27,7 +28,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm" # npm 캐시 활성화로 빌드 속도 향상
 
       - name: Install dependencies
@@ -43,7 +44,7 @@ jobs:
           cp google_app_script/TokiSync_Server_Bundle.gs ./deploy_dist/
 
       - name: Deploy Dev to gh-pages
-        if: github.event_name == 'push'
+        if: github.ref == 'refs/heads/develop'
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -52,9 +53,10 @@ jobs:
           keep_files: true
 
       - name: Deploy Stable to gh-pages
-        if: github.event_name == 'release'
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./deploy_dist
           keep_files: true
+

@@ -38,27 +38,92 @@ export function getImageList(iframeDocument, protocolDomain) {
     // Select images in viewer
     let imgLists = Array.from(iframeDocument.querySelectorAll('.view-padding div img'));
 
-    // Filter visible images
-    imgLists = imgLists.filter(img => img.checkVisibility());
-
-    // Extract valid Sources
-    // data-l44925d0f9f="src" style lazy loading
-    // Regex fallback to find data-path
-    
     return imgLists.map(img => {
-        let src = img.outerHTML; // Fallback strategy from original code
         try {
-            // Find data attribute containing path
-            const match = src.match(/\/data[^"]+/);
-            if (match) {
-                // Prepend domain for CORS / absolute path
-                return `${protocolDomain}${match[0]}`;
+            const isDummyUrl = (url) => {
+                if (!url) return true;
+                if (url.startsWith('data:image')) return true;
+                const lower = url.toLowerCase();
+                
+                // 알려진 더미 파일명 패턴
+                const dummyFilenames = [
+                    'blank.gif', 'loading.gif', 'loading-image.gif',
+                    'pixel.gif', 'spacer.gif', 'transparent.gif',
+                    '1x1.gif', 'dot.gif',
+                ];
+                if (dummyFilenames.some(p => lower.includes(p))) return true;
+
+                // 경로 기반 패턴
+                if (/\/img\/loading/.test(lower)) return true;
+                if (/\/img\/placeholder/.test(lower)) return true;
+
+                return false;
+            };
+
+            let foundUrl = null;
+
+            // 1순위: 흔히 쓰이는 lazy-load data 속성
+            const lazyAttrs = ['data-src', 'data-original', 'data-lazy', 'data-url', 'data-img'];
+            for (const attr of lazyAttrs) {
+                const val = img.getAttribute(attr);
+                if (val) {
+                    let absoluteUrl = "";
+                    if (val.startsWith('/')) absoluteUrl = `${protocolDomain}${val}`;
+                    else if (val.startsWith('http')) absoluteUrl = val;
+                    
+                    if (absoluteUrl && !isDummyUrl(absoluteUrl)) {
+                        foundUrl = absoluteUrl;
+                        break;
+                    }
+                }
             }
+
+            // 2순위: src가 실제 이미지 URL인 경우
+            if (!foundUrl) {
+                const directSrc = img.src;
+                if (directSrc && !isDummyUrl(directSrc)) {
+                    foundUrl = directSrc;
+                }
+            }
+            
+            // 3순위: 전체 data-* 속성 순회
+            if (!foundUrl) {
+                for (const attr of img.attributes) {
+                    if (attr.name.startsWith('data-')) {
+                        const val = attr.value;
+                        if (val && val.match(/\.(jpe?g|png|gif|webp)/i)) {
+                            let absoluteUrl = "";
+                            if (val.startsWith('/')) absoluteUrl = `${protocolDomain}${val}`;
+                            else if (val.startsWith('http')) absoluteUrl = val;
+                            
+                            if (absoluteUrl && !isDummyUrl(absoluteUrl)) {
+                                foundUrl = absoluteUrl;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 4순위(폴백): outerHTML 정규식
+            if (!foundUrl) {
+                const match = img.outerHTML.match(/\/data[^"]+/);
+                if (match) {
+                    const absoluteUrl = `${protocolDomain}${match[0]}`;
+                    if (!isDummyUrl(absoluteUrl)) foundUrl = absoluteUrl;
+                }
+            }
+
+            return {
+                url: foundUrl || img.src || "",
+                isDummy: isDummyUrl(foundUrl || img.src)
+            };
+            
         } catch (e) {
-            console.warn("Image src parse failed:", e);
+            console.warn('Image src parse failed:', e);
+            return { url: img.src || "", isDummy: true };
         }
-        return null;
-    }).filter(src => src !== null); // Remove nulls
+    });
 }
 
 /**
@@ -122,4 +187,42 @@ export function getSeriesTitle() {
     }
 
     return null;
+}
+
+/**
+ * [v1.7.0] Extract full series metadata for Phase 3 Persistence
+ * @returns {Object} { author: string, status: string, summary: string }
+ */
+export function getSeriesMetadata() {
+    const meta = {
+        author: "",
+        status: "연재중",
+        summary: ""
+    };
+
+    try {
+        // 1. Extract Author & Status from .view-content (ManaToki/BookToki common)
+        const viewContent = document.querySelector('.view-content');
+        if (viewContent) {
+            const text = viewContent.innerText;
+            
+            // Regex for Author: "작가 : 이름", "저자 : 이름", "글작가 : 이름" 등 대응
+            const authorMatch = text.match(/(?:작가|저자|글작가|글)\s*:\s*([^ \n\r,·/]+)/);
+            if (authorMatch) meta.author = authorMatch[1].trim();
+
+            // Regex for Status: "분류 : 연재중", "분류 : 완결"
+            if (text.includes('완결')) meta.status = '완결';
+            else if (text.includes('연재')) meta.status = '연재중';
+        }
+
+        // 2. Extract Summary (og:description or specific div)
+        const ogDesc = document.querySelector('meta[property="og:description"]');
+        if (ogDesc && ogDesc.content) {
+            meta.summary = ogDesc.content.trim();
+        }
+    } catch (e) {
+        console.warn('[Parser] Metadata extraction failed:', e);
+    }
+
+    return meta;
 }

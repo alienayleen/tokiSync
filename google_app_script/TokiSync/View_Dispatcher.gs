@@ -31,6 +31,10 @@ function View_Dispatcher(data) {
       const bypassCache =
         data.bypassCache === true || action === "view_refresh_cache";
       resultBody = View_getBooks(data.seriesId, bypassCache);
+    } else if (action === "view_get_books_by_cache") {
+      // [v1.6.0] Task A-4: Fast path cache retrieval
+      if (!data.cacheFileId) throw new Error("cacheFileId is required for direct cache access");
+      resultBody = View_getBooksByCacheId(data.cacheFileId);
     } else if (action === "view_get_chunk") {
       if (!data.fileId) throw new Error("fileId is required");
       // Chunk logic
@@ -53,6 +57,26 @@ function View_Dispatcher(data) {
       if (!data.seriesId)
         throw new Error("seriesId is required for filename migration");
       resultBody = Migrate_RenameFiles(data.seriesId, data.folderId);
+    } else if (action === "view_get_merge_index") {
+      // [v1.6.1] Fast Path Fallback: Get Merge Index Fragment directly
+      if (!data.folderId || !data.sourceId) throw new Error("folderId and sourceId are required for merge index");
+      
+      const mFolders = DriveAccessService.list(data.folderId, {
+          query: "name = '_MergeIndex' and mimeType = 'application/vnd.google-apps.folder'",
+          fields: "files(id)"
+      });
+      resultBody = { found: false, data: null };
+      if (mFolders.length > 0) {
+          const mFolderId = mFolders[0].id;
+          const fragFiles = DriveAccessService.list(mFolderId, {
+              query: `name = '_toki_merge_${data.sourceId}.json'`,
+              fields: "files(id)"
+          });
+          if (fragFiles.length > 0) {
+              const fragContent = DriveAccessService.getFileContent(fragFiles[0].id);
+              resultBody = { found: true, data: JSON.parse(fragContent) };
+          }
+      }
     } else if (action === "view_history_get") {
       if (!folderId) throw new Error("folderId is required for history");
       resultBody = View_getReadHistory(folderId);
@@ -65,18 +89,127 @@ function View_Dispatcher(data) {
       // UserScript 업로드 완료 후 호출 — folderName 기반으로 캐시 갱신
       if (!data.folderName)
         throw new Error("folderName is required for cache update");
-      const seriesFolder = getOrCreateSeriesFolder(
+      const seriesId = getOrCreateSeriesFolder(
         folderId,
         data.folderName,
         data.category || "Unknown",
         false,
       );
-      if (!seriesFolder) {
+      if (!seriesId) {
         resultBody = { updated: false, reason: "folder not found" };
       } else {
-        View_getBooks(seriesFolder.getId(), true); // bypassCache=true → 재스캔 + 캐시 기록
-        resultBody = { updated: true, seriesId: seriesFolder.getId() };
+        const booksArray = View_getBooks(seriesId, true); // bypassCache=true → 재스캔 + 캐시 기록
+        const itemsCount = booksArray ? booksArray.length : 0;
+        
+        // [v1.6.1] Merge Index Fragment Creation
+        try {
+            // 1. Find or create _MergeIndex folder
+            const mergeFolderId = DriveAccessService.ensureFolder(folderId, "_MergeIndex");
+            
+            // 2. Extract sourceId & find cacheFileId
+            const meta = DriveAccessService.getMetadata(seriesId);
+            const seriesFolderName = meta.name;
+            const idMatch = seriesFolderName.match(/^\[(\d+)\]/);
+            const sourceId = idMatch ? idMatch[1] : seriesId; // Fallback to drive ID if no stamp
+            
+            let cacheFileId = "";
+            let retries = 3;
+            while (retries > 0) {
+                const cacheResults = DriveAccessService.list(seriesId, {
+                    query: "name = '_toki_cache.json'",
+                    fields: "files(id)"
+                });
+                if (cacheResults.length > 0) {
+                    cacheFileId = cacheResults[0].id;
+                    break;
+                }
+                Utilities.sleep(1500); // Wait 1.5s for Drive eventual consistency
+                retries--;
+            }
+            
+            if (cacheFileId) {
+                // 3. Create or Update Fragment File
+                const fragName = `_toki_merge_${sourceId}.json`;
+                
+                // [v1.6.2] Enrich fragment with full series metadata for dynamic Insert support
+                const titleClean = seriesFolderName.replace(/^\[\d+\]\s*/, '').trim();
+                
+                // [v1.22.0] 기존 _toki_meta.json 내용을 병합하여 수동 편집 내역 보존
+                let existingMeta = {};
+                const metaName = "_toki_meta.json";
+                const metaResults = DriveAccessService.list(seriesId, {
+                    query: `name = '${metaName}'`,
+                    fields: "files(id)"
+                });
+
+                if (metaResults.length > 0) {
+                    try {
+                        const content = DriveAccessService.getFileContent(metaResults[0].id);
+                        if (content && content.trim() !== "") {
+                            existingMeta = JSON.parse(content);
+                        }
+                    } catch (e) {
+                        Debug.log(`[MergeIndex] Failed to parse existing metadata: ${e.toString()}`);
+                    }
+                }
+                
+                const extraMeta = data.metadata || {};
+                const mergedMeta = {
+                    ...existingMeta,
+                    id: seriesId,
+                    sourceId: sourceId,
+                    name: titleClean || existingMeta.name || seriesFolderName.replace(/^\[\d+\]\s*/, '').trim(),
+                    folderName: seriesFolderName,
+                    url: existingMeta.url || "", 
+                    category: data.category || existingMeta.category || "Unknown",
+                    author: existingMeta.author || extraMeta.author || "",
+                    status: normalizeStatus(existingMeta.status || extraMeta.status || "연재중"),
+                    summary: existingMeta.summary || extraMeta.summary || "",
+                    thumbnail: existingMeta.thumbnail || extraMeta.thumbnail || "",
+                    thumbnailId: existingMeta.thumbnailId || extraMeta.thumbnailId || "",
+                    created: existingMeta.created || meta.modifiedTime, 
+                    cacheFileId: cacheFileId,
+                    itemsCount: itemsCount,
+                    lastUpdated: new Date().toISOString()
+                };
+                
+                const fragData = JSON.stringify(mergedMeta);
+                
+                const existingFrags = DriveAccessService.list(mergeFolderId, {
+                    query: `name = '${fragName}'`,
+                    fields: "files(id)"
+                });
+
+                if (existingFrags.length > 0) {
+                    DriveAccessService.updateFileContent(existingFrags[0].id, fragData);
+                } else {
+                    DriveAccessService.createFile(mergeFolderId, fragName, fragData, "application/json");
+                }
+                Debug.log(`[MergeIndex] Created fragment for ${sourceId} / ${cacheFileId}`);
+
+                // [v1.7.0] Metadata Persistence (Phase 3)
+                if (metaResults.length > 0) {
+                    DriveAccessService.updateFileContent(metaResults[0].id, fragData);
+                } else {
+                    DriveAccessService.createFile(seriesId, metaName, fragData, "application/json");
+                }
+                Debug.log(`[Metadata] Persisted metadata in series folder: ${seriesFolderName}`);
+            }
+            
+            resultBody = { updated: true, seriesId: seriesId, mergeStatus: "success" };
+        } catch (mergeErr) {
+            Debug.log(`[MergeIndex] Error creating fragment: ${mergeErr.toString()}`);
+            resultBody = { updated: true, seriesId: seriesId, mergeStatus: "failed", error: mergeErr.toString() };
+        }
       }
+    } else if (action === "view_update_metadata") {
+      if (!data.seriesId) throw new Error("seriesId is required");
+      if (!data.metadata) throw new Error("metadata is required");
+      resultBody = View_updateMetadata(data.seriesId, data.metadata, folderId);
+    } else if (action === "view_upload_thumbnail") {
+      if (!data.seriesId) throw new Error("seriesId is required");
+      if (!data.base64Data) throw new Error("base64Data is required");
+      resultBody = View_uploadThumbnail(data.seriesId, data.base64Data, folderId);
     } else {
       throw new Error("Unknown Viewer Action: " + action);
     }

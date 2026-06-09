@@ -7,7 +7,7 @@ import { reactive } from 'vue';
 
 // --- Singleton Config ---
 const gasConfig = reactive({
-  baseUrl: '',
+  gasId: '',
   folderId: '',
   apiKey: '',
 });
@@ -21,36 +21,65 @@ function loadFromLocalStorage() {
   if (_configLoaded) return;
   _configLoaded = true;
 
-  gasConfig.baseUrl = localStorage.getItem('TOKI_API_URL') || '';
+  let gasId = localStorage.getItem('TOKI_GAS_ID') || '';
+  const legacyUrl = localStorage.getItem('TOKI_API_URL') || '';
+
+  // Auto-migration: legacy URL -> gasId
+  if (!gasId && legacyUrl) {
+    const match = legacyUrl.match(/\/s\/([^\/]+)\/exec/);
+    if (match) {
+      gasId = match[1];
+      localStorage.setItem('TOKI_GAS_ID', gasId);
+      console.log('✅ [useGAS] Auto-migrated legacy URL to gasId:', gasId);
+    }
+  }
+
+  gasConfig.gasId = gasId;
   gasConfig.folderId = localStorage.getItem('TOKI_ROOT_ID') || '';
   gasConfig.apiKey = localStorage.getItem('TOKI_API_KEY') || '';
 
-  if (gasConfig.baseUrl) {
-    console.log('📦 GAS Config loaded from localStorage (fallback)');
+  if (gasConfig.gasId) {
+    console.log('📦 GAS Config loaded from localStorage');
   }
 }
 
 /**
  * Set config (called from Bridge on TOKI_CONFIG or from Settings UI)
  */
-function setConfig(url, folderId, apiKey = '') {
-  gasConfig.baseUrl = url;
+function setConfig(gasId, folderId, apiKey = '') {
+  // If a full URL is passed, extract the ID
+  let targetId = gasId;
+  const match = gasId.match(/\/s\/([^\/]+)\/exec/);
+  if (match) targetId = match[1];
+
+  gasConfig.gasId = targetId;
   gasConfig.folderId = folderId;
   gasConfig.apiKey = apiKey;
 
   // Persist to localStorage
-  localStorage.setItem('TOKI_API_URL', url);
+  localStorage.setItem('TOKI_GAS_ID', targetId);
   localStorage.setItem('TOKI_ROOT_ID', folderId);
   localStorage.setItem('TOKI_API_KEY', apiKey);
 
-  console.log('✅ GAS Config set:', { url, folderId, apiKey: apiKey ? '***' : '(empty)' });
+  console.log('✅ GAS Config set:', { gasId: targetId, folderId, apiKey: apiKey ? '***' : '(empty)' });
 }
 
 /**
  * Check if API is configured
  */
 function isConfigured() {
-  return !!(gasConfig.baseUrl && gasConfig.folderId);
+  return !!(gasConfig.gasId && gasConfig.folderId);
+}
+
+/**
+ * Get the full execution URL
+ */
+function getBaseUrl() {
+  if (!gasConfig.gasId) return '';
+  
+  // Proxy routing removed due to HTTP 500 errors with Google's 302 redirects.
+  // Google Apps Script natively supports CORS for POST requests with Content-Type: text/plain.
+  return `https://script.google.com/macros/s/${gasConfig.gasId}/exec`;
 }
 
 /**
@@ -59,8 +88,9 @@ function isConfigured() {
  * @param {object} payload - Additional data
  * @returns {Promise<any>} Response body
  */
-async function request(type, payload = {}) {
-  if (!gasConfig.baseUrl) throw new Error('API URL이 설정되지 않았습니다.');
+async function request(type, payload = {}, signal = null) {
+  const baseUrl = getBaseUrl();
+  if (!baseUrl) throw new Error('API ID가 설정되지 않았습니다.');
 
   const bodyData = {
     ...payload,
@@ -71,14 +101,17 @@ async function request(type, payload = {}) {
   };
 
   try {
-    // text/plain to avoid CORS preflight with GAS
-    const response = await fetch(gasConfig.baseUrl, {
+    const fetchOptions = {
       method: 'POST',
       headers: {
         'Content-Type': 'text/plain;charset=utf-8',
       },
       body: JSON.stringify(bodyData),
-    });
+    };
+
+    if (signal) fetchOptions.signal = signal;
+
+    const response = await fetch(baseUrl, fetchOptions);
 
     if (!response.ok) {
       throw new Error(`HTTP Error: ${response.status}`);
@@ -132,13 +165,23 @@ async function getLibrary(options = {}) {
         continue;
       } else {
         // Completed or unknown
+        // 중복 제거 방어 코드 (백엔드 페이지네이션 버그로 쌓인 중복 데이터 정리)
+        const uniqueSeries = [];
+        const seenIds = new Set();
+        for (const s of allSeries) {
+          if (!seenIds.has(s.id)) {
+            seenIds.add(s.id);
+            uniqueSeries.push(s);
+          }
+        }
+
         if (step > 1) {
           // Background save index
-          request('view_save_index', { seriesList: allSeries })
+          request('view_save_index', { seriesList: uniqueSeries })
             .then((r) => console.log('📝 Index saved:', r))
             .catch((e) => console.warn('❌ Index save failed:', e));
         }
-        break;
+        return uniqueSeries;
       }
     } else {
       console.warn('[GAS] Unknown API Response:', response);
@@ -165,8 +208,8 @@ async function getBooks(seriesId, bypassCache = false) {
  * @param {number} length - Chunk length
  * @returns {Promise<Object>} { data (base64), nextOffset, hasMore, totalSize }
  */
-async function getChunk(fileId, offset, length) {
-  return await request('view_get_chunk', { fileId, offset, length });
+async function getChunk(fileId, offset, length, signal = null) {
+  return await request('view_get_chunk', { fileId, offset, length }, signal);
 }
 
 
@@ -189,6 +232,20 @@ async function saveReadHistory(history) {
   return await request('view_history_save', { history });
 }
 
+/**
+ * 메타데이터 업데이트 요청 (GAS)
+ */
+async function updateMetadata(seriesId, metadata) {
+  return await request('view_update_metadata', { seriesId, metadata });
+}
+
+/**
+ * 썸네일 직접 업로드 요청 (GAS)
+ */
+async function uploadThumbnail(seriesId, base64Data) {
+  return await request('view_upload_thumbnail', { seriesId, base64Data });
+}
+
 export function useGAS() {
   return {
     gasConfig,
@@ -200,5 +257,7 @@ export function useGAS() {
     getChunk,
     getReadHistory,
     saveReadHistory,
+    updateMetadata,
+    uploadThumbnail,
   };
 }

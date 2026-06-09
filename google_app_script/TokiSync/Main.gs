@@ -1,7 +1,7 @@
-// ⚙️ TokiSync API Server v1.0.0 (Stateless)
+// ⚙️ TokiSync API Server v1.8.0 (Stateless)
 // -----------------------------------------------------
 // 🤝 Compatibility:
-//    - Client v1.0.0+ (User Execution Mode)
+//    - Client v1.8.0+ (User Execution Mode)
 // -----------------------------------------------------
 
 // [GET] 서버 상태 확인용
@@ -14,7 +14,7 @@
  */
 function doGet(e) {
   return ContentService.createTextOutput(
-    "✅ TokiSync API Server v1.5.5 (Stateless) is Running...",
+    "✅ TokiSync API Server v1.8.0 (Stateless) is Running...",
   );
 }
 
@@ -33,10 +33,10 @@ function doGet(e) {
  * @returns {TextOutput} JSON 응답
  */
 // [CONSTANTS]
-const SERVER_VERSION = "v1.5.6"; // API Key Enforcement for All Requests (including viewer)
+var SERVER_VERSION = "v1.8.0"; // Drive API V3 Migration
 // API Key stored in Script Properties (Project Settings > Script Properties)
 // Set property: API_KEY = your_secret_key
-const API_KEY = PropertiesService.getScriptProperties().getProperty("API_KEY");
+var API_KEY = PropertiesService.getScriptProperties().getProperty("API_KEY");
 
 function doPost(e) {
   Debug.start(); // 🐞 디버그 시작
@@ -58,6 +58,12 @@ function doPost(e) {
     // Stateless 방식이므로 클라이언트가 반드시 folderId를 보내야 함
     if (!data.folderId) {
       return createRes("error", "Missing folderId in request payload");
+    }
+
+    // [v1.6.1] Auto-save folderId for background triggers
+    const props = PropertiesService.getScriptProperties();
+    if (props.getProperty("FOLDER_ID") !== data.folderId) {
+        props.setProperty("FOLDER_ID", data.folderId);
     }
 
     // 🔒 [New] 클라이언트 프로토콜 버전 검증 (Major Version 기준)
@@ -82,6 +88,8 @@ function doPost(e) {
     try {
       if (data.type === "init")
         result = initResumableUpload(data, rootFolderId);
+      else if (data.type === "init_update")
+        result = initUpdateResumableUpload(data); // [v1.6.0] Task A-4
       else if (data.type === "upload") result = uploadChunk(data);
       else if (data.type === "check_history")
         result = checkDownloadHistory(data, rootFolderId);
@@ -118,4 +126,25 @@ function doPost(e) {
   } catch (error) {
     return createRes("error", error.toString());
   }
+}
+
+/**
+ * [v1.6.1] Time-driven trigger function to sweep Merge Index.
+ * Automatically runs in the background to merge _toki_merge fragments into master_index.
+ * (Set this up on a Time-Driven trigger in the GAS panel, e.g., every 5 minutes)
+ */
+function TimeDriven_SweepMergeIndex() {
+    const props = PropertiesService.getScriptProperties();
+    const folderId = props.getProperty("FOLDER_ID");
+    if (!folderId) {
+        console.warn("[SweepMergeIndex] FOLDER_ID not found in Script Properties. Run normal API once to auto-save.");
+        return;
+    }
+    
+    // Call the Sweep function defined in View_LibraryService.gs
+    if (typeof SweepMergeIndex === 'function') {
+        SweepMergeIndex(folderId, null);
+    } else {
+        console.error("[SweepMergeIndex] SweepMergeIndex function not found. Verify deployment.");
+    }
 }

@@ -3,6 +3,23 @@
 // =======================================================
 
 /**
+ * [v1.6.0] 캐시 파일 ID를 이용해 폴더 스캔 없이 에피소드 목록을 직접 가져옵니다.
+ *
+ * @param {string} cacheFileId - _toki_cache.json 파일의 고유 ID
+ * @returns {Array<Object>} 캐시된 책 목록 또는 에러
+ */
+function View_getBooksByCacheId(cacheFileId) {
+  try {
+    if (!cacheFileId) throw new Error("cacheFileId is required");
+    const content = DriveAccessService.getFileContent(cacheFileId);
+    return JSON.parse(content);
+  } catch (e) {
+    console.error(`[View_getBooksByCacheId] Error: ${e.toString()}`);
+    throw e;
+  }
+}
+
+/**
  * 특정 시리즈(폴더) 내의 책(파일/폴더) 목록을 반환합니다.
  * - info.json / _toki_cache.json 캐시 처리 추가
  *
@@ -15,15 +32,16 @@ function View_getBooks(seriesId, bypassCache = false) {
     if (!seriesId) throw new Error("Series ID is required");
 
     const CACHE_FILE_NAME = "_toki_cache.json";
-    const folder = DriveApp.getFolderById(seriesId);
 
     // 1. Check Cache
     if (!bypassCache) {
-      const cacheFiles = folder.getFilesByName(CACHE_FILE_NAME);
-      if (cacheFiles.hasNext()) {
-        const cacheFile = cacheFiles.next();
+      const cacheResults = DriveAccessService.list(seriesId, {
+          query: `name = '${CACHE_FILE_NAME}'`,
+          fields: "files(id)"
+      });
+      if (cacheResults.length > 0) {
         try {
-          const content = cacheFile.getBlob().getDataAsString();
+          const content = DriveAccessService.getFileContent(cacheResults[0].id);
           const cacheData = JSON.parse(content);
           Debug.log(`[Cache Hit] Series: ${seriesId}`);
           return cacheData;
@@ -33,55 +51,50 @@ function View_getBooks(seriesId, bypassCache = false) {
       }
     }
 
-    // 2. Full Scan (Existing Logic)
-    const files = folder.getFiles();
-    const folders = folder.getFolders();
-    const books = [];
-    let totalFiles = 0;
+    // 2. Full Scan (V3)
+    const items = DriveAccessService.list(seriesId, {
+        fields: "files(id, name, mimeType, size, modifiedTime, createdTime, webContentLink)"
+    });
 
-    const createBook = (fileOrFolder, type) => {
-      const name = fileOrFolder.getName();
+    const books = [];
+    let totalItems = 0;
+
+    const createBook = (item, type) => {
+      const name = item.name;
       let number = 0;
       const match = name.match(/(\d+)/);
       if (match) number = parseFloat(match[1]);
 
-      const created = fileOrFolder.getDateCreated();
-      const updated = fileOrFolder.getLastUpdated();
-
       return {
-        id: fileOrFolder.getId(),
+        id: item.id,
         seriesId: seriesId,
         name: name,
         number: number,
-        url: fileOrFolder.getUrl(),
-        size: type === "file" ? fileOrFolder.getSize() : 0,
+        url: "", // webViewLink is not returned by default in list, but we can synthesize it or leave empty for frontend to solve
+        size: type === "file" ? parseInt(item.size || 0) : 0,
         media: {
           status: "READY",
-          mediaType:
-            type === "file" ? fileOrFolder.getMimeType() : "application/folder",
+          mediaType: type === "file" ? item.mimeType : "application/folder",
         },
-        created: created ? created.toISOString() : new Date().toISOString(),
-        lastModified: updated
-          ? updated.toISOString()
-          : new Date().toISOString(),
+        created: item.createdTime || new Date().toISOString(),
+        lastModified: item.modifiedTime || new Date().toISOString(),
       };
     };
 
-    while (folders.hasNext()) {
-      const f = folders.next();
-      if (f.getName() === "info.json" || f.getName() === CACHE_FILE_NAME)
-        continue;
-      books.push(createBook(f, "folder"));
+    const folders = items.filter(f => f.mimeType === "application/vnd.google-apps.folder");
+    const files = items.filter(f => f.mimeType !== "application/vnd.google-apps.folder");
+
+    for (const f of folders) {
+        if (f.name === "info.json" || f.name === CACHE_FILE_NAME || f.name === INDEX_FILE_NAME) continue;
+        books.push(createBook(f, "folder"));
     }
 
-    while (files.hasNext()) {
-      totalFiles++;
-      const f = files.next();
-      const name = f.getName();
-      const mime = f.getMimeType();
+    for (const f of files) {
+      totalItems++;
+      const name = f.name;
+      const mime = f.mimeType;
       const lowerName = name.toLowerCase();
 
-      // Filter: System Files & Images
       if (
         name === "info.json" ||
         name === INDEX_FILE_NAME ||
@@ -119,16 +132,24 @@ function View_getBooks(seriesId, bypassCache = false) {
 
     // 3. Write Cache
     const cacheContent = JSON.stringify(books);
-    const existingCache = folder.getFilesByName(CACHE_FILE_NAME);
-    if (existingCache.hasNext()) {
-      existingCache.next().setContent(cacheContent);
-      while (existingCache.hasNext()) existingCache.next().setTrashed(true);
+    const existingCache = DriveAccessService.list(seriesId, {
+        query: `name = '${CACHE_FILE_NAME}'`,
+        fields: "files(id)"
+    });
+
+    if (existingCache.length > 0) {
+        DriveAccessService.updateFileContent(existingCache[0].id, cacheContent);
+        if (existingCache.length > 1) {
+            for (let i = 1; i < existingCache.length; i++) {
+                DriveAccessService.trash(existingCache[i].id);
+            }
+        }
     } else {
-      folder.createFile(CACHE_FILE_NAME, cacheContent, MimeType.PLAIN_TEXT);
+        DriveAccessService.createFile(seriesId, CACHE_FILE_NAME, cacheContent, "application/json");
     }
 
     console.log(
-      `[View_getBooks] Series: ${seriesId}, Total: ${totalFiles}, Returned: ${books.length} (Cache Updated)`,
+      `[View_getBooks] Series: ${seriesId}, Items Scanned: ${items.length}, Returned: ${books.length} (Cache Updated)`,
     );
     return books;
   } catch (e) {
@@ -197,14 +218,12 @@ function View_getFileChunk(fileId, offset, length) {
       );
     }
   } catch (e) {
-    // Fallback to DriveApp if API fails (e.g. scope issue) - Optional but Risky for memory
+    // Fallback to DriveAccessService if API fails (e.g. scope issue)
     console.warn(
-      "Drive API Partial Fetch failed, falling back to DriveApp (High Memory Risk): " +
+      "Drive API Partial Fetch failed, falling back to DriveAccessService: " +
         e,
     );
-    const file = DriveApp.getFileById(fileId);
-    const blob = file.getBlob();
-    const bytes = blob.getBytes();
+    const bytes = DriveAccessService.getFileBytes(fileId);
 
     if (offset >= bytes.length) return null;
     const chunkEnd = Math.min(offset + length, bytes.length);

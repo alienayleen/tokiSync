@@ -1,0 +1,219 @@
+{
+  "version": "1.0",
+  "rules": [
+    {
+      "id": "toki_common",
+      "name": "토끼 계열 (뉴토끼/마나토끼) 통합 규칙",
+      "urlPattern": ".*(newtoki|manatoki|comic|booktoki).*",
+      "category": "Webtoon",
+      "meta": {
+        "title": "meta[name=\"subject\"]",
+        "author": ".view-content",
+        "thumb": {
+          "selector": "img[itemprop=\"image\"]",
+          "attr": "src"
+        }
+      },
+      "list": {
+        "container": ".list-body",
+        "item": "li",
+        "num": "span.no",
+        "title": "a",
+        "link": {
+          "selector": "a",
+          "attr": "href"
+        }
+      },
+      "viewer": {
+        "fetchMethod": "iframe",
+        "imageRegex": "https?:\\\\/\\\\/[^\"' ]+\\\\.(?:jpg|png|webp)",
+        "imageContainer": ".view-padding",
+        "imageItem": "div img",
+        "lazyAttrOptions": [
+          "data-src",
+          "data-original",
+          "data-lazy",
+          "data-url",
+          "data-img"
+        ]
+      }
+    },
+    {
+      "id": "sbxh_webtoon",
+      "name": "SBXH 웹툰 규칙",
+      "urlPattern": ".*sbxh[0-9]*\\..*/webtoon/.*",
+      "category": "Webtoon",
+      "idExtraction": {
+        "source": "url",
+        "regex": "\\/webtoon\\/([0-9]+)"
+      },
+      "meta": {
+        "title": "h1.hero-v2-title",
+        "author": "div.hero-v2-author",
+        "thumb": {
+          "selector": "div.hero-v2-thumb > img",
+          "attr": "src"
+        },
+        "status": "span.pill-status",
+        "tags": "div.hero-v2-tags"
+      },
+      "list": {
+        "container": "ul.ep-list-v2",
+        "item": "li.ep-row-v2",
+        "num": "span.ep-row-v2-no",
+        "title": ".ep-row-v2-title strong",
+        "sub": {
+          "selector": "span.sub",
+          "regex": "\\[(.*?)\\]"
+        },
+        "link": {
+          "selector": "a.ep-row-v2-link",
+          "attr": "href"
+        },
+        "date": "span.ep-row-v2-date"
+      },
+      "viewer": {
+        "fetchMethod": "iframe",
+        "imageContainer": "div.vw-imgs",
+        "imageItem": "img",
+        "lazyAttrOptions": [
+          "data-src",
+          "data-lazy",
+          "src"
+        ]
+      }
+    },
+    {
+      "id": "sbxh_manhwa",
+      "name": "SBXH 만화 규칙",
+      "urlPattern": ".*sbxh[0-9]*\\..*/manhwa/.*",
+      "idExtraction": {
+        "source": "url",
+        "regex": "\\/manhwa\\/([0-9]+)"
+      },
+      "category": "Manga",
+      "meta": {
+        "title": "h1.hero-v2-title",
+        "author": "div.hero-v2-author",
+        "thumb": {
+          "selector": "div.hero-v2-thumb > img",
+          "attr": "src"
+        },
+        "status": "span.pill-status",
+        "tags": "div.hero-v2-tags"
+      },
+      "list": {
+        "container": "ul.ep-list-v2",
+        "item": "li.ep-row-v2",
+        "num": "span.ep-row-v2-no",
+        "title": ".ep-row-v2-title strong",
+        "sub": {
+          "selector": "span.sub",
+          "regex": "\\[(.*?)\\]"
+        },
+        "link": {
+          "selector": "a.ep-row-v2-link",
+          "attr": "href"
+        },
+        "date": "span.ep-row-v2-date"
+      },
+      "viewer": {
+        "fetchMethod": "iframe",
+        "imageContainer": "div.vw-imgs",
+        "imageItem": "img",
+        "lazyAttrOptions": [
+          "data-src",
+          "data-lazy",
+          "src"
+        ]
+      }
+    },
+    {
+      "id": "sbxh_novel",
+      "name": "SBXH 소설 규칙",
+      "urlPattern": ".*sbxh[0-9]*\\..*/novel/.*",
+      "category": "Novel",
+      "idExtraction": {
+        "source": "url",
+        "regex": "\\/novel\\/([0-9]+)"
+      },
+      "meta": {
+        "title": "div.nd-info > h1",
+        "author": "div.nd-meta span:first-child",
+        "thumb": {
+          "selector": "div.nd-thumb img",
+          "attr": "src"
+        },
+        "tags": "div.hero-v2-tags"
+      },
+      "list": {
+        "container": "ul.novel-eps",
+        "item": "li",
+        "num": "span.ne-num",
+        "title": "span.ne-title",
+        "sub": {
+          "selector": "span.sub",
+          "regex": "\\[(.*?)\\]"
+        },
+        "link": {
+          "selector": "a",
+          "attr": "href"
+        },
+        "date": "span.ne-date"
+      },
+      "viewer": {
+        "fetchMethod": "api",
+        "decryptApi": {
+          "endpoint": "/api/novel-content",
+          "cookieName": "nv",
+          "clientHeader": "shadow-v2"
+        },
+        "seriesTitle": "div.crumb a:last-of-type",
+        "episodeTitle": "h1.ne-h1",
+        "episodeNum": "div.crumb strong",
+        "novelContent": "article.novel-viewer",
+        "imageContainer": "article.novel-viewer",
+        "imageItem": "p",
+        "lazyAttrOptions": []
+      }
+    },
+    {
+      "id": "BlackToon",
+      "name": "블랙툰",
+      "urlPattern": ".*blacktoon[0-9]*\\..*/webtoons?/.*",
+      "idExtraction": {
+        "source": "url",
+        "regex": "\\/webtoons?\\/([0-9]+)"
+      },
+      "category": "Webtoon",
+      "meta": {
+        "title": ".container > .list-item > div > h3 > b",
+        "author": ".container > .list-item > div > p > img",
+        "thumb": {
+          "selector": ".container > .list-item > div > .card-fluid > img",
+          "attr": "src"
+        }
+      },
+      "list": {
+        "container": "#toon_list",
+        "item": "#toon_list > div.card",
+        "num": "p",
+        "title": "p",
+        "link": {
+          "selector": "a",
+          "attr": "href"
+        }
+      },
+      "viewer": {
+        "fetchMethod": "iframe",
+        "imageContainer": "div#toon_content_imgs",
+        "imageItem": "img",
+        "lazyAttrOptions": [
+          "o-src",
+          "data-original",
+          "src"
+        ]
+      }
+    }
+  ]
+}

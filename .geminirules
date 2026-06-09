@@ -1,63 +1,52 @@
-# Project: tokiSync
+# Project: tokiSync — Caveman Rules
 
-# This file contains Gemini's project-specific memory and instructions.
+# 📌 SECTION 0: CONTEXT
+Start session: Read AI_AGENT_CONTEXT.md (SSOT), PROJECT_HANDOVER_MASTER.md.
+AI_AGENT_CONTEXT.md = Single Source of Truth.
 
-# Add rules here to override or supplement the global ~/.gemini/GEMINI.md rules.
+# 📌 SECTION 0.1: ENV
+Terminal command: Use `export PATH=$PATH:/usr/local/bin`. Mac path safety.
 
-# 🚨 CRITICAL SYSTEM RULE (PRIORITY 0) 🚨
+# 🚨 SECTION 1: PERMISSIONS
+- 🚫 PROHIBITED: `clasp push`, `rm -rf`, `git push`. DO NOT AUTO-RUN. Guide human.
+- ✅ ALLOWED: `ls`, `cat`, `grep`, `find`, `git status`. Read-only OK.
+- ⚠️ CONDITIONAL: `npm test`, `build`. Run after plan approval.
 
-**0. CONTEXT INITIALIZATION MANDATE:** 새로운 세션 시작 시 무조건 `PROJECT_HANDOVER_MASTER.md`를 먼저 읽고 컨텍스트를 복구할 것.
+# 📝 SECTION 2: DOCS
+- Real-time: Unit done → Update `.agent_checkpoint.md`. External memory.
+- Final: Sync `.agent_checkpoint.md` to CONTEXT/HANDOVER/CHANGELOG. Delete temp.
+- HANDOVER > 300 lines → Move old to CHANGELOG. Keep lean.
 
-**1. PROPOSE BEFORE IMPLEMENTATION:** 코딩 작업 시 분석 -> 단계별 계획 출력 -> **사용자 승인 대기** 과정을 거칠 것. 승인 전 코드 작성 금지.
+# 📂 SECTION 2.1: STRUCTURE
+- All MD (except root SSOT) → `documentation/`.
+- `guides/`: How-to. `reports/`: walkthrough. `archive/`: history.
+- Root SSOT: README, CHANGELOG, CONTEXT, HANDOVER. Update README map.
 
-**2. OPERATION CLASSIFICATION (NEW):** 명령어 실행 권한을 다음과 같이 엄격히 구분한다.
-   - 🚫 **PROHIBITED (Deployment/Destructive):** `npm run build`, `clasp push`, `rm -rf`, `git push` 등 배포 및 파괴적 명령은 직접 실행 금지. 사용자에게 텍스트로 가이드할 것.
-   - ✅ **ALLOWED (Diagnostic/Read-only):** `ls`, `pwd`, `cat`, `grep`, `find`, `git status`, `npm list` 등 환경 파악 및 파일 확인용 명령어는 자유롭게 실행하여 컨텍스트를 파악할 것.
-   - ⚠️ **CONDITIONAL (Development):** `npm test`, `npm run lint` 등 안전한 검증용 명령은 계획 단계에서 승인받은 경우 실행 가능.
+# 🔒 SECTION 3: EDITORIAL
+No shadow echoing. Use actual tools. Human = Final pipeline runner.
 
-**3. NO SHADOW ECHOING:** 터미널 명령어를 실행하는 대신 `echo "doing something..."`과 같이 텍스트만 출력하는 행위를 엄격히 금지한다. 
-   - 실행 가능한 명령은 실제 도구로 실행하고, 실행할 수 없는 제약 사항은 터미널 밖(대화창)에서 텍스트로 설명할 것.
+# 🔍 SECTION 4: AUDIT
+Post-coding: Logic verify. Edge case check. Report in walkthrough/report.
 
-**4. STRICT ROLE DEFINITION:** 빌드 및 배포 파이프라인의 최종 실행 주체는 오직 'Human User'이다.
-## Project Identity & Architecture
+# 🛠️ SECTION 5: SKILLS
+- Planning: @[concise-planning], @[wiki-architect].
+- Code: @[javascript-pro], @[tailwind-patterns].
+- Perf/Debug: @[performance-engineer], @[systematic-debugging].
+- Security: @[security-auditor], @[vibe-code-auditor].
 
-- **Architecture**:
-  - Backend: Google Apps Script (Stateless API).
-  - Bridge: Tampermonkey UserScript (Core logic, DOM Scraping, `GM_xmlhttpRequest` for Direct Drive Access).
-  - Frontend (Viewer): Vue 3 (Composition API) + Tailwind CSS SPA, hosted on GitHub Pages.
-- **Storage**: Dexie.js for offline viewer cache.
+# 🤖 SECTION 6: AGENTS
+1. Main (Claude/Pro): Strategy. Planning.
+2. Worker (Flash): Implementation. Atomic tasks.
+3. Auditor (3 Pro): Inspect. Edge cases. PASS/FAIL report.
 
-## Coding Conventions & Rules
+# 🔄 SECTION 7: ERRORS
+Error found → Auditor report → Main re-plan → Worker re-impl. No quick fixes.
 
-- **Backend (GAS)**: Must remain stateless. Do NOT use `PropertiesService` for user settings; everything must be payload-driven.
-- **Frontend (Viewer)**: Adhere to the "Cinematic" design philosophy (Glassmorphism, blur effects, entry animations). Use Vue 3 Composition API.
-- **File Naming Standard**: Google Drive folders must use `[ID] Series Title` format. Files must use `Number - Title` format.
+# 📝 SECTION 8: HANDOVER
+Model swap: Update `.agent_checkpoint.md`. Read SSOT + state first.
 
-## Workflows & Build Commands
+# 🚀 SECTION 9: RELEASE & BRANCH
+- Main: No direct commit. Use PR.
+- Assets: Include `docs/tokiSync.user.js`, `google_app_script/TokiSync_Server_Bundle.gs` in Release.
+- 🚫 NO AUTO-COMMIT/RELEASE. Bump version @ COMMIT phase ONLY after human approval.
 
-- **Viewer Build**: `npm run build:viewer` (Uses Vite, outputs to `docs/` for GitHub Pages).
-- **Core Script Build**: `npm run build:core` (Uses Webpack).
-- **GAS Deployment**: `npm run build:gas` and `npm run gas:push` (Uses Clasp).
-- **All Builds**: `npm run build` runs all the above.
-
-## Viewer Input Architecture
-
-- **Single Controller Rule**: All viewer input (mouse, touch, keyboard, wheel) MUST be handled through a single composable: `useViewerInput.js`.
-  - DO NOT split input handling across component event handlers (e.g., `nav-zone @click`) and composables (e.g., `useTouch.js`).
-  - Mouse clicks: Use `@mousedown.left` attached directly to `viewer-container`.
-  - Touch: Attach `touchstart`/`touchend` directly to `viewer-container`. Use a `lastTouch` timestamp flag (+300ms buffer) to prevent ghost `mousedown` events after touch.
-  - `nav-zone` div pattern is ABOLISHED. Do not re-introduce it.
-
-## Theme System Conventions
-
-- **No hardcoded colors in viewer components.** All colors must use CSS theme variables.
-  - ❌ WRONG: `bg-black/95`, `text-white`, `text-zinc-400`, `text-zinc-600`
-  - ✅ CORRECT: `text-theme-text`, `text-theme-sub`, `text-theme-muted`, `hover:bg-theme-surface-hover`
-- **Glass UI elements** (e.g., `.glass-controls` toolbar) must use `--t-glass-bg` and `--t-glass-border` CSS variables for both dark and light themes.
-- **Global theme state** is managed via `appTheme` (ref) and `toggleTheme` in `useStore.js`. It is applied via `data-theme` attribute on `document.documentElement`. Do NOT create per-component or per-view theme states.
-
-## Additional Context & Documentation Workflow
-
-- **Master Reference**: `PROJECT_HANDOVER_MASTER.md` is the single source of truth for project specs, roadmap, and UI/UX requirements. It is **agent-only** (listed in `.gitignore`) and must NOT be committed to git.
-- **Post-Task Documentation**: After completing a major task (i.e., immediately prior to or after a Git commit), you MUST document the key changes, architectural decisions, and updated status in `PROJECT_HANDOVER_MASTER.md`.
-- **Rule Updates**: If the completed task introduces a new, highly important convention, architecture rule, or restriction, you MUST also duplicate that specific rule here in `.geminirules` to ensure it is constantly enforced in future sessions.

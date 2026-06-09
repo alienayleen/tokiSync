@@ -5,7 +5,7 @@
         <svg class="w-6 h-6 text-theme-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"></path></svg>
       </button>
       <div v-if="currentView === 'library'" class="flex items-center space-x-3 cursor-pointer group" @click="reloadApp">
-        <div class="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center font-black text-white shadow-lg">TS</div>
+        <div class="w-9 h-9 bg-theme-accent rounded-xl flex items-center justify-center font-black text-white shadow-lg">TS</div>
         <h1 class="text-2xl font-black tracking-tighter uppercase group-hover:text-theme-accent transition-colors italic text-theme-text">TokiSync <span class="text-yellow-400">⚡️</span></h1>
       </div>
     </div>
@@ -22,13 +22,20 @@
       >
         <span class="text-base leading-none">{{ appTheme === 'dark' ? '☀️' : '🌙' }}</span>
       </button>
+      <button 
+        @click="showDownloadManager = true" 
+        class="w-9 h-9 flex items-center justify-center text-theme-sub hover:text-theme-text transition-colors rounded-full hover:bg-theme-surface-hover"
+        title="다운로드 관리자"
+      >
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+      </button>
       <button @click="showSettings = !showSettings" class="w-9 h-9 flex items-center justify-center text-theme-sub hover:text-theme-text transition-colors rounded-full hover:bg-theme-surface-hover" :class="{'text-theme-text': showSettings}">⚙️</button>
-      <button @click="isAddModalOpen = true" class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-2.5 rounded-full text-[11px] font-black shadow-xl tracking-widest">+ ADD NEW</button>
+
     </div>
   </nav>
 </template>
 
 <script setup>
 import { useStore } from '../composables/useStore';
-const { currentView, showSettings, isAddModalOpen, isSyncing, goBackToLibrary, reloadApp, appTheme, toggleTheme } = useStore();
+const { currentView, showSettings, showDownloadManager, isAddModalOpen, isSyncing, goBackToLibrary, reloadApp, appTheme, toggleTheme } = useStore();
 </script>

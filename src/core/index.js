@@ -1,126 +1,121 @@
-
 import { main } from './main.js';
-import { getConfig } from './config.js';
+import { initWorkerExtractor } from './worker-extractor.js';
 
-(function () {
+(async function () {
     'use strict';
-    
-    // Viewer Config Injection (Zero-Config)
-    if (location.hostname.includes('github.io') || location.hostname.includes('localhost') || location.hostname.includes('127.0.0.1')) {
-        console.log("📂 TokiView (Frontend) detected. Injecting Config...");
-        
-        const config = getConfig();
-        
-        if (config.gasUrl && config.folderId) {
-            // [Fix] Retry injection to handle timing issues (Viewer might not be ready)
-            let retryCount = 0;
-            const maxRetries = 5;
-            let injectionConfirmed = false;
-            let retryTimer = null;
-            let pollTimer = null;
-            
-            // Check localStorage to verify injection success
-            const checkInjection = () => {
-                const storedUrl = localStorage.getItem('TOKI_API_URL');
-                const storedId = localStorage.getItem('TOKI_ROOT_ID');
-                const storedKey = localStorage.getItem('TOKI_API_KEY');
-                
-                // All three values must match
-                if (storedUrl === config.gasUrl && 
-                    storedId === config.folderId && 
-                    storedKey === (config.apiKey || '')) {
-                    
-                    injectionConfirmed = true;
-                    if (retryTimer) clearTimeout(retryTimer);
-                    if (pollTimer) clearInterval(pollTimer);
-                    console.log("✅ Config injection confirmed (localStorage verified)");
-                    return true;
-                }
-                return false;
-            };
-            
-            const injectConfig = () => {
-                if (injectionConfirmed) return; // Stop if already confirmed
-                
-                window.postMessage({ 
-                    type: 'TOKI_CONFIG', 
-                    url: config.gasUrl,
-                    folderId: config.folderId,
-                    apiKey: config.apiKey
-                }, '*');
-                
-                console.log(`🚀 Config Injection Attempt ${retryCount + 1}/${maxRetries}:`, { 
-                    gasUrl: config.gasUrl, 
-                    apiKey: config.apiKey ? '***' : '(empty)'
-                });
 
-                retryCount++;
-                if (retryCount < maxRetries && !injectionConfirmed) {
-                    retryTimer = setTimeout(injectConfig, 1000);
+    // ── 🔒 [초고도 스텔스 섀도 DOM 개방 및 클로킹 엔진] ────────────────
+    try {
+        const originalAttachShadow = Element.prototype.attachShadow;
+        const originalToString = Function.prototype.toString;
+        const originalCreateElement = Document.prototype.createElement;
+
+        if (originalAttachShadow) {
+            // A. 초스텔스 개방 가로채기 함수 정의
+            const customAttachShadow = function attachShadow(init) {
+                if (init && init.mode === 'closed') {
+                    init.mode = 'open';
+                    console.log('[TokiSync] 🔒 닫힌 Shadow DOM -> Open 모드로 은밀 개방 완료');
                 }
+                return originalAttachShadow.apply(this, arguments);
             };
 
-            // Start polling localStorage (check every 200ms)
-            pollTimer = setInterval(checkInjection, 200);
+            // B. 네이티브 프로토타입 체인 완벽 일치 (hasOwnProperty('toString') 방어)
+            Object.setPrototypeOf(customAttachShadow, Function.prototype);
             
-            // Timeout after 5 seconds
-            setTimeout(() => {
-                if (pollTimer) clearInterval(pollTimer);
-                if (!injectionConfirmed) {
-                    console.warn("⚠️ Config injection timeout (5s)");
+            // C. 글로벌 toString() 킹핀 클로킹 (자기 자신 및 가로채기 함수 위장)
+            const patchedToString = function toString() {
+                if (this === customAttachShadow) {
+                    return 'function attachShadow() { [native code] }';
                 }
-            }, 5000);
-
-            // Start injection loop
-            setTimeout(injectConfig, 500);
-
-        } else {
-            console.warn("⚠️ GAS URL or Folder ID missing. Please configure via menu.");
-        }
-        
-        // API Proxy (CORS Bypass using GM_xmlhttpRequest)
-        window.addEventListener('message', (event) => {
-            // Security: Only accept from same origin
-            if (event.source !== window) return;
+                if (this === patchedToString) {
+                    return 'function toString() { [native code] }';
+                }
+                return originalToString.apply(this, arguments);
+            };
             
-            const msg = event.data;
-            if (msg.type === 'TOKI_API_REQUEST') {
-                console.log('[Proxy] Received API request:', msg.payload);
-                
-                GM_xmlhttpRequest({
-                    method: 'POST',
-                    url: config.gasUrl,
-                    data: JSON.stringify(msg.payload),
-                    headers: { 'Content-Type': 'text/plain' },
-                    onload: (response) => {
+            Object.setPrototypeOf(patchedToString, Function.prototype);
+            Function.prototype.toString = patchedToString;
+
+            // D. 네이티브 디스크립터 완벽 동기화
+            Object.defineProperty(Element.prototype, 'attachShadow', {
+                value: customAttachShadow,
+                writable: true,
+                enumerable: true,
+                configurable: true
+            });
+
+            // E. Iframe 우회 차단 감지 격파 (동적 생성 iframe 프로토타입 오염)
+            Document.prototype.createElement = function (tagName) {
+                const element = originalCreateElement.apply(this, arguments);
+                if (tagName && tagName.toLowerCase() === 'iframe') {
+                    // iframe이 생성되어 DOM에 부착되는 시점을 추적하여 동기화 주입
+                    const observer = new MutationObserver(() => {
                         try {
-                            const result = JSON.parse(response.responseText);
-                            window.postMessage({
-                                type: 'TOKI_API_RESPONSE',
-                                requestId: msg.requestId,
-                                result: result
-                            }, '*');
-                        } catch (e) {
-                            window.postMessage({
-                                type: 'TOKI_API_RESPONSE',
-                                requestId: msg.requestId,
-                                error: 'Parse error: ' + e.message
-                            }, '*');
-                        }
-                    },
-                    onerror: () => {
-                        window.postMessage({
-                            type: 'TOKI_API_RESPONSE',
-                            requestId: msg.requestId,
-                            error: 'Network error'
-                        }, '*');
-                    }
-                });
-            }
-        });
-        
-        console.log("✅ API Proxy initialized (CORS bypass)");
+                            if (element.contentWindow && element.contentWindow.Element) {
+                                const iframeAttach = element.contentWindow.Element.prototype.attachShadow;
+                                if (iframeAttach && iframeAttach !== customAttachShadow) {
+                                    Object.defineProperty(element.contentWindow.Element.prototype, 'attachShadow', {
+                                        value: customAttachShadow,
+                                        writable: true,
+                                        enumerable: true,
+                                        configurable: true
+                                    });
+                                }
+                            }
+                        } catch (err) {}
+                        observer.disconnect();
+                    });
+                    observer.observe(document.documentElement, { childList: true, subtree: true });
+                }
+                return element;
+            };
+            
+            Object.setPrototypeOf(Document.prototype.createElement, Function.prototype);
+        }
+    } catch (e) {
+        console.warn('[TokiSync] 초스텔스 섀도 DOM 엔진 로드 실패:', e.message);
     }
-    
-    main();
+    // ───────────────────────────────────────────────────────────────
+
+    // 1. 모든 console.log 덮어쓰기 제거
+    // 2. window.tokiQueue, downloadTokiLogs 등 모든 전역 노출 차단
+    // 3. window.fetch, sendBeacon, XHR Proxy 가로채기 전면 비활성화 (스텔스 유지)
+    // 4. window.name 및 sessionStorage 워커 각인 흔적 배제
+
+    // window.opener가 존재할 경우 워커로 판별하여 Extractor 기동 (스텔스 모드)
+    if (window.opener) {
+        const startWorker = () => {
+            try {
+                initWorkerExtractor();
+            } catch (e) {
+                console.error('[TokiSync:Worker] Worker 초기화 실패:', e);
+            }
+        };
+        if (document.readyState === 'complete') {
+            startWorker();
+        } else {
+            window.addEventListener('load', startWorker);
+        }
+        return; // 부모 창의 메인 수집 로직 실행 차단 (Early Exit)
+    }
+
+    console.log('[TokiSync] 🛡️ 스텔스(Stealth) 순수 무취 실행 모드가 활성화되었습니다.');
+
+    const startMain = async () => {
+        setTimeout(async () => {
+            try {
+                // 핵심 수집 기능만 순수하게 기동
+                await main();
+            } catch (e) {
+                console.error('[TokiSync] Main execution error:', e);
+            }
+        }, 500); // SPA 사이트 Hydration 대비 버퍼 500ms
+    };
+
+    if (document.readyState === 'complete') {
+        startMain();
+    } else {
+        window.addEventListener('load', startMain);
+    }
 })();

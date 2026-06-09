@@ -4,7 +4,7 @@
 // Merge 로직은 클라이언트(뷰어)에서 처리
 // =======================================================
 
-const HISTORY_FILE_NAME = "read_history.json";
+var HISTORY_FILE_NAME = "read_history.json";
 
 /**
  * read_history.json 불러오기
@@ -13,13 +13,17 @@ const HISTORY_FILE_NAME = "read_history.json";
  */
 function View_getReadHistory(folderId) {
   try {
-    const folder = DriveApp.getFolderById(folderId);
-    const files = folder.getFilesByName(HISTORY_FILE_NAME);
-    if (!files.hasNext()) {
+    const results = DriveAccessService.list(folderId, {
+      query: `name = '${HISTORY_FILE_NAME}'`,
+      fields: "files(id)"
+    });
+
+    if (results.length === 0) {
       Debug.log("[History] read_history.json 없음 → 빈 배열 반환");
       return createRes("success", []);
     }
-    const content = files.next().getBlob().getDataAsString();
+
+    const content = DriveAccessService.getFileContent(results[0].id);
     const data = JSON.parse(content);
     Debug.log(`[History] 불러오기 완료: ${data.length}개 레코드`);
     return createRes("success", data);
@@ -30,32 +34,65 @@ function View_getReadHistory(folderId) {
 }
 
 /**
- * read_history.json 저장 (전체 덮어쓰기)
+ * read_history.json 저장 (Retry + Advanced Service 적용)
  * Merge는 클라이언트에서 완료된 상태로 받음
  * @param {Object} data - { history: Array }
  * @param {string} folderId - 루트 폴더 ID
  */
 function View_saveReadHistory(data, folderId) {
-  try {
-    if (!Array.isArray(data.history)) {
-      return createRes(
-        "error",
-        "Invalid history payload: history must be an array",
+  const MAX_RETRIES = 3;
+  let lastError;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      if (!Array.isArray(data.history)) {
+        return createRes(
+          "error",
+          "Invalid history payload: history must be an array",
+        );
+      }
+
+      const jsonString = JSON.stringify(data.history);
+      const blob = Utilities.newBlob(
+        jsonString,
+        "application/json",
+        HISTORY_FILE_NAME,
       );
+
+      const results = DriveAccessService.list(folderId, {
+        query: `name = '${HISTORY_FILE_NAME}'`,
+        fields: "files(id)"
+      });
+
+      if (results.length > 0) {
+        const fileId = results[0].id;
+        DriveAccessService.updateFileContent(fileId, jsonString);
+
+        if (results.length > 1) {
+          for (let i = 1; i < results.length; i++) {
+            DriveAccessService.trash(results[i].id);
+          }
+        }
+      } else {
+        DriveAccessService.createFile(folderId, HISTORY_FILE_NAME, jsonString, "application/json");
+      }
+
+      Debug.log(
+        `[History] 저장 성공 (시도: ${attempt}/${MAX_RETRIES}, 레코드: ${data.history.length})`,
+      );
+      return createRes("success", "History saved");
+    } catch (e) {
+      lastError = e;
+      Debug.warn(`[History] 저장 시도 ${attempt} 실패: ${e.message}`);
+      if (attempt < MAX_RETRIES) {
+        Utilities.sleep(1000 * attempt); // Exp backoff
+      }
     }
-    const folder = DriveApp.getFolderById(folderId);
-    const jsonString = JSON.stringify(data.history);
-    const files = folder.getFilesByName(HISTORY_FILE_NAME);
-    if (files.hasNext()) {
-      files.next().setContent(jsonString);
-      while (files.hasNext()) files.next().setTrashed(true);
-    } else {
-      folder.createFile(HISTORY_FILE_NAME, jsonString, MimeType.PLAIN_TEXT);
-    }
-    Debug.log(`[History] 저장 완료: ${data.history.length}개 레코드`);
-    return createRes("success", "History saved");
-  } catch (e) {
-    Debug.error("[History] 저장 실패", e);
-    return createRes("error", `History save failed: ${e.message}`);
   }
+
+  Debug.error(`[History] 최종 저장 실패 (${MAX_RETRIES}회 시도)`, lastError);
+  return createRes(
+    "error",
+    `History save failed after ${MAX_RETRIES} attempts: ${lastError.message}`,
+  );
 }

@@ -1,6 +1,11 @@
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import path from 'path';
+import fs from 'fs';
+
+const pkg = JSON.parse(
+  fs.readFileSync(new URL('./package.json', import.meta.url), 'utf-8')
+);
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
@@ -24,6 +29,12 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [vue()],
     
+    define: {
+      __SCRIPT_VERSION__: JSON.stringify(pkg.components.script),
+      __VIEWER_VERSION__: JSON.stringify(pkg.components.viewer),
+      __GAS_VERSION__: JSON.stringify(pkg.components.gas)
+    },
+    
     // index.html 위치 (사용자 설정 유지)
     root: './src/viewer', 
     
@@ -33,6 +44,14 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3000,
       open: true,
+      proxy: {
+        // [v1.7.5] 로컬 CORS 이슈 해결을 위한 GAS 프록시 설정
+        '/api/gas': {
+          target: 'https://script.google.com',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api\/gas/, '')
+        }
+      }
     },
 
     resolve: {

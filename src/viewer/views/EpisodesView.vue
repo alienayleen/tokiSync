@@ -27,39 +27,46 @@
               </p>
             </div>
 
-            <!-- 첫 화 보기 버튼 -->
-            <button
-              v-if="episodes.length > 0"
-              @click="startReading(sortedEpisodes[0])"
-              class="w-full py-5 ep-btn-action rounded-xl text-lg font-black shadow-xl active:scale-95 transition-all uppercase tracking-tighter"
-            >
-              첫 화 보기
-            </button>
+            <!-- Smart Read Button: Integrated First / Resume + Locator -->
+            <div v-if="episodes.length > 0" class="flex w-full shadow-xl rounded-xl overflow-hidden ep-btn-action group">
+              <!-- Main Reading Action -->
+              <button
+                @click="handleSmartRead"
+                class="flex-grow py-5 px-4 text-lg font-black active:scale-[0.98] transition-all uppercase tracking-tighter flex flex-col items-center justify-center gap-1 border-r border-black/5"
+              >
+                <span v-if="lastReadEpisode" class="text-[9px] opacity-70 uppercase tracking-widest font-black">Resume Reading</span>
+                <span v-else class="text-[9px] opacity-70 uppercase tracking-widest font-black">Start Series</span>
+                
+                <span v-if="lastReadEpisode" class="truncate max-w-full text-sm md:text-base leading-tight">
+                  {{ lastReadEpisode.name || lastReadEpisode.title }}
+                </span>
+                <span v-else class="text-base">첫 화 보기</span>
+              </button>
 
-            <!-- 이어보기 버튼 -->
-            <button
-              v-if="lastReadEpisode"
-              @click="startReading(lastReadEpisode)"
-              class="w-full py-4 ep-btn-continue rounded-xl text-sm font-bold transition-all active:scale-95 flex items-center justify-center gap-2"
-            >
-              <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              </svg>
-              <span class="truncate">이어보기: {{ lastReadEpisode.name || lastReadEpisode.title }}</span>
-            </button>
+              <!-- Manual Locator Button (Right side) -->
+              <button 
+                @click.stop="scrollToActive"
+                class="w-16 flex items-center justify-center hover:bg-black/10 transition-colors active:scale-90"
+                title="현재 위치로 이동"
+              >
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"></path>
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 6h16M4 18h16"></path>
+                </svg>
+              </button>
+            </div>
 
             <!-- 새로고침 -->
             <button
               @click="refreshEpisodes"
               :disabled="isSyncing"
-              class="w-full py-3 ep-btn-ghost rounded-xl text-xs font-bold tracking-widest uppercase transition-all flex items-center justify-center gap-2"
+              class="w-full py-4 ep-btn-ghost rounded-xl text-[10px] font-black tracking-widest uppercase transition-all flex items-center justify-center gap-2 border border-white/5 bg-white/5 hover:bg-white/10"
               :class="{ 'opacity-40 cursor-not-allowed': isSyncing }"
             >
               <svg class="w-4 h-4" :class="{ 'animate-spin': isSyncing }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
               </svg>
-              새로고침
+              동기화 (Sync History)
             </button>
           </div>
         </aside>
@@ -110,6 +117,7 @@
             <div
               v-for="ep in sortedEpisodes"
               :key="ep.id"
+              :ref="el => { if (ep.id === activeId) activeElement = el }"
               @click="startReading(ep)"
               class="ep-episode-row p-6 flex items-center cursor-pointer transition-all group"
             >
@@ -127,7 +135,7 @@
               </div>
 
               <!-- 텍스트 정보 -->
-              <!-- 레퍼런스: ml-6, tracking-tighter, group-hover:text-blue-600 -->
+              <!-- 레퍼런스: ml-6, tracking-tighter, group-hover:text-theme-accent -->
               <div class="ml-6 flex-grow overflow-hidden">
                 <h5 class="font-bold text-sm md:text-base ep-text group-hover:ep-text-accent transition-colors truncate tracking-tighter">
                   {{ ep.name || ep.title }}
@@ -136,8 +144,30 @@
                   <p class="text-[11px] font-medium">
                     {{ formatDate(ep.createdTime) }}
                     <span v-if="ep.size"> · {{ formatSize(ep.size) }}</span>
+                    <!-- 캐시 상태 표시 -->
+                    <span v-if="cacheMap[ep.id]" class="ml-2 text-green-500 font-bold flex items-center">
+                      <svg class="w-3 h-3 mr-0.5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293l-4 4a1 1 0 01-1.414 0l-2-2a1 1 0 111.414-1.414L9 10.586l3.293-3.293a1 1 0 111.414 1.414z"/></svg>
+                      Cached
+                    </span>
                   </p>
                 </div>
+              </div>
+
+              <!-- 다운로드 버튼 / 상태 -->
+              <div class="flex items-center space-x-3 ml-4">
+                <div v-if="getStatus(ep.id)" class="text-[10px] font-black ep-text-accent uppercase tracking-tighter w-12 text-center">
+                  <span v-if="getStatus(ep.id).status === 'downloading'">{{ getStatus(ep.id).progress }}%</span>
+                  <span v-else-if="getStatus(ep.id).status === 'completed'" class="text-green-500">DONE</span>
+                  <span v-else-if="getStatus(ep.id).status === 'failed'" class="text-red-500">ERR</span>
+                </div>
+                <button 
+                  v-else-if="!cacheMap[ep.id]"
+                  @click.stop="handleDownload(ep)"
+                  class="w-9 h-9 flex items-center justify-center rounded-full hover:bg-theme-surface-hover text-theme-muted hover:text-theme-accent transition-all"
+                  title="오프라인 캐시 다운로드"
+                >
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                </button>
               </div>
 
               <!-- 읽음 체크: 레퍼런스 opacity-80 스타일 -->
@@ -162,15 +192,56 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted, nextTick } from 'vue';
 import { useStore } from '../composables/useStore';
+import { useDownloadManager } from '../composables/useDownloadManager.js';
 
 const {
   selectedItem, episodes, isSyncing,
   startReading, refreshEpisodes,
   getThumbnailUrl, formatSize, NO_IMAGE_SVG,
-  lastReadEpisode,
+  lastReadEpisode, currentEpisode, viewerDefaults
 } = useStore();
+
+const { startDownload, getStatus, isCached } = useDownloadManager();
+
+// 캐시 상태 추적용 (fileId -> boolean)
+const cacheMap = ref({});
+
+async function updateCacheStatus() {
+  for (const ep of episodes.value) {
+    cacheMap.value[ep.id] = await isCached(ep.id);
+  }
+}
+
+// 초기 로드 및 에피소드 목록 변경 시 캐시 상태 갱신
+onMounted(updateCacheStatus);
+watch(episodes, updateCacheStatus, { deep: true });
+
+const activeElement = ref(null);
+const activeId = computed(() => currentEpisode.value?.id || lastReadEpisode.value?.id);
+
+/**
+ * Manual Scroll to Active Episode
+ */
+function scrollToActive() {
+  if (activeElement.value) {
+    activeElement.value.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+
+/**
+ * Smart Read: Resume or First Episode
+ */
+function handleSmartRead() {
+  if (lastReadEpisode.value) {
+    startReading(lastReadEpisode.value);
+  } else if (episodes.value.length > 0) {
+    // Sort logic to find the very first episode regardless of current sort order
+    const first = [...episodes.value].sort((a, b) => (a.number || 0) - (b.number || 0))[0];
+    startReading(first);
+  }
+}
 
 // 정렬 상태 (localStorage 연동)
 const sortOrder = ref(localStorage.getItem('TOKI_EP_SORT') || 'asc');
@@ -181,6 +252,11 @@ const sortedEpisodes = computed(() => {
   const arr = [...episodes.value];
   return sortOrder.value === 'asc' ? arr : arr.reverse();
 });
+
+// 다운로드 처리
+function handleDownload(ep) {
+  startDownload(ep, viewerDefaults.downloadThreads);
+}
 
 function getFileIcon(ep) {
   const name = (ep.name || '').toLowerCase();
