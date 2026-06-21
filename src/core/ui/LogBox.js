@@ -19,6 +19,7 @@ export class LogBox {
         this.MAX_LOGS = 500;
         this.popupWindow = null;
         this.isEventRegistered = false;
+        this.syncIntervalId = null;
         this.init();
         LogBox.instance = this;
     }
@@ -78,11 +79,6 @@ export class LogBox {
             });
         }
         // ─────────────────────────────────────────────────────
-
-        // 📊 [멀티큐] 팝업이 켜져 있을 때 주기적인 1초 동기화
-        setInterval(() => {
-            this.updateProgressUI();
-        }, 1000);
     }
 
     openDashboard(defaultTab = '') {
@@ -98,6 +94,7 @@ export class LogBox {
             if (defaultTab) {
                 this.switchTab(defaultTab);
             }
+            this.startProgressSync();
             return;
         }
 
@@ -217,6 +214,17 @@ export class LogBox {
         if (defaultTab) {
             this.switchTab(defaultTab);
         }
+
+        // 팝업 창이 닫힐 때 타이머 해제 바인딩
+        try {
+            this.popupWindow.addEventListener('beforeunload', () => {
+                this.stopProgressSync();
+            });
+        } catch (e) {
+            console.warn('[TokiSync UI] beforeunload 이벤트 리스너 등록 실패:', e.message);
+        }
+
+        this.startProgressSync();
     }
 
     updateProgressUI() {
@@ -493,6 +501,7 @@ export class LogBox {
         if (this.popupWindow && !this.popupWindow.closed) {
             this.popupWindow.close();
         }
+        this.stopProgressSync();
     }
 
     toggle() {
@@ -509,6 +518,24 @@ export class LogBox {
         const tabBtn = doc.querySelector(`.toki-tab-btn[data-tab="${tabName}"]`);
         if (tabBtn) {
             tabBtn.click();
+        }
+    }
+
+    startProgressSync() {
+        if (this.syncIntervalId) return;
+        this.syncIntervalId = setInterval(() => {
+            if (this.popupWindow && !this.popupWindow.closed) {
+                this.updateProgressUI();
+            } else {
+                this.stopProgressSync();
+            }
+        }, 1000);
+    }
+
+    stopProgressSync() {
+        if (this.syncIntervalId) {
+            clearInterval(this.syncIntervalId);
+            this.syncIntervalId = null;
         }
     }
 }
