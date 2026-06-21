@@ -125,7 +125,7 @@ ${tocNav}
             // Return the ZIP object (which IS the EPUB)
             return zip; 
         } catch (e) {
-            const { LogBox } = await import('./ui.js');
+            const { LogBox } = await import('./ui/index.js');
             LogBox.getInstance().critical(`EPUB 빌드 실패: ${e.message} (${metadata.title || 'unknown'})`, 'Builder:EPUB');
             throw e;
         }

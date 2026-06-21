@@ -25,4 +25,7 @@ export const EVT = {
     NOTIFY_CONFIRM: 'notify:confirm', // { msg, onConfirm, onCancel } → confirm() 대체
     DOWNLOAD_DONE:  'download:done',  // 다운로드 배치 전체 완료
     UPDATE_PROGRESS: 'update:progress', // UI 진행 상황 강제 업데이트 신호
+    OPEN_DASHBOARD: 'ui:open_dashboard',     // 대시보드 팝업 열기 요청
+    CLOSE_DASHBOARD: 'ui:close_dashboard',   // 대시보드 팝업 닫기 요청
+    TOGGLE_DASHBOARD: 'ui:toggle_dashboard', // 대시보드 팝업 토글 요청
 };

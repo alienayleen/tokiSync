@@ -1,7 +1,7 @@
 import { tokiDownload, processItem } from './downloader.js';
 import { detectSite } from './detector.js'; 
 import { getConfig, setConfig, isConfigValid } from './config.js';
-import { LogBox, markDownloadedItems, MenuModal, TreeRuleEditor } from './ui.js';
+import { LogBox, MenuModal, TreeRuleEditor } from './ui/index.js';
 import { extractEpisodeData } from './extractor.js';
 import { EpubBuilder } from './epub.js';
 import { CbzBuilder } from './cbz.js';

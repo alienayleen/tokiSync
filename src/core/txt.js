@@ -55,7 +55,7 @@ export class TxtBuilder {
                 }
             };
         } catch (e) {
-            const { LogBox } = await import('./ui.js');
+            const { LogBox } = await import('./ui/index.js');
             LogBox.getInstance().critical(`TXT 빌드 실패: ${e.message} (${metadata.title || 'unknown'})`, 'Builder:TXT');
             throw e;
         }

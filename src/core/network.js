@@ -4,7 +4,7 @@
  */
 
 import { getConfig } from './config.js';
-import { LogBox } from './ui.js';
+import { LogBox } from './ui/index.js';
 import { extractEpisodeNum } from './utils.js';
 
 

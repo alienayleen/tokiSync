@@ -1,6 +1,6 @@
 import { getConfig, isConfigValid } from './config.js';
 import { uploadDirect } from './network.js';
-import { LogBox } from './ui.js';
+import { LogBox } from './ui/index.js';
 import { arrayBufferToBase64 } from './utils.js';
 
 function gasRequest(payload, options = {}) {

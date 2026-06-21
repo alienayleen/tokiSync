@@ -5,7 +5,7 @@ import { detectSite } from './detector.js';
 import { EpubBuilder } from './epub.js';
 import { CbzBuilder } from './cbz.js';
 import { TxtBuilder } from './txt.js';
-import { LogBox, Notifier, showProgressModal } from './ui.js';
+import { LogBox, Notifier, showProgressModal } from './ui/index.js';
 import { getConfig, isConfigValid, SLEEP_MULTIPLIERS } from './config.js';
 import { EventBus, EVT } from './EventBus.js';
 import { startSilentAudio, stopSilentAudio } from './anti_sleep.js';

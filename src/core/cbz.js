@@ -31,7 +31,7 @@ export class CbzBuilder {
 
             return zip;
         } catch (e) {
-            const { LogBox } = await import('./ui.js');
+            const { LogBox } = await import('./ui/index.js');
             LogBox.getInstance().critical(`CBZ 빌드 실패: ${e.message} (${metadata.title || 'unknown'})`, 'Builder:CBZ');
             throw e;
         }

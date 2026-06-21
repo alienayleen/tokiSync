@@ -1,5 +1,5 @@
 import { uploadToGAS } from './gas.js';
-import { LogBox, Notifier } from './ui.js';
+import { LogBox, Notifier } from './ui/index.js';
 
 export function arrayBufferToBase64(buffer) {
     const bytes = new Uint8Array(buffer);

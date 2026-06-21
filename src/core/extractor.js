@@ -1,5 +1,5 @@
 import { waitForContent, scrollToLoad, sleep } from './utils.js';
-import { LogBox } from './ui.js';
+import { LogBox } from './ui/index.js';
 import { fetchNovelText } from './worker-controller.js';
 
 /**
