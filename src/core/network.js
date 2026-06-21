@@ -5,6 +5,8 @@
 
 import { getConfig } from './config.js';
 import { LogBox } from './ui.js';
+import { extractEpisodeNum } from './utils.js';
+
 
 let cachedToken = null;
 let tokenExpiry = 0;
@@ -548,19 +550,7 @@ export async function fetchHistoryDirect(seriesTitle, category = 'Webtoon') {
         let minSize = Infinity;
 
         result.files.forEach(file => {
-            // 다양한 파일명 규칙 대응 (Kavita: - c001, 레거시: 0001화, 기본: 숫자로 시작)
-            let episodeNum = null;
-            const kavitaMatch = file.name.match(/[- ]c(h)?(\d+)/i);
-            const legacyMatch = file.name.match(/(\d+)화/);
-            const startNumMatch = file.name.match(/^(\d+)/);
-
-            if (kavitaMatch) {
-                episodeNum = kavitaMatch[2];
-            } else if (legacyMatch) {
-                episodeNum = legacyMatch[1];
-            } else if (startNumMatch) {
-                episodeNum = startNumMatch[1];
-            }
+            const episodeNum = extractEpisodeNum(file.name);
 
             if (!episodeNum) return;
             
@@ -656,18 +646,7 @@ export async function checkSingleHistoryDirect(folderId, episodeNumStr) {
         if (result.files && result.files.length > 0) {
             // Strict filter clientside: 다양한 파일명 규칙에서 추출한 번호가 매칭되는지 확인
             const file = result.files.find(f => {
-                let episodeNum = null;
-                const kavitaMatch = f.name.match(/[- ]c(h)?(\d+)/i);
-                const legacyMatch = f.name.match(/(\d+)화/);
-                const startNumMatch = f.name.match(/^(\d+)/);
-
-                if (kavitaMatch) {
-                    episodeNum = kavitaMatch[2];
-                } else if (legacyMatch) {
-                    episodeNum = legacyMatch[1];
-                } else if (startNumMatch) {
-                    episodeNum = startNumMatch[1];
-                }
+                const episodeNum = extractEpisodeNum(f.name);
 
                 return episodeNum && parseInt(episodeNum, 10) === parseInt(episodeNumStr, 10);
             });

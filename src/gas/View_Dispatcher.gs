@@ -57,6 +57,10 @@ function View_Dispatcher(data) {
       if (!data.seriesId)
         throw new Error("seriesId is required for filename migration");
       resultBody = Migrate_RenameFiles(data.seriesId, data.folderId);
+    } else if (action === "view_migrate_kavita") {
+      // Kavita Structure Optimization (Renaming and Self-Healing)
+      const executeRename = data.executeRename === true;
+      resultBody = Migrate_KavitaFormat(data.folderId, executeRename);
     } else if (action === "view_get_merge_index") {
       // [v1.6.1] Fast Path Fallback: Get Merge Index Fragment directly
       if (!data.folderId || !data.sourceId) throw new Error("folderId and sourceId are required for merge index");

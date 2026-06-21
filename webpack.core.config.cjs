@@ -48,44 +48,7 @@ const METADATA_MAIN = `// ==UserScript==
 // @noframes
 // @license      MIT
 // ==/UserScript==
-`;
-
-const METADATA_NEW_CORE = `// ==UserScript==
-// @name         tokiDownloader
-// @namespace    https://github.com/crossSiteKikyo/tokiDownloader
-// @version      0.0.3
-// @description  북토끼, 뉴토끼, 마나토끼 다운로더
-// @author       hehaho
-// @match        *://*/*webtoon/*
-// @match        *://*/*novel/*
-// @match        *://*/*manhwa/*
-// @match        *://*/*manga/*
-// @match        *://*/*comic/*
-// @match        *://*/*toon/*
-// @include      *://*toki*/*
-// @include      *://*toon*/*
-// @match        https://pray4skylark.github.io/tokiSync/*
-// @include      http://localhost:*/*
-// @include      http://127.0.0.1:*/*
-// @icon         https://github.com/user-attachments/assets/99f5bb36-4ef8-40cc-8ae5-e3bf1c7952ad
-// @grant        GM_registerMenuCommand
-// @grant        GM_xmlhttpRequest
-// @grant        GM_setValue
-// @grant        GM_getValue
-// @grant        GM_addValueChangeListener
-// @connect      script.google.com
-// @connect      script.googleusercontent.com
-// @connect      pray4skylark.github.io
-// @connect      localhost
-// @connect      127.0.0.1
-// @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js
-// @require      https://cdnjs.cloudflare.com/ajax/libs/jszip-utils/0.1.0/jszip-utils.js
-// @run-at       document-start
-// @noframes
-// @license      MIT
-// ==/UserScript==
-`;
-
+`
 // Copy rules.sample.json to dist/rules.json for remote distribution
 try {
   const destDir = path.resolve(__dirname, 'dist');

@@ -593,18 +593,42 @@ test('멀티큐 자율 배치 스케줄러 시나리오가 Concurrency 한도를
     // 3. GM_xmlhttpRequest 모킹
     let cacheRefreshCalledCount = 0;
     globalThis.GM_xmlhttpRequest = (details) => {
+        let responseBody = 'ok';
+        let responseHeaders = '';
+
         if (details.data && typeof details.data === 'string') {
             try {
                 const payload = JSON.parse(details.data);
                 if (payload.type === 'view_update_cache') {
                     cacheRefreshCalledCount++;
+                } else if (payload.type === 'view_get_token') {
+                    responseBody = { token: 'mock-token' };
+                } else if (payload.type === 'init') {
+                    responseBody = { uploadUrl: 'http://mock-upload-url' };
+                } else if (payload.type === 'init_update') {
+                    responseBody = { uploadUrl: 'http://mock-upload-url' };
                 }
             } catch (e) {}
         }
+
+        // Google Drive API Mocking
+        if (details.url && details.url.includes('googleapis.com')) {
+            if (details.url.includes('/files?q=')) {
+                // Search Folder or File
+                responseBody = { files: [{ id: 'mock-file-id', name: 'mock-file-name', size: '5000' }] };
+            } else if (details.url.includes('/files') && (details.method === 'POST' || details.method === 'PATCH')) {
+                // Create Folder or Init Upload Session
+                responseBody = { id: 'mock-created-id' };
+                responseHeaders = 'location: http://mock-upload-session-url\r\nx-guploader-uploadid: mock-upload-id\r\n';
+            }
+        }
+
         if (details.onload) {
             setTimeout(() => {
                 details.onload({
-                    responseText: JSON.stringify({ status: 'success', body: 'ok' })
+                    status: 200,
+                    responseText: typeof responseBody === 'string' ? responseBody : JSON.stringify({ status: 'success', body: responseBody }),
+                    responseHeaders: responseHeaders
                 });
             }, 1);
         }
@@ -699,54 +723,44 @@ test('멀티큐 자율 배치 스케줄러 시나리오가 Concurrency 한도를
         initQueueScheduler();
 
         // 비동기 스케줄링 틱이 돌도록 살짝 대기
-        await new Promise(resolve => backupSetTimeout(resolve, 50));
+        await new Promise(resolve => backupSetTimeout(resolve, 300));
 
-        // 6. Concurrency 한도(2) 검증
-        // 3개 중 1화와 2화만 우선 processing 상태여야 한다.
+        // 6. Concurrency 한도(1) 검증
+        // 3개 중 1화만 우선 processing 상태여야 한다. (v1.25.0 순차 수집 사양)
         const queueState1 = getQueue();
         const item1 = queueState1.find(i => i.id === id1);
         const item2 = queueState1.find(i => i.id === id2);
         const item3 = queueState1.find(i => i.id === id3);
 
         console.assert(item1 && item1.status === 'processing', '1화가 processing 상태가 아닙니다.');
-        console.assert(item2 && item2.status === 'processing', '2화가 processing 상태가 아닙니다.');
-        console.assert(item3 && item3.status === 'pending', '3화는 Concurrency(2)에 의해 pending 상태여야 합니다.');
+        console.assert(item2 && item2.status === 'pending', '2화는 pending 상태여야 합니다.');
+        console.assert(item3 && item3.status === 'pending', '3화는 pending 상태여야 합니다.');
 
-        console.assert(activeWorkers.size === 2, `활성 워커 개수 불일치: ${activeWorkers.size}`);
+        console.assert(activeWorkers.size === 1, `활성 워커 개수 불일치: ${activeWorkers.size}`);
         console.assert(activeWorkers.has(id1), '1화 워커 등록 누락');
-        console.assert(activeWorkers.has(id2), '2화 워커 등록 누락');
 
-        if (item1.status !== 'processing' || item2.status !== 'processing' || item3.status !== 'pending' || activeWorkers.size !== 2) {
-            throw new Error('Concurrency 한도 제어 검증 실패');
+        if (item1.status !== 'processing' || item2.status !== 'pending' || item3.status !== 'pending' || activeWorkers.size !== 1) {
+            throw new Error('Concurrency 한도 제어 검증 실패 (v1.25.0)');
         }
 
         // 7. 1화 완료 처리 시뮬레이션
-        // READY 수신 후 -> EXTRACTION 진행 -> TASK_COMPLETED
+        // READY 수신 후 -> TASK_COMPLETED
         const popup1 = activeWorkers.get(id1);
         simulateWorkerMessage(popup1, 'WORKER_READY', { targetUrl: 'http://example.com/1' });
         simulateWorkerMessage(popup1, 'TASK_COMPLETED', { queueId: id1, content: '1화 본문' });
 
-        // 8. 릴레이 호출 및 다음 작업 자동 실행 검증
-        // 1화 완료 직후 스케줄러가 돌아 3화가 실행 상태로 넘어가야 한다.
-        await new Promise(resolve => backupSetTimeout(resolve, 50));
+        // 8. 릴레이 호출 및 다음 작업(2화) 자동 실행 검증
+        await new Promise(resolve => backupSetTimeout(resolve, 300));
 
         const queueState2 = getQueue();
         const updatedItem1 = queueState2.find(i => i.id === id1);
-        const updatedItem3 = queueState2.find(i => i.id === id3);
+        const updatedItem2 = queueState2.find(i => i.id === id2);
 
         console.assert(updatedItem1.status === 'completed', '1화가 완료되지 않았습니다.');
-        console.assert(updatedItem3.status === 'processing', '3화가 자동으로 스케줄링되지 않았습니다.');
+        console.assert(updatedItem2.status === 'processing', '2화가 자동으로 스케줄링되지 않았습니다.');
 
-        if (updatedItem1.status !== 'completed' || updatedItem3.status !== 'processing') {
-            throw new Error('대기 중이던 3화 자동 실행 전이 실패');
-        }
-
-        // 3화 팝업은 기존 1화 팝업(popup1)을 재활용해야 함.
-        const popup3 = activeWorkers.get(id3);
-        console.assert(popup3 === popup1, '3화 가용 슬롯 팝업 재사용 실패');
-
-        if (popup3 !== popup1) {
-            throw new Error('팝업 재활용 검증 실패');
+        if (updatedItem1.status !== 'completed' || updatedItem2.status !== 'processing') {
+            throw new Error('대기 중이던 2화 자동 실행 전이 실패');
         }
 
         // 9. 2화 완료 처리 시뮬레이션
@@ -754,17 +768,26 @@ test('멀티큐 자율 배치 스케줄러 시나리오가 Concurrency 한도를
         simulateWorkerMessage(popup2, 'WORKER_READY', { targetUrl: 'http://example.com/2' });
         simulateWorkerMessage(popup2, 'TASK_COMPLETED', { queueId: id2, content: '2화 본문' });
 
-        await new Promise(resolve => backupSetTimeout(resolve, 50));
+        // 2화 완료 후 3화 자동 실행 검증
+        await new Promise(resolve => backupSetTimeout(resolve, 300));
+
+        const queueState3 = getQueue();
+        const updatedItem3 = queueState3.find(i => i.id === id3);
+        console.assert(updatedItem3.status === 'processing', '3화가 자동으로 스케줄링되지 않았습니다.');
+        if (updatedItem3.status !== 'processing') {
+            throw new Error('대기 중이던 3화 자동 실행 전이 실패');
+        }
 
         // 10. 3화 완료 처리 시뮬레이션
+        const popup3 = activeWorkers.get(id3);
         simulateWorkerMessage(popup3, 'WORKER_READY', { targetUrl: 'http://example.com/3' });
         simulateWorkerMessage(popup3, 'TASK_COMPLETED', { queueId: id3, content: '3화 본문' });
 
-        await new Promise(resolve => backupSetTimeout(resolve, 50));
+        await new Promise(resolve => backupSetTimeout(resolve, 300));
 
         // 11. 최종 상태 검증
-        const queueState3 = getQueue();
-        const allCompleted = queueState3.every(i => i.status === 'completed');
+        const queueState4 = getQueue();
+        const allCompleted = queueState4.every(i => i.status === 'completed');
         console.assert(allCompleted === true, '모든 에피소드가 완료되지 않았습니다.');
 
         // 12. 최종 1회 드라이브 캐시 갱신 함수 호출 검증

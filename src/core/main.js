@@ -1,5 +1,5 @@
 import { tokiDownload, processItem } from './downloader.js';
-import { detectSite, getMaxEpisodes, parseEpisodeRange } from './detector.js'; 
+import { detectSite } from './detector.js'; 
 import { getConfig, setConfig, isConfigValid } from './config.js';
 import { LogBox, markDownloadedItems, MenuModal, TreeRuleEditor } from './ui.js';
 import { extractEpisodeData } from './extractor.js';
@@ -81,27 +81,13 @@ export async function main() {
         }
     };
 
-    const runFilenameMigration = async () => {
-        if (!confirm('현재 작품의 파일명을 표준화하시겠습니까?\n(예: "0001 - 1화.cbz" -> "0001 - 제목 1화.cbz")')) return;
+    const runKavitaMigration = async () => {
+        if (!confirm('구글 드라이브 내 모든 작품의 파일명과 폴더 구조를 Kavita 표준 규격으로 최적화하시겠습니까?\n(이 작업은 전체 라이브러리를 스캔하므로 다소 시간이 소요될 수 있습니다.)')) return;
         
-        const parserInfo = await ParserFactory.getParser();
-        if (!parserInfo) {
-            alert('현재 사이트를 지원하는 파서를 찾을 수 없습니다.');
-            return;
-        }
-        
-        const seriesId = parserInfo.parser.getSeriesId();
-
-        if (!seriesId || seriesId === "0000") {
-            alert('시리즈 ID를 찾을 수 없습니다.');
-            return;
-        }
-
         try {
             logger.show();
-            logger.log('이름 변경 작업 요청 중...');
+            logger.log('Kavita 구조 최적화 작업 요청 중...');
             
-            const token = await getOAuthToken(); // FIXME: OAuth or API Key? Config uses API Key usually.
             const config = getConfig();
             
             if (!config.gasUrl) {
@@ -113,14 +99,13 @@ export async function main() {
                 method: "POST",
                 url: config.gasUrl,
                 data: JSON.stringify({
-                    type: 'view_migrate_filenames',
-                    seriesId: seriesId,
+                    type: 'view_migrate_kavita',
                     folderId: config.folderId,
+                    executeRename: true,
                     apiKey: config.apiKey,
                     protocolVersion: 3
                 }),
                 headers: {
-                    // "Authorization": `Bearer ${token}`, // If using OAuth
                     "Content-Type": "application/json"
                 },
                 onload: (res) => {
@@ -129,7 +114,7 @@ export async function main() {
                         if (result.status === 'success') {
                             const logs = Array.isArray(result.body) ? result.body.join('\n') : result.body;
                             logger.success(`작업 완료!\n로그:\n${logs}`);
-                            alert(`작업이 완료되었습니다.`);
+                            alert(`Kavita 구조 최적화 작업이 완료되었습니다.`);
                         } else {
                             logger.error(`작업 실패: ${result.body}`);
                             alert(`실패: ${result.body}`);
@@ -257,7 +242,7 @@ export async function main() {
             }
             return { min: 1, max: 100 };
         },
-        migrateFilenames: runFilenameMigration,
+        migrateKavita: runKavitaMigration,
         migrateThumbnails: runThumbnailMigration,
         syncHistory: syncHistory,
         testNativeDownload: async () => {

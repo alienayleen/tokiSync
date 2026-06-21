@@ -1,15 +1,57 @@
 import { getConfig, isConfigValid } from './config.js';
 import { uploadDirect } from './network.js';
 import { LogBox } from './ui.js';
+import { arrayBufferToBase64 } from './utils.js';
 
-function arrayBufferToBase64(buffer) {
-    const bytes = new Uint8Array(buffer);
-    let binary = "";
-    const chunk_size = 0x8000; // 32KB
-    for (let i = 0; i < bytes.length; i += chunk_size) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk_size));
+function gasRequest(payload, options = {}) {
+    const config = getConfig();
+    if (!config.gasUrl || !config.folderId) {
+        if (options.rejectOnConfigError) {
+            return Promise.reject(new Error("GAS 설정이 누락되었습니다."));
+        }
+        return Promise.resolve(options.defaultValue);
     }
-    return window.btoa(binary);
+    const timeout = options.timeout || 30000;
+    return new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+            method: 'POST',
+            url: config.gasUrl,
+            data: JSON.stringify({
+                folderId: config.folderId,
+                apiKey: config.apiKey,
+                protocolVersion: 3,
+                ...payload
+            }),
+            headers: { 'Content-Type': 'text/plain' },
+            timeout: timeout,
+            onload: (res) => {
+                try {
+                    const json = JSON.parse(res.responseText);
+                    if (json.status === 'success') {
+                        resolve(options.onSuccess ? options.onSuccess(json) : json.body);
+                    } else {
+                        if (options.onError) options.onError(json.body);
+                        if (options.rejectOnError) reject(new Error(json.body || "GAS Request Failed"));
+                        else resolve(options.defaultValue);
+                    }
+                } catch (e) {
+                    if (options.onParseError) options.onParseError(res.responseText, e);
+                    if (options.rejectOnError) reject(new Error("GAS 응답 오류"));
+                    else resolve(options.defaultValue);
+                }
+            },
+            onerror: (err) => {
+                if (options.onNetworkError) options.onNetworkError(err);
+                if (options.rejectOnError) reject(new Error("네트워크 오류"));
+                else resolve(options.defaultValue);
+            },
+            ontimeout: () => {
+                if (options.onTimeout) options.onTimeout();
+                if (options.rejectOnError) reject(new Error("타임아웃"));
+                else resolve(options.defaultValue);
+            }
+        });
+    });
 }
 
 /**
@@ -43,43 +85,27 @@ export async function uploadToGAS(blob, folderName, fileName, options = {}) {
  * 에피소드 c30치 다운로드 완료 후 한 번만 호출하세요.
  */
 export async function refreshCacheAfterUpload(folderName, category = 'Unknown', metadata = {}) {
-    const config = getConfig();
-    if (!config.gasUrl || !config.folderId) return;
-    const logger = LogBox.getInstance();
     console.log(`[Cache] 업로드 완료 → Drive 캐시 갱신 요청 (${folderName})`);
-    return new Promise((resolve) => {
-        GM_xmlhttpRequest({
-            method: 'POST',
-            url: config.gasUrl,
-            data: JSON.stringify({
-                type: 'view_update_cache',
-                folderId: config.folderId,
-                folderName,
-                category,
-                metadata, // [v1.7.0] Pass full metadata
-                apiKey: config.apiKey,
-                protocolVersion: 3,
-            }),
-            headers: { 'Content-Type': 'text/plain' },
-            timeout: 30000,
-            onload: (res) => {
-                try {
-                    const json = JSON.parse(res.responseText);
-                    console.log('[Cache] 갱신 요청 완료. 병합 파편 생성됨:', json.body);
-                } catch (e) {
-                    console.log('[Cache] 갱신 완료 응답 수신 (상세없음)');
-                }
-                resolve();
-            },
-            onerror: () => {
-                logger.warn(`캐시 갱신 네트워크 오류 (${folderName}) — 다음 실행 시 자동 복구됨`, 'GAS:Cache');
-                resolve();
-            },
-            ontimeout: () => {
-                logger.warn(`캐시 갱신 타임아웃 30초 (${folderName}) — 스킬폭 포함 가능`, 'GAS:Cache');
-                resolve();
-            },
-        });
+    return gasRequest({
+        type: 'view_update_cache',
+        folderName,
+        category,
+        metadata
+    }, {
+        timeout: 30000,
+        defaultValue: undefined,
+        onSuccess: (json) => {
+            console.log('[Cache] 갱신 요청 완료. 병합 파편 생성됨:', json.body);
+        },
+        onParseError: () => {
+            console.log('[Cache] 갱신 완료 응답 수신 (상세없음)');
+        },
+        onNetworkError: () => {
+            LogBox.getInstance().warn(`캐시 갱신 네트워크 오류 (${folderName}) — 다음 실행 시 자동 복구됨`, 'GAS:Cache');
+        },
+        onTimeout: () => {
+            LogBox.getInstance().warn(`캐시 갱신 타임아웃 30초 (${folderName}) — 스킬폭 포함 가능`, 'GAS:Cache');
+        }
     });
 }
 
@@ -209,210 +235,105 @@ async function uploadViaGASRelay(blob, folderName, fileName, options = {}) {
     console.log(`[GAS] 업로드 완료!`);
 }
 
-/**
- * Fetch download history from GAS
- * @param {string} seriesTitle
- * @param {string} category 
- * @returns {Promise<string[]>} List of completed episode IDs
- */
 export async function fetchHistory(seriesTitle, category = 'Webtoon') {
     if (!isConfigValid()) return [];
-    const config = getConfig();
-    const logger = LogBox.getInstance();
-
     console.log(`[GAS] 다운로드 기록 조회 중... (${seriesTitle})`);
-
-    return new Promise((resolve) => {
-        GM_xmlhttpRequest({
-            method: "POST",
-            url: config.gasUrl,
-            data: JSON.stringify({
-                type: "check_history",
-                folderId: config.folderId,
-                folderName: seriesTitle,
-                category: category,
-                apiKey: config.apiKey,
-                protocolVersion: 3
-            }),
-            headers: { "Content-Type": "text/plain" },
-            timeout: 30000,
-            onload: (res) => {
-                try {
-                    const json = JSON.parse(res.responseText);
-                    if (json.status === 'success') {
-                        resolve(Array.isArray(json.body) ? json.body : []);
-                    } else {
-                        logger.warn(`다운로드 기록 조회 실패: ${json.body}`, 'GAS:History');
-                        resolve([]);
-                    }
-                } catch (e) {
-                    logger.warn(`다운로드 기록 응답 파싱 실패`, 'GAS:History');
-                    resolve([]);
-                }
-            },
-            onerror: () => {
-                logger.warn(`다운로드 기록 조회 네트워크 오류`, 'GAS:History');
-                resolve([]);
-            },
-            ontimeout: () => {
-                logger.warn(`다운로드 기록 조회 타임아웃 (30초)`, 'GAS:History');
-                resolve([]);
-            }
-        });
+    return gasRequest({
+        type: "check_history",
+        folderName: seriesTitle,
+        category: category
+    }, {
+        timeout: 30000,
+        defaultValue: [],
+        onSuccess: (json) => Array.isArray(json.body) ? json.body : [],
+        onError: (errBody) => {
+            LogBox.getInstance().warn(`다운로드 기록 조회 실패: ${errBody}`, 'GAS:History');
+        },
+        onParseError: () => {
+            LogBox.getInstance().warn(`다운로드 기록 응답 파싱 실패`, 'GAS:History');
+        },
+        onNetworkError: () => {
+            LogBox.getInstance().warn(`다운로드 기록 조회 네트워크 오류`, 'GAS:History');
+        },
+        onTimeout: () => {
+            LogBox.getInstance().warn(`다운로드 기록 조회 타임아웃 (30초)`, 'GAS:History');
+        }
     });
 }
 
-/**
- * [v1.6.0] Fetch cached episode list directly using cacheFileId
- * @param {string} cacheFileId 
- * @returns {Promise<Array>} List of cached episodes
- */
 export async function getBooksByCacheId(cacheFileId) {
     if (!isConfigValid()) return [];
-    const config = getConfig();
-    const logger = LogBox.getInstance();
-
     console.log(`[GAS] 캐시 파일 직행 조회 중... (${cacheFileId})`);
-
-    return new Promise((resolve) => {
-        GM_xmlhttpRequest({
-            method: "POST",
-            url: config.gasUrl,
-            data: JSON.stringify({
-                type: "view_get_books_by_cache",
-                folderId: config.folderId,
-                cacheFileId: cacheFileId,
-                apiKey: config.apiKey,
-                protocolVersion: 3
-            }),
-            headers: { "Content-Type": "text/plain" },
-            timeout: 10000,
-            onload: (res) => {
-                try {
-                    const json = JSON.parse(res.responseText);
-                    if (json.status === 'success') {
-                        resolve(Array.isArray(json.body) ? json.body : []);
-                    } else {
-                        logger.warn(`Fast Path 캐시 직행 조회 실패: ${json.body}`, 'GAS:FastPath');
-                        resolve([]);
-                    }
-                } catch (e) {
-                    logger.warn(`Fast Path 캐시 응답 파싱 실패`, 'GAS:FastPath');
-                    resolve([]);
-                }
-            },
-            onerror: () => {
-                logger.warn(`Fast Path 캐시 네트워크 오류`, 'GAS:FastPath');
-                resolve([]);
-            },
-            ontimeout: () => {
-                logger.warn(`Fast Path 캐시 조회 타임아웃 (10초)`, 'GAS:FastPath');
-                resolve([]);
-            }
-        });
+    return gasRequest({
+        type: "view_get_books_by_cache",
+        cacheFileId: cacheFileId
+    }, {
+        timeout: 10000,
+        defaultValue: [],
+        onSuccess: (json) => Array.isArray(json.body) ? json.body : [],
+        onError: (errBody) => {
+            LogBox.getInstance().warn(`Fast Path 캐시 직행 조회 실패: ${errBody}`, 'GAS:FastPath');
+        },
+        onParseError: () => {
+            LogBox.getInstance().warn(`Fast Path 캐시 응답 파싱 실패`, 'GAS:FastPath');
+        },
+        onNetworkError: () => {
+            LogBox.getInstance().warn(`Fast Path 캐시 네트워크 오류`, 'GAS:FastPath');
+        },
+        onTimeout: () => {
+            LogBox.getInstance().warn(`Fast Path 캐시 조회 타임아웃 (10초)`, 'GAS:FastPath');
+        }
     });
 }
 
-/**
- * [v1.6.0] Initialize an update upload session via GAS using fileId (Fast Path)
- * @param {string} fileId 
- * @param {string} fileName 
- */
 export async function initUpdateUploadViaGASRelay(fileId, fileName) {
-    const config = getConfig();
     if (!isConfigValid()) throw new Error("GAS 설정이 누락되었습니다.");
-
     console.log(`[GAS] 빠른 덮어쓰기(PUT) 세션 초기화 중... (${fileName} -> ${fileId})`);
-
-    return new Promise((resolve, reject) => {
-        GM_xmlhttpRequest({
-            method: "POST", 
-            url: config.gasUrl,
-            data: JSON.stringify({ 
-                type: "init_update", 
-                folderId: config.folderId,
-                fileId: fileId,
-                fileName: fileName,
-                apiKey: config.apiKey,
-                protocolVersion: 3
-            }),
-            headers: { "Content-Type": "text/plain" },
-            timeout: 30000,
-            onload: (res) => {
-                try {
-                    const json = JSON.parse(res.responseText);
-                    if (json.status === 'success') { 
-                        resolve((typeof json.body === 'object') ? json.body.uploadUrl : json.body);
-                    } else {
-                        LogBox.getInstance().critical(`Fast Path PUT 세션 초기화 실패: ${json.body || 'Init Update failed'} (${fileName})`, 'GAS:FastPath');
-                        reject(new Error(json.body || "Init Update failed"));
-                    }
-                } catch (e) { 
-                    LogBox.getInstance().critical(`Fast Path PUT 레스폰스 파싱 실패 (${fileName})`, 'GAS:FastPath');
-                    reject(new Error("GAS 응답 오류(Init Update): " + res.responseText)); 
-                }
-            },
-            onerror: (e) => {
-                LogBox.getInstance().critical(`Fast Path PUT 네트워크 오류 (${fileName})`, 'GAS:FastPath');
-                reject(new Error("네트워크 오류(Init Update)"));
-            },
-            ontimeout: () => {
-                LogBox.getInstance().critical(`Fast Path PUT 타임아웃 30초 (${fileName})`, 'GAS:FastPath');
-                reject(new Error("[GAS] 덧쓰기 세션 초기화 타임아웃 (30초)"));
-            }
-        });
+    return gasRequest({
+        type: "init_update",
+        fileId: fileId,
+        fileName: fileName
+    }, {
+        timeout: 30000,
+        rejectOnConfigError: true,
+        rejectOnError: true,
+        onSuccess: (json) => (typeof json.body === 'object') ? json.body.uploadUrl : json.body,
+        onError: (errBody) => {
+            LogBox.getInstance().critical(`Fast Path PUT 세션 초기화 실패: ${errBody} (${fileName})`, 'GAS:FastPath');
+        },
+        onParseError: () => {
+            LogBox.getInstance().critical(`Fast Path PUT 레스폰스 파싱 실패 (${fileName})`, 'GAS:FastPath');
+        },
+        onNetworkError: () => {
+            LogBox.getInstance().critical(`Fast Path PUT 네트워크 오류 (${fileName})`, 'GAS:FastPath');
+        },
+        onTimeout: () => {
+            LogBox.getInstance().critical(`Fast Path PUT 타임아웃 30초 (${fileName})`, 'GAS:FastPath');
+        }
     });
 }
 
-/**
- * [v1.6.1] Fetch Series-specific Merge Index Fragment
- * Retrieves the temporary cacheFileId generated after recent uploads without needing a full master_index rebuild.
- * @param {string} sourceId The `12345` ID of the series
- * @returns {Promise<Object>} { found: boolean, data: { cacheFileId: string, ... } }
- */
 export async function getMergeIndexFragment(sourceId) {
-    const config = getConfig();
-    if (!config.gasUrl || !config.folderId) return { found: false, data: null };
-    const logger = LogBox.getInstance();
-
+    if (!isConfigValid()) return { found: false, data: null };
     console.log(`[GAS] 병합 인덱스 파편 조회 중... (Source ID: ${sourceId})`);
-
-    return new Promise((resolve) => {
-        GM_xmlhttpRequest({
-            method: "POST",
-            url: config.gasUrl,
-            data: JSON.stringify({
-                type: "view_get_merge_index",
-                folderId: config.folderId,
-                sourceId: sourceId,
-                apiKey: config.apiKey,
-                protocolVersion: 3
-            }),
-            headers: { "Content-Type": "text/plain" },
-            timeout: 10000,
-            onload: (res) => {
-                try {
-                    const json = JSON.parse(res.responseText);
-                    if (json.status === 'success') {
-                        resolve(json.body);
-                    } else {
-                        logger.warn(`MergeIndex 파편 조회 실패: ${json.body} (ID: ${sourceId})`, 'GAS:FastPath');
-                        resolve({ found: false, data: null });
-                    }
-                } catch (e) {
-                    logger.warn(`MergeIndex 파편 응답 파싱 실패`, 'GAS:FastPath');
-                    resolve({ found: false, data: null });
-                }
-            },
-            onerror: () => {
-                logger.warn(`MergeIndex 파편 조회 네트워크 오류`, 'GAS:FastPath');
-                resolve({ found: false, data: null });
-            },
-            ontimeout: () => {
-                logger.warn(`MergeIndex 파편 조회 타임아웃 (10초)`, 'GAS:FastPath');
-                resolve({ found: false, data: null });
-            }
-        });
+    return gasRequest({
+        type: "view_get_merge_index",
+        sourceId: sourceId
+    }, {
+        timeout: 10000,
+        defaultValue: { found: false, data: null },
+        onError: (errBody) => {
+            LogBox.getInstance().warn(`MergeIndex 파편 조회 실패: ${errBody} (ID: ${sourceId})`, 'GAS:FastPath');
+        },
+        onParseError: () => {
+            LogBox.getInstance().warn(`MergeIndex 파편 응답 파싱 실패`, 'GAS:FastPath');
+        },
+        onNetworkError: () => {
+            LogBox.getInstance().warn(`MergeIndex 파편 조회 네트워크 오류`, 'GAS:FastPath');
+        },
+        onTimeout: () => {
+            LogBox.getInstance().warn(`MergeIndex 파편 조회 타임아웃 (10초)`, 'GAS:FastPath');
+        }
     });
 }
 

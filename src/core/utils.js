@@ -1,6 +1,28 @@
 import { uploadToGAS } from './gas.js';
 import { LogBox, Notifier } from './ui.js';
 
+export function arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    const chunk_size = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk_size) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk_size));
+    }
+    return window.btoa(binary);
+}
+
+export function extractEpisodeNum(filename) {
+    if (!filename) return null;
+    const kavitaMatch = filename.match(/[- ]c(h)?(\d+)/i);
+    const legacyMatch = filename.match(/(\d+)화/);
+    const startNumMatch = filename.match(/^(\d+)/);
+
+    if (kavitaMatch) return kavitaMatch[2];
+    if (legacyMatch) return legacyMatch[1];
+    if (startNumMatch) return startNumMatch[1];
+    return null;
+}
+
 export async function blobToArrayBuffer(blob) {
     if (blob.arrayBuffer) {
         return await blob.arrayBuffer();

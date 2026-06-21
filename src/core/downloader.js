@@ -1,4 +1,4 @@
-import { sleep, waitIframeLoad, saveFile, getCommonPrefix, scrollToLoad, fetchBlobWithXHR } from './utils.js';
+import { sleep, waitIframeLoad, saveFile, getCommonPrefix, scrollToLoad, fetchBlobWithXHR, arrayBufferToBase64 } from './utils.js';
 import { extractEpisodeData } from './extractor.js';
 import { ParserFactory } from './parsers/ParserFactory.js';
 import { detectSite } from './detector.js';
@@ -13,6 +13,43 @@ import { fetchHistory, refreshCacheAfterUpload, getBooksByCacheId, initUpdateUpl
 import { fetchHistoryDirect, checkSingleHistoryDirect, getOAuthToken, getOrCreateFolder } from './network.js';
 import { fetchNovelText, fetchComicImages, closeActiveWorker, initBatchWorkerController } from './worker-controller.js';
 import { addEpisodesToQueue, initQueueScheduler, activeWorkers, WORKER_STAGE, updateQueueItem, getQueue, removeQueueItem, getQueueItemId, clearQueue, stopAllWorkers } from './queue.js';
+
+async function shouldSkipEpisode({
+    numStr,
+    destination,
+    isSingleVolume,
+    uploadedHistorySet,
+    historyCheckTimeoutFlag,
+    historyFolderId,
+    logOnSkip = false,
+    episodeTitle = ''
+}) {
+    if (isSingleVolume) return false;
+    if (destination !== 'drive' && destination !== 'drive_kavita') return false;
+
+    const numPlain = parseInt(numStr).toString();
+    if (uploadedHistorySet.size > 0 && (uploadedHistorySet.has(numStr) || uploadedHistorySet.has(numPlain))) {
+        if (logOnSkip) {
+            LogBox.getInstance().log(`⏭️ 건너뜀 (이미 업로드됨): ${episodeTitle}`);
+        }
+        return true;
+    }
+    
+    if (historyCheckTimeoutFlag && historyFolderId) {
+        if (logOnSkip) {
+            LogBox.getInstance().log(`🔍 [페일세이프] 타임아웃 2차 단일 로컬/원격 검사 중: ${episodeTitle}`);
+        }
+        const isUploaded = await checkSingleHistoryDirect(historyFolderId, numStr);
+        if (isUploaded) {
+            if (logOnSkip) {
+                LogBox.getInstance().log(`⏭️ [페일세이프 재검사] 건너뜀 (이미 업로드됨): ${episodeTitle}`);
+            }
+            return true;
+        }
+    }
+    
+    return false;
+}
 
 export async function processItem(item, builder, siteInfo, iframe, parser, seriesTitle = "", targetDoc = null, rootFolder = "", destination = "local") {
     const { category } = siteInfo;
@@ -346,11 +383,6 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
         // [Fix] Append Range [Start-End] for Local Merged Files (folderInCbz / zipOfCbzs)
         // GAS Upload uses individual files so no range needed in folder name
         // [v1.6.0 Update] Batch range is handled during saving, not in rootFolder variable
-        if (buildingPolicy === 'zipOfCbzs') {
-            const startNum = parseInt(first.num);
-            const endNum = parseInt(last.num);
-            // We'll append batch info later
-        }
 
         // [v1.4.0] Upload Series Thumbnail (if uploading to Drive)
         if (destination === 'drive' || destination === 'drive_kavita') {
@@ -494,16 +526,15 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
             const numPlain = parseInt(numStr).toString();
             
             // 구글 드라이브 스킵 필터 (드라이브 전용)
-            if ((destination === 'drive' || destination === 'drive_kavita') && !currentIsSingleVolume) {
-                if (uploadedHistorySet.size > 0 && (uploadedHistorySet.has(numStr) || uploadedHistorySet.has(numPlain))) {
-                    continue;
-                }
-                
-                if (historyCheckTimeoutFlag && historyFolderId) {
-                    const isUploaded = await checkSingleHistoryDirect(historyFolderId, numStr);
-                    if (isUploaded) continue;
-                }
-            }
+            const isSkip = await shouldSkipEpisode({
+                numStr,
+                destination,
+                isSingleVolume: currentIsSingleVolume,
+                uploadedHistorySet,
+                historyCheckTimeoutFlag,
+                historyFolderId
+            });
+            if (isSkip) continue;
             
             pendingEpisodes.push({
                 title: item.title,
@@ -628,24 +659,18 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
 
             // [v1.5.0 Smart Skip] Skip already-uploaded episodes (Drive policy only)
             // [v1.7.1] Bypass skipping in Single Volume mode (we need all chapters)
-            if (!isSingleVolume && (destination === 'drive' || destination === 'drive_kavita')) {
-                const numStr = item.num ? item.num.toString() : '';
-                const numPlain = parseInt(numStr).toString();
-                if (uploadedHistorySet.size > 0 && (uploadedHistorySet.has(numStr) || uploadedHistorySet.has(numPlain))) {
-                    logger.log(`⏭️ 건너뜀 (이미 업로드됨): ${item.title}`);
-                    continue;
-                }
-                
-                // [v1.7.4] 페일세이프: 타임아웃 발생 시 개별 단위 핀셋 조회 수행
-                if (historyCheckTimeoutFlag && historyFolderId) {
-                    logger.log(`🔍 [페일세이프] 타임아웃 2차 단일 로컬/원격 검사 중: ${item.title}`);
-                    const isUploaded = await checkSingleHistoryDirect(historyFolderId, numStr);
-                    if (isUploaded) {
-                        logger.log(`⏭️ [페일세이프 재검사] 건너뜀 (이미 업로드됨): ${item.title}`);
-                        continue;
-                    }
-                }
-            }
+            const numStr = item.num ? item.num.toString() : '';
+            const isSkip = await shouldSkipEpisode({
+                numStr,
+                destination,
+                isSingleVolume,
+                uploadedHistorySet,
+                historyCheckTimeoutFlag,
+                historyFolderId,
+                logOnSkip: true,
+                episodeTitle: item.title
+            });
+            if (isSkip) continue;
 
             // Decision based on Policy
             let currentBuilder = null;
@@ -813,15 +838,7 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
                             while (start < totalSize) {
                                 const end = Math.min(start + CHUNK_SIZE, totalSize);
                                 const chunkBuffer = buffer.slice(start, end);
-                                const bytes = new Uint8Array(chunkBuffer);
-                                
-                                // High-speed Base64 encode
-                                let binary = "";
-                                const chunk_size = 0x8000; // 32KB
-                                for (let j = 0; j < bytes.length; j += chunk_size) {
-                                    binary += String.fromCharCode.apply(null, bytes.subarray(j, j + chunk_size));
-                                }
-                                const chunkBase64 = window.btoa(binary);
+                                const chunkBase64 = arrayBufferToBase64(chunkBuffer);
 
                                 await new Promise((res, rej) => {
                                     GM_xmlhttpRequest({
@@ -950,11 +967,6 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
 
         // Cleanup
         iframe.remove();
-
-        // Finalize Build (Batching logic already handles zipOfCbzs during loop)
-        if (buildingPolicy === 'folderInCbz') {
-            // Deprecated path, handled by zipOfCbzs transition
-        }
 
         // [v1.5.5] 배치 완료 후 Drive 캐시 단일 갱신 (에피소드마다 호출하지 않음)
         if (destination === 'drive' || destination === 'drive_kavita') {

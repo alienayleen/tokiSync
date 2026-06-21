@@ -739,7 +739,7 @@ export class MenuModal {
                         <label class="toki-label">파일 관리</label>
                         <div class="toki-btn-group-stack">
                             <button class="toki-btn-action toki-btn-secondary" id="toki-btn-migration">
-                                📂 기존 파일명 표준화 (Migration)
+                                📂 Kavita 구조 최적화
                             </button>
                             <button class="toki-btn-action toki-btn-secondary" id="toki-btn-thumb-optim">
                                 🔄 썸네일 통합 및 캐시 최적화
@@ -1066,7 +1066,7 @@ export class MenuModal {
         const migrationBtn = doc.getElementById('toki-btn-migration');
         if (migrationBtn) {
             migrationBtn.onclick = () => {
-                if (this.handlers.migrateFilenames) this.handlers.migrateFilenames();
+                if (this.handlers.migrateKavita) this.handlers.migrateKavita();
             };
         }
 

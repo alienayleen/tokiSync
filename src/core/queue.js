@@ -3,7 +3,7 @@
  * 영속성 디스크 큐 및 이벤트 기반 세마포어 스케줄러 엔진
  */
 
-import { LogBox } from './ui.js';
+import { EventBus, EVT } from './EventBus.js';
 
 export const WORKER_STAGE = {
   INIT: 'STAGE_INIT',             // 초기화 및 Handshake 대기 중
@@ -46,9 +46,7 @@ const saveRawQueue = (queue) => {
     } else if (typeof localStorage !== 'undefined') {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
     }
-    try {
-      LogBox.getInstance().updateProgressUI();
-    } catch (uiErr) {}
+    EventBus.emit(EVT.UPDATE_PROGRESS);
   } catch (e) {
     console.error('[TokiSync Queue] Failed to save queue to storage:', e);
   }
