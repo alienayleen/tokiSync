@@ -247,6 +247,7 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
 
     const { category, matchedRule } = siteInfo;
     const siteName = matchedRule?.name || "TokiSync Parser";
+    logger.info(`적용 중인 파서 규칙: [${siteName}] (${matchedRule?.id || 'unknown'})`);
     const isNovel = (category === 'Novel' || category === 'novel');
 
     try {
@@ -424,7 +425,7 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
                     logger.log('☁️ 드라이브 업로드 기록 및 용량 확인 중 (Smart Skip)...');
                     const cleanFolder = rootFolder.replace(/^\[\d+\]\s*/, '');
                     const targetFolder = destination === 'drive_kavita' ? cleanFolder : rootFolder;
-                    const histResult = await fetchHistoryDirect(targetFolder, category);
+                    const histResult = await fetchHistoryDirect(targetFolder);
                     
                     if (histResult.success) {
                         historyFolderId = histResult.folderId;
@@ -566,7 +567,7 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
                 logger.log(`📁 [Drive] 신규 작품 폴더 선제 생성 중: ${targetFolder}`);
                 try {
                     const token = await getOAuthToken();
-                    activeFolderId = await getOrCreateFolder(targetFolder, getConfig().folderId, token, category);
+                    activeFolderId = await getOrCreateFolder(targetFolder, getConfig().folderId, token);
                     logger.success(`📁 [Drive] 신규 작품 폴더 선제 생성 완료 -> ID: ${activeFolderId}`);
                 } catch (folderErr) {
                     logger.error(`❌ [Drive] 폴더 선제 생성 중 에러 발생: ${folderErr.message}`);

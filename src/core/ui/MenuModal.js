@@ -3,9 +3,7 @@
  * Handles the main dashboard HTML and user interaction events.
  */
 
-import { getQueuePaused, setQueuePaused, stopAllWorkers, runSchedulerOnce, removeQueueItem, clearQueue, removeCompletedItems } from '../queue.js';
 import { EventBus, EVT } from '../EventBus.js';
-import { TreeRuleEditor } from './TreeRuleEditor.js';
 import { FormRuleEditor } from './FormRuleEditor.js';
 
 export class MenuModal {
@@ -243,9 +241,6 @@ export class MenuModal {
                             <button class="toki-btn-action toki-btn-secondary" id="toki-btn-test-extract">
                                 🧪 현재 페이지 이미지/소설 추출 테스트
                             </button>
-                            <button class="toki-btn-action toki-btn-indigo" id="toki-btn-tree-editor">
-                                🧩 파싱 규칙 편집기 (Tree Editor)
-                            </button>
                             <button class="toki-btn-action toki-btn-lavender" id="toki-btn-form-editor">
                                 📝 간편 규칙 편집기 (Form Editor)
                             </button>
@@ -367,12 +362,7 @@ export class MenuModal {
         const inlinePause = doc.getElementById('toki-inline-pause');
         if (inlinePause) {
             inlinePause.onclick = () => {
-                const isPaused = getQueuePaused();
-                setQueuePaused(!isPaused);
-                EventBus.emit(EVT.UPDATE_PROGRESS);
-                if (isPaused) {
-                    runSchedulerOnce();
-                }
+                EventBus.emit(EVT.QUEUE_TOGGLE_PAUSE);
             };
         }
 
@@ -380,8 +370,7 @@ export class MenuModal {
         if (inlineStop) {
             inlineStop.onclick = () => {
                 if (popupWindow.confirm('⚠️ 모든 배치 작업을 중단하시겠습니까?')) {
-                    stopAllWorkers();
-                    EventBus.emit(EVT.UPDATE_PROGRESS);
+                    EventBus.emit(EVT.QUEUE_STOP_ALL);
                 }
             };
         }
@@ -473,9 +462,7 @@ export class MenuModal {
                 if (deleteBtn) {
                     const itemId = deleteBtn.getAttribute('data-id');
                     if (popupWindow.confirm('선택한 에피소드를 대기열에서 제거하시겠습니까?')) {
-                        removeQueueItem(itemId);
-                        EventBus.emit(EVT.UPDATE_PROGRESS);
-                        runSchedulerOnce();
+                        EventBus.emit(EVT.QUEUE_REMOVE_ITEM, { id: itemId });
                     }
                     return;
                 }
@@ -484,9 +471,8 @@ export class MenuModal {
                 const resetBtn = e.target.closest('#toki-btn-queue-reset');
                 if (resetBtn) {
                     if (popupWindow.confirm('🗑️ 대기열의 모든 에피소드를 즉시 완전히 삭제하시겠습니까?\n(진행 중인 작업도 모두 강제 중단됩니다)')) {
-                        stopAllWorkers();
-                        clearQueue();
-                        EventBus.emit(EVT.UPDATE_PROGRESS);
+                        EventBus.emit(EVT.QUEUE_STOP_ALL);
+                        EventBus.emit(EVT.QUEUE_CLEAR);
                     }
                     return;
                 }
@@ -495,9 +481,7 @@ export class MenuModal {
                 const clearBtn = e.target.closest('#toki-btn-queue-clear');
                 if (clearBtn) {
                     if (popupWindow.confirm('🧹 완료된 항목들을 정리하시겠습니까?')) {
-                        removeCompletedItems();
-                        EventBus.emit(EVT.UPDATE_PROGRESS);
-                        runSchedulerOnce();
+                        EventBus.emit(EVT.QUEUE_CLEAR);
                     }
                     return;
                 }
@@ -505,12 +489,7 @@ export class MenuModal {
                 // 9-4. 일시 정지 ⏸️
                 const pauseBtn = e.target.closest('#toki-btn-queue-pause');
                 if (pauseBtn) {
-                    const isPaused = getQueuePaused();
-                    setQueuePaused(!isPaused);
-                    EventBus.emit(EVT.UPDATE_PROGRESS);
-                    if (isPaused) {
-                        runSchedulerOnce();
-                    }
+                    EventBus.emit(EVT.QUEUE_TOGGLE_PAUSE);
                     return;
                 }
 
@@ -518,8 +497,7 @@ export class MenuModal {
                 const stopBtn = e.target.closest('#toki-btn-queue-stop');
                 if (stopBtn) {
                     if (popupWindow.confirm('⚠️ 모든 배치 작업을 중단하시겠습니까?')) {
-                        stopAllWorkers();
-                        EventBus.emit(EVT.UPDATE_PROGRESS);
+                        EventBus.emit(EVT.QUEUE_STOP_ALL);
                     }
                     return;
                 }
@@ -564,14 +542,6 @@ export class MenuModal {
         if (thumbBtn) {
             thumbBtn.onclick = () => {
                 if (this.handlers.migrateThumbnails) this.handlers.migrateThumbnails();
-            };
-        }
-
-        const treeEditorBtn = doc.getElementById('toki-btn-tree-editor');
-        if (treeEditorBtn) {
-            treeEditorBtn.onclick = () => {
-                const editor = new TreeRuleEditor();
-                editor.show(doc);
             };
         }
 

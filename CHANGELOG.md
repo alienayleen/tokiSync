@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.26.0] - 2026-06-29
+
+### ✨ EventBus 아키텍처 결합 완화, Kavita 연동 및 규칙 구독/인스펙터 도입
+- **EventBus 기반 UI/Core 모듈 분리**: UI(`FormRuleEditor` 등)와 Core/Parser 모듈 간의 Direct Import 강결합을 해소하기 위해 `EventBus` 이벤트를 신설하고, 중계 역할을 담당하는 전역 리스너 `listeners.js`를 구축하였습니다.
+- **Kavita 폴더 구조 호환 변환기**: 구글 드라이브 라이브러리를 Kavita 표준 폴더 구조에 맞추어 스캔 및 복구할 수 있는 백엔드 API(`View_KavitaService.gs`) 및 프론트엔드 연동 헬퍼(`useKavita.js`)를 통합 안착시켰습니다.
+- **규칙 편집기(FormRuleEditor) 폼 리뉴얼**: 난해했던 트리뷰 에디터(`TreeRuleEditor.js`)를 전격 폐기하고, 더욱 간결하며 직관적인 폼 편집 인터페이스(`FormRuleEditor.js`) 및 스타일링을 전면 적용하였습니다.
+- **크롬 DevTools 스타일 DOM 인스펙터**: 수집 규칙 작성 시 직접 요소를 클릭하여 대상 CSS 셀렉터를 즉시 식별할 수 있는 시각적 검사 도구 `DomInspector.js`를 개발 및 통합했습니다.
+- **원격 규칙 구독 관리자**: 규칙의 외부 갱신을 위해 구독 설정과 동기화를 지원하는 `SubscriptionManager.js` 모듈을 도입하였습니다.
+- **GAS 디스패처 및 빌드 배포 체인 최적화**: 신규 API 호출 경로를 `View_Dispatcher.gs`에 등록하고 Webpack 및 `build_bundle.cjs` 번들러 빌드 설정을 보강했습니다.
+
 ## [v1.25.0] - 2026-06-17
 
 ### ✨ 1.5 배포 전 파서 안정화 및 중복 기동 방어 통합 릴리즈

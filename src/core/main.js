@@ -1,13 +1,14 @@
 import { tokiDownload, processItem } from './downloader.js';
 import { detectSite } from './detector.js'; 
 import { getConfig, setConfig, isConfigValid } from './config.js';
-import { LogBox, MenuModal, TreeRuleEditor } from './ui/index.js';
+import { LogBox, MenuModal } from './ui/index.js';
 import { extractEpisodeData } from './extractor.js';
 import { EpubBuilder } from './epub.js';
 import { CbzBuilder } from './cbz.js';
 import { TxtBuilder } from './txt.js';
 import { fetchHistory } from './gas.js';
 import { ParserFactory } from './parsers/ParserFactory.js';
+import { SubscriptionManager } from './parsers/SubscriptionManager.js';
 import { getOAuthToken, fetchHistoryDirect } from './network.js';
 
 import { getCommonPrefix, blobToArrayBuffer, saveFile } from './utils.js';
@@ -232,7 +233,7 @@ export async function main() {
             const parser = await ParserFactory.getParser();
             if (!parser) return { min: 1, max: 100 };
             
-            const list = parser.getListItems();
+            const list = await parser.getListItems();
             if (list.length > 0) {
                 const first = parser.parseListItem(list[0]);
                 const last = parser.parseListItem(list[list.length - 1]);
@@ -423,6 +424,9 @@ export async function main() {
     // Initial load
     console.log('[TokiSync] Starting history sync...');
     syncHistory();
+
+    // Background subscription check (silent)
+    SubscriptionManager.checkOnce();
 
     // Cross-tab sync listener
     document.addEventListener("visibilitychange", () => {

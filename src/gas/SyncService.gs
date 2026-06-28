@@ -6,11 +6,10 @@
 // 기능: 다운로드 기록 확인 (폴더/파일 스캔)
 function checkDownloadHistory(data, rootFolderId) {
   Debug.log(`🚀 checkDownloadHistory Start`);
-  // Use Helper with Category support (Create=false)
   const folderId = getOrCreateSeriesFolder(
     rootFolderId,
     data.folderName,
-    data.category,
+    null,
     false,
   );
 
@@ -66,11 +65,10 @@ function checkDownloadHistory(data, rootFolderId) {
 
 // 기능: 작품 정보(info.json) 저장
 function saveSeriesInfo(data, rootFolderId) {
-  // Use Helper with Category support (Create=true)
   const folderId = getOrCreateSeriesFolder(
     rootFolderId,
     data.folderName,
-    data.category,
+    null,
     true,
   );
 

@@ -18,6 +18,7 @@ export const CFG_PARSER_RULES = "TOKI_PARSER_RULES";
 export const CFG_SCAN_SPEED = "TOKI_SCAN_SPEED";
 export const CFG_LOCAL_NAME_TEMPLATE = "TOKI_LOCAL_NAME_TEMPLATE";
 export const CFG_LOG_LEVEL = "TOKI_LOG_LEVEL";
+export const CFG_RULE_SUBSCRIPTIONS = "TOKI_RULE_SUBSCRIPTIONS";
 
 const BACKUP_KEY = "tokisync_config_backup";
 

@@ -32,4 +32,12 @@ export class ParserFactory {
 
         return null;
     }
+
+    /**
+     * Clear the cached parser instance to force reload rules.
+     */
+    static clearCache() {
+        this.#instance = null;
+        console.log('[ParserFactory] Parser cache cleared.');
+    }
 }

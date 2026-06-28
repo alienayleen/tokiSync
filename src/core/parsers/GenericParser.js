@@ -25,7 +25,9 @@ export class GenericParser extends BaseParser {
         const attr = typeof config === 'object' ? config.attr : null;
         const regexStr = typeof config === 'object' ? config.regex : null;
 
-        const el = root.querySelector(selector);
+        const el = selector
+            ? (root.matches?.(selector) ? root : root.querySelector(selector))
+            : root;
         if (!el) return null;
 
         let val = null;
@@ -133,7 +135,14 @@ export class GenericParser extends BaseParser {
 
     async getListItems() {
         const listCfg = this.rule.list || {};
-        let container = document.querySelector(listCfg.container);
+        
+        // [v1.25.1] 스마트 컨테이너 검출: 동일한 셀렉터의 컨테이너가 여러 개 있을 때
+        // 실제 회차 아이템(listCfg.item)을 하나 이상 가지고 있는 첫 번째 유효 컨테이너를 탐색합니다.
+        let container = null;
+        const containers = Array.from(document.querySelectorAll(listCfg.container));
+        if (containers.length > 0) {
+            container = containers.find(c => c.querySelectorAll(listCfg.item).length > 0) || containers[0];
+        }
         
         // [v1.8.1] 동적 로딩(Next.js 등) 대응: 컨테이너가 나타날 때까지 대기
         if (!container) {
@@ -155,7 +164,19 @@ export class GenericParser extends BaseParser {
 
     parseListItem(el) {
         const listCfg = this.rule.list || {};
-        const numRaw = this._extractValue(el, listCfg.num) || "0";
+        let numRaw = "0";
+        const numCfg = listCfg.num;
+        if (Array.isArray(numCfg)) {
+            for (const cfg of numCfg) {
+                const val = this._extractValue(el, cfg);
+                if (val) {
+                    numRaw = val;
+                    break;
+                }
+            }
+        } else {
+            numRaw = this._extractValue(el, numCfg) || "0";
+        }
         const subRaw = this._extractValue(el, listCfg.sub) || "";
         const title = this._extractValue(el, listCfg.title) || "Unknown";
         const src = this._extractValue(el, listCfg.link) || "";

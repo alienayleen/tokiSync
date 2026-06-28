@@ -100,7 +100,7 @@ export class LogBox {
 
         console.log('[TokiSync UI] 🛡️ 가상 팝업 대시보드 기동 (DOM 오염 차단)');
         
-        const width = 750;
+        const width = 1200;
         const height = 850;
         const screenWidth = window.screen ? window.screen.width : 1920;
         const screenHeight = window.screen ? window.screen.height : 1080;

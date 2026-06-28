@@ -174,19 +174,8 @@ function View_rebuildLibraryIndex(folderId, continuationToken) {
       });
     }
 
-    // 2. Plan Targets
-    state.targets.push({ id: folderId, category: "Uncategorized" }); // Root
-    const CATS = ["Webtoon", "Manga", "Novel"];
-    const folders = DriveAccessService.list(folderId, {
-      query: "mimeType = 'application/vnd.google-apps.folder'",
-      fields: "files(id, name)"
-    });
-    
-    folders.forEach(f => {
-      if (CATS.includes(f.name)) {
-        state.targets.push({ id: f.id, category: f.name });
-      }
-    });
+    // 2. Plan Targets — Root 단일 스캔 (Kavita 호환 플랫 구조)
+    state.targets.push({ id: folderId, category: "Uncategorized" });
   }
 
   let hasMore = false;
@@ -198,7 +187,7 @@ function View_rebuildLibraryIndex(folderId, continuationToken) {
     try {
       const response = DriveAccessService.listPaged(current.id, {
         pageToken: state.driveToken,
-        pageSize: 50, // 페이지별 처리량 조절
+        pageSize: 50,
         query: "mimeType = 'application/vnd.google-apps.folder'"
       });
 
@@ -211,16 +200,10 @@ function View_rebuildLibraryIndex(folderId, continuationToken) {
 
         const name = folder.name;
         if (name === INDEX_FILE_NAME || name === THUMB_FOLDER_NAME) continue;
-        if (
-          ["Webtoon", "Manga", "Novel"].includes(name) &&
-          current.category === "Uncategorized"
-        )
-          continue;
 
         try {
           const s = processSeriesFolder(
             folder,
-            current.category,
             state.thumbMap,
           );
           if (s) seriesList.push(s);
@@ -231,7 +214,6 @@ function View_rebuildLibraryIndex(folderId, continuationToken) {
 
       if (hasMore || response.nextPageToken) {
         state.driveToken = response.nextPageToken;
-        // 내뱉기 전에 루프 중간 종료 여부 판단 (hasMore는 시간 초과, nextPageToken은 순수 로드 완료)
         if (hasMore || response.nextPageToken) {
             return {
               status: "continue",
@@ -282,7 +264,7 @@ function View_saveIndex(folderId, list) {
  * - Look up `thumbMap` for cover ID
  * - ONLY scan for `info.json`
  */
-function processSeriesFolder(folder, categoryContext, thumbMap) {
+function processSeriesFolder(folder, thumbMap) {
   const folderId = folder.id;
   const folderName = folder.name;
 
@@ -290,7 +272,7 @@ function processSeriesFolder(folder, categoryContext, thumbMap) {
     status: "연재중",
     authors: [],
     summary: "",
-    category: categoryContext,
+    category: "Unknown",
   };
   let seriesName = folderName;
   let sourceId = "";
@@ -322,10 +304,10 @@ function processSeriesFolder(folder, categoryContext, thumbMap) {
         thumbnail: tid ? "" : (metaData.thumbnail || ""), 
         hasCover: !!tid,
         lastModified: metaData.lastUpdated || folder.modifiedTime,
-        category: metaData.category || categoryContext,
+            category: metaData.category || "Unknown",
         vendor: metaData.vendor || "",
         metadata: {
-            category: metaData.category || categoryContext,
+        category: metaData.category || "Unknown",
             status: normalizeStatus(metaData.status) || "연재중",
             authors: metaData.author ? [metaData.author] : [],
             summary: metaData.summary || "",
@@ -365,10 +347,7 @@ function processSeriesFolder(folder, categoryContext, thumbMap) {
       }
       if (parsed.file_count) booksCount = parsed.file_count;
 
-      if (
-        parsed.category &&
-        (!categoryContext || categoryContext === "Uncategorized")
-      ) {
+      if (parsed.category) {
         metadata.category = parsed.category;
       }
       if (parsed.status) metadata.status = normalizeStatus(parsed.status);

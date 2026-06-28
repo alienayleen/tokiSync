@@ -346,7 +346,8 @@ export function initBatchWorkerController() {
 
         // 1. 60초 이상 무반응인 워커 강제 타임아웃 회수
         queue.forEach(item => {
-            if (item.status === 'processing' && item.startedAt && (now - item.startedAt > 60000)) {
+            const lastActive = item.lastActivity || item.startedAt;
+            if (item.status === 'processing' && lastActive && (now - lastActive > 60000)) {
                 console.warn(`[WorkerController] ⚠️ [배치] 60초 수집 타임아웃 감지: ${item.id} (${item.episodeTitle})`);
                 const popupRef = activeWorkers.get(item.id);
                 try {

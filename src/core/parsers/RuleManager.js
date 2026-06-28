@@ -6,10 +6,15 @@ import { CFG_PARSER_RULES } from '../config.js';
  */
 export class RuleManager {
     // Built-in sample rules as fallback/templates (Offline Seeding)
+    static get _version() {
+        return typeof __SCRIPT_VERSION__ !== 'undefined' ? __SCRIPT_VERSION__ : '1.25.0';
+    }
+
     static #builtInRules = [
         {
             id: "toki_common",
             name: "토끼 계열 (뉴토끼/마나토끼) 통합 규칙",
+            _version: this._version,
             urlPattern: ".*(newtoki|manatoki|comic|booktoki).*",
             category: "Webtoon",
             meta: {
@@ -108,6 +113,8 @@ export class RuleManager {
      */
     static saveParserRules(rules) {
         if (typeof GM_setValue === 'undefined') return;
+        const version = this._version;
+        rules.forEach(rule => { if (rule && typeof rule === 'object' && !rule._version) rule._version = version; });
         GM_setValue(CFG_PARSER_RULES, JSON.stringify(rules, null, 2));
     }
 
@@ -149,10 +156,12 @@ export class RuleManager {
      */
     static bulkImport(newRules, mode = 'merge') {
         const current = this.getParserRules();
+        const version = this._version;
         let imported = 0, updated = 0, skipped = 0;
 
         newRules.forEach(rule => {
             if (!rule.id) { skipped++; return; }
+            if (!rule._version) rule._version = version;
             const idx = current.findIndex(r => r.id === rule.id);
             if (idx === -1) {
                 current.push(rule);

@@ -91,162 +91,52 @@ async function getToken() {
 }
 
 /**
- * Finds or creates a folder in Google Drive with category support
- * Mirrors GAS server's getOrCreateSeriesFolder logic:
- * 1. Check root for legacy folders
- * 2. Get/Create category folder (Webtoon/Novel/Manga)
- * 3. Get/Create series folder in category
- * 
- * @param {string} folderName - Series folder name (e.g. "[123] Title")
- * @param {string} parentId - Parent folder ID (root)
- * @param {string} token - OAuth token
- * @param {string} category - Category name ("Webtoon", "Novel", or "Manga")
- * @returns {Promise<string>} Series folder ID
+ * Finds or creates a series folder directly in the root. (Kavita 호환 플랫 구조)
+ * 카테고리(Webtoon/Novel/Manga) 폴더는 더 이상 생성하지 않습니다.
  */
-export async function getOrCreateFolder(folderName, parentId, token, category = 'Webtoon') {
-    // 1. Check for legacy folder in root (migration compatibility)
-    const legacySearchUrl = `https://www.googleapis.com/drive/v3/files?` +
-        `q=name='${encodeURIComponent(folderName)}' and '${parentId}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'` +
-        `&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`;
-    
-    const legacyResult = await new Promise((resolve, reject) => {
-        GM_xmlhttpRequest({
-            method: 'GET',
-            url: legacySearchUrl,
-            headers: { 'Authorization': `Bearer ${token}` },
-            timeout: 30000,
-            onload: (res) => {
-                try {
-                    resolve(JSON.parse(res.responseText));
-                } catch (e) {
-                    reject(e);
-                }
-            },
-            onerror: reject,
-            ontimeout: () => reject(new Error('[DirectUpload] 레거시 폴더 검색 타임아웃 (30초)'))
-        });
-    });
-    
-    if (legacyResult.files && legacyResult.files.length > 0) {
-        console.log(`[DirectUpload] ♻️ Found legacy folder in root: ${folderName}`);
-        return legacyResult.files[0].id;
-    }
-    
-    // 2. Get or create category folder
-    const categoryName = category || 'Webtoon';
-    const categorySearchUrl = `https://www.googleapis.com/drive/v3/files?` +
-        `q=name='${categoryName}' and '${parentId}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'` +
-        `&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`;
-    
-    const categoryResult = await new Promise((resolve, reject) => {
-        GM_xmlhttpRequest({
-            method: 'GET',
-            url: categorySearchUrl,
-            headers: { 'Authorization': `Bearer ${token}` },
-            timeout: 30000,
-            onload: (res) => {
-                try {
-                    resolve(JSON.parse(res.responseText));
-                } catch (e) {
-                    reject(e);
-                }
-            },
-            onerror: reject,
-            ontimeout: () => reject(new Error('[DirectUpload] 카테고리 폴더 검색 타임아웃 (30초)'))
-        });
-    });
-    
-    let categoryFolderId;
-    if (categoryResult.files && categoryResult.files.length > 0) {
-        categoryFolderId = categoryResult.files[0].id;
-        console.log(`[DirectUpload] 📂 Category folder found: ${categoryName}`);
-    } else {
-        // Create category folder
-        console.log(`[DirectUpload] 📂 Creating category folder: ${categoryName}`);
-        const createCategoryResult = await new Promise((resolve, reject) => {
-            GM_xmlhttpRequest({
-                method: 'POST',
-                url: 'https://www.googleapis.com/drive/v3/files?supportsAllDrives=true',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                data: JSON.stringify({
-                    name: categoryName,
-                    mimeType: 'application/vnd.google-apps.folder',
-                    parents: [parentId]
-                }),
-                timeout: 30000,
-                onload: (res) => {
-                    try {
-                        resolve(JSON.parse(res.responseText));
-                    } catch (e) {
-                        reject(e);
-                    }
-                },
-                onerror: reject,
-                ontimeout: () => reject(new Error('[DirectUpload] 카테고리 폴더 생성 타임아웃 (30초)'))
-            });
-        });
-        categoryFolderId = createCategoryResult.id;
-    }
-    
-    // 3. Get or create series folder in category
-    // [v1.4.0 Fix] Search by ID prefix "[12345]" instead of full name to handle title changes
-    // [v1.9.4 Fix] Support alphanumeric IDs and fallback to exact match if ID is "0000" to prevent collision
+export async function getOrCreateFolder(folderName, parentId, token, _category) {
+    // Search by name or [ID] prefix in root
     const idMatch = folderName.match(/^\[([a-zA-Z0-9_\-]+)\]/);
     const idPrefix = idMatch ? idMatch[0] : null;
-    const rawId = idMatch ? idMatch[1] : null;
     
     let queryPart = "";
-    if (idPrefix && rawId !== "0000") {
-        // Search for folders containing "[12345]"
+    if (idPrefix) {
         queryPart = `name contains '${idPrefix}'`;
     } else {
-        // Fallback: Exact match for 0000 or invalid ID
         queryPart = `name = '${folderName.replace(/'/g, "\\'")}'`; 
     }
 
-    const seriesSearchUrl = `https://www.googleapis.com/drive/v3/files?` +
-        `q=${queryPart} and '${categoryFolderId}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'` +
+    const searchUrl = `https://www.googleapis.com/drive/v3/files?` +
+        `q=${queryPart} and '${parentId}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'` +
         `&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`;
     
-    const seriesResult = await new Promise((resolve, reject) => {
+    const searchResult = await new Promise((resolve, reject) => {
         GM_xmlhttpRequest({
             method: 'GET',
-            url: seriesSearchUrl,
+            url: searchUrl,
             headers: { 'Authorization': `Bearer ${token}` },
             timeout: 30000,
             onload: (res) => {
-                try {
-                    resolve(JSON.parse(res.responseText));
-                } catch (e) {
-                    reject(e);
-                }
+                try { resolve(JSON.parse(res.responseText)); }
+                catch (e) { reject(e); }
             },
             onerror: reject,
-            ontimeout: () => reject(new Error('[DirectUpload] 시리즈 폴더 검색 타임아웃 (30초)'))
+            ontimeout: () => reject(new Error('[DirectUpload] 폴더 검색 타임아웃'))
         });
     });
     
-    // Filter results to ensure it starts with the ID (double check)
-    let foundFolder = null;
-    if (seriesResult.files && seriesResult.files.length > 0) {
-        if (idPrefix && rawId !== "0000") {
-            // Find the first folder that STARTS with the ID
-            foundFolder = seriesResult.files.find(f => f.name.startsWith(idPrefix));
-        } else {
-            foundFolder = seriesResult.files[0];
+    if (searchResult.files && searchResult.files.length > 0) {
+        const found = idPrefix
+            ? searchResult.files.find(f => f.name.startsWith(idPrefix))
+            : searchResult.files[0];
+        if (found) {
+            console.log(`[DirectUpload] Folder found: ${found.name} (ID: ${found.id})`);
+            return found.id;
         }
     }
-
-    if (foundFolder) {
-        console.log(`[DirectUpload] Folder found: ${foundFolder.name} (ID: ${foundFolder.id})`);
-        return foundFolder.id;
-    }
     
-    // Create series folder
-    console.log(`[DirectUpload] Creating series folder: ${folderName} in ${categoryName}`);
+    // Create series folder in root
+    console.log(`[DirectUpload] Creating series folder: ${folderName}`);
     const createResult = await new Promise((resolve, reject) => {
         GM_xmlhttpRequest({
             method: 'POST',
@@ -258,18 +148,15 @@ export async function getOrCreateFolder(folderName, parentId, token, category = 
             data: JSON.stringify({
                 name: folderName,
                 mimeType: 'application/vnd.google-apps.folder',
-                parents: [categoryFolderId]
+                parents: [parentId]
             }),
             timeout: 30000,
             onload: (res) => {
-                try {
-                    resolve(JSON.parse(res.responseText));
-                } catch (e) {
-                    reject(e);
-                }
+                try { resolve(JSON.parse(res.responseText)); }
+                catch (e) { reject(e); }
             },
             onerror: reject,
-            ontimeout: () => reject(new Error('[DirectUpload] 시리즈 폴더 생성 타임아웃 (30초)'))
+            ontimeout: () => reject(new Error('[DirectUpload] 폴더 생성 타임아웃'))
         });
     });
     
@@ -384,11 +271,8 @@ export async function uploadDirect(blob, folderName, fileName, metadata = {}) {
         const token = await getToken();
         const logger = LogBox.getInstance();
         
-        // Determine category
-        const category = metadata.category || (fileName.endsWith('.epub') ? 'Novel' : 'Webtoon');
-        
-        // 1. Get Series Folder ID (큐에 선제 저장된 폴더 ID가 있다면 그대로 사용하고, 없으면 생성)
-        const seriesFolderId = metadata.folderId || await getOrCreateFolder(folderName, config.folderId, token, category);
+        // 1. Get Series Folder ID
+        const seriesFolderId = metadata.folderId || await getOrCreateFolder(folderName, config.folderId, token);
         
         let targetFolderId = seriesFolderId;
         let finalFileName = fileName;
@@ -501,7 +385,7 @@ export const getOAuthToken = getToken;
  * @param {string} category 
  * @returns {Promise<{success: boolean, folderId: string|null, data: string[]}>} Object with valid episode IDs
  */
-export async function fetchHistoryDirect(seriesTitle, category = 'Webtoon') {
+export async function fetchHistoryDirect(seriesTitle) {
     const logger = LogBox.getInstance();
     const config = getConfig();
     if (!config.folderId) return { success: false, folderId: null, data: [] };
@@ -509,11 +393,11 @@ export async function fetchHistoryDirect(seriesTitle, category = 'Webtoon') {
     let currentSeriesFolderId = null;
 
     try {
-        console.log(`[DirectHistory] Fetching history for: ${seriesTitle} (${category})`);
+        console.log(`[DirectHistory] Fetching history for: ${seriesTitle}`);
         const token = await getToken();
         
         // Find the Series Folder ID
-        currentSeriesFolderId = await getOrCreateFolder(seriesTitle, config.folderId, token, category);
+        currentSeriesFolderId = await getOrCreateFolder(seriesTitle, config.folderId, token);
         
         if (!currentSeriesFolderId) {
             console.log(`[DirectHistory] Series folder not found or created.`);

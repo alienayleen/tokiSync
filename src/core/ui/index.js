@@ -8,7 +8,6 @@ import { LogBox } from './LogBox.js';
 export { LogBox } from './LogBox.js';
 export { Notifier } from './Notifier.js';
 export { MenuModal } from './MenuModal.js';
-export { TreeRuleEditor } from './TreeRuleEditor.js';
 export { FormRuleEditor } from './FormRuleEditor.js';
 
 /**

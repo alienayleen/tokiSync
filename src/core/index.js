@@ -1,5 +1,6 @@
 import { main } from './main.js';
 import { initWorkerExtractor } from './worker-extractor.js';
+import './listeners.js';
 
 (async function () {
     'use strict';

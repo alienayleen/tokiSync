@@ -28,4 +28,17 @@ export const EVT = {
     OPEN_DASHBOARD: 'ui:open_dashboard',     // 대시보드 팝업 열기 요청
     CLOSE_DASHBOARD: 'ui:close_dashboard',   // 대시보드 팝업 닫기 요청
     TOGGLE_DASHBOARD: 'ui:toggle_dashboard', // 대시보드 팝업 토글 요청
+
+    // ── Queue → Core 방향 ─────────────────────────────────
+    QUEUE_TOGGLE_PAUSE: 'queue:toggle_pause', // 일시정지/재개
+    QUEUE_STOP_ALL:     'queue:stop_all',    // 전체 중단
+    QUEUE_CLEAR:        'queue:clear',      // 완료 항목 정리
+    QUEUE_REMOVE_ITEM:  'queue:remove_item', // 개별 항목 제거
+
+    // ── FormEditor → Core/Parser 방향 ─────────────────────
+    PARSE_VERIFY:       'parse:verify',     // 셀렉터 검증 요청
+    PARSE_TEST:         'parse:test',       // 추출 테스트 요청
+    RULE_CACHE_CLEAR:   'rule:cache_clear', // 파서 캐시 무효화
+    VERIFY_RESULT:      'verify:result',    // 검증 결과 반환
+    TEST_RESULT:        'test:result',      // 테스트 결과 반환
 };

@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "graphify": {
+      "command": "python3",
+      "args": [
+        "-m",
+        "graphify.serve",
+        "${workspaceFolder}/graphify-out/graph.json"
+      ],
+      "env": {}
+    },
+    "opencode": {
+      "command": "node",
+      "args": [
+        "${workspaceFolder}/tools/mcp-opencode-bridge.js"
+      ],
+      "env": {}
+    }
+  }
+}

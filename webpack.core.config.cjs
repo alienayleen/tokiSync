@@ -1,7 +1,6 @@
 const path = require('path');
 const webpack = require('webpack');
 const fs = require('fs');
-const TerserPlugin = require('terser-webpack-plugin');
 const pkg = require('./package.json');
 
 // Metadata Block
@@ -81,16 +80,6 @@ module.exports = {
   },
   optimization: {
     minimize: false,
-    minimizer: [
-      new TerserPlugin({
-        extractComments: false, // 주석을 외부 라이선스 파일로 쪼개서 추출 분리하는 현상 차단
-        terserOptions: {
-          format: {
-            comments: /==UserScript==|@name|@namespace|@version|@description|@author|@updateURL|@downloadURL|@match|@include|@icon|@grant|@connect|@require|@run-at|@license/i, // 유저스크립트 필수 헤더 규격 주석의 안전 보존
-          },
-        },
-      }),
-    ],
   },
   plugins: [
     new webpack.DefinePlugin({

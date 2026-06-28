@@ -132,10 +132,13 @@ export const updateQueueItem = (id, updates) => {
   const index = queue.findIndex(item => item.id === id);
 
   if (index !== -1) {
+    const hasStateChange = updates.status && updates.status !== queue[index].status;
+    const hasStageChange = updates.stage && updates.stage !== queue[index].stage;
     queue[index] = {
       ...queue[index],
       ...updates,
-      completedAt: updates.status === 'completed' ? Date.now() : queue[index].completedAt
+      completedAt: updates.status === 'completed' ? Date.now() : queue[index].completedAt,
+      lastActivity: (hasStateChange || hasStageChange) ? Date.now() : (updates.lastActivity !== undefined ? updates.lastActivity : queue[index].lastActivity)
     };
     saveRawQueue(queue);
     return true;
@@ -537,4 +540,28 @@ export const initQueueScheduler = () => {
 
   // 초기 기동 시에도 즉시 1회 검사
   runSchedulerOnce();
+
+  // ── EventBus 구독자 (UI → Core 레이어 분리) ──
+  EventBus.on(EVT.QUEUE_TOGGLE_PAUSE, async () => {
+    const p = getQueuePaused();
+    setQueuePaused(!p);
+    EventBus.emit(EVT.UPDATE_PROGRESS);
+    if (p) runSchedulerOnce();
+  });
+
+  EventBus.on(EVT.QUEUE_STOP_ALL, () => {
+    stopAllWorkers();
+    EventBus.emit(EVT.UPDATE_PROGRESS);
+  });
+
+  EventBus.on(EVT.QUEUE_CLEAR, () => {
+    clearQueue();
+    removeCompletedItems();
+    EventBus.emit(EVT.UPDATE_PROGRESS);
+  });
+
+  EventBus.on(EVT.QUEUE_REMOVE_ITEM, ({ id }) => {
+    removeQueueItem(id);
+    runSchedulerOnce();
+  });
 };
