@@ -6,11 +6,10 @@
 // 기능: 다운로드 기록 확인 (폴더/파일 스캔)
 function checkDownloadHistory(data, rootFolderId) {
   Debug.log(`🚀 checkDownloadHistory Start`);
-  // Use Helper with Category support (Create=false)
   const folderId = getOrCreateSeriesFolder(
     rootFolderId,
     data.folderName,
-    data.category,
+    null,
     false,
   );
 
@@ -66,11 +65,10 @@ function checkDownloadHistory(data, rootFolderId) {
 
 // 기능: 작품 정보(info.json) 저장
 function saveSeriesInfo(data, rootFolderId) {
-  // Use Helper with Category support (Create=true)
   const folderId = getOrCreateSeriesFolder(
     rootFolderId,
     data.folderName,
-    data.category,
+    null,
     true,
   );
 
@@ -130,45 +128,6 @@ function getLibraryIndex(rootFolderId) {
     }
   }
   return createRes("success", []);
-}
-
-// 기능: 라이브러리 상태 업데이트 (클라이언트 결과 저장)
-function updateLibraryStatus(data, rootFolderId) {
-  const results = DriveAccessService.list(rootFolderId, {
-    query: "name = 'index.json'",
-    fields: "files(id)"
-  });
-
-  if (results.length === 0) return createRes("error", "Index not found");
-
-  const fileId = results[0].id;
-  let library = [];
-  try {
-    const content = DriveAccessService.getFileContent(fileId);
-    library = JSON.parse(content);
-    if (!Array.isArray(library)) library = [];
-  } catch (e) {
-    return createRes("error", "Invalid JSON");
-  }
-
-  // 업데이트 반영
-  const updates = data.updates;
-  let changedCount = 0;
-
-  updates.forEach((u) => {
-    const item = library.find((i) => i.id === u.id);
-    if (item) {
-      item.latest_episode_in_site = u.latestEpisode;
-      item.last_checked_at = new Date().toISOString();
-      changedCount++;
-    }
-  });
-
-  if (changedCount > 0) {
-    DriveAccessService.updateFileContent(fileId, JSON.stringify(library));
-    return createRes("success", `Updated ${changedCount} items`);
-  }
-  return createRes("success", "No changes");
 }
 
 // =======================================================

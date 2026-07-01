@@ -71,35 +71,22 @@ function findFolderId(folderName, rootFolderId) {
 }
 
 /**
- * [New] 카테고리(Webtoon/Novel) 구조를 반영하여 시리즈 폴더를 찾거나 생성합니다.
- * Legacy(Root 직속) 폴더가 있으면 그걸 우선 사용(마이그레이션 전 호환성).
+ * 시리즈 폴더를 Root 직속에서 찾거나 생성합니다. (Kavita 호환 플랫 구조)
+ * 기존 카테고리(Webtoon/Novel/Manga) 구조는 제거되었습니다.
  */
 function getOrCreateSeriesFolder(
   rootFolderId,
   folderName,
-  category = "Webtoon",
+  category,
   createIfMissing = true
 ) {
-  // 1. Check Legacy (Root Direct)
-  const legacyId = findFolderId(folderName, rootFolderId);
-  if (legacyId) {
-    Debug.log(`♻️ Found Legacy Series Folder in Root: ${legacyId}`);
-    return legacyId;
-  }
-
-  // 2. Check/Create Category Folder
-  const catName = category || "Webtoon";
-  const catId = DriveAccessService.ensureFolder(rootFolderId, catName);
-
-  // 3. Check Series in Category
-  const seriesId = findFolderId(folderName, catId);
+  const seriesId = findFolderId(folderName, rootFolderId);
   if (seriesId) return seriesId;
 
   if (!createIfMissing) return null;
 
-  // 4. Create New Series in Category
-  Debug.log(`🆕 Creating New Series Folder in ${catName}: ${folderName}`);
-  return DriveAccessService.ensureFolder(catId, folderName);
+  Debug.log(`🆕 Creating New Series Folder in Root: ${folderName}`);
+  return DriveAccessService.ensureFolder(rootFolderId, folderName);
 }
 
 /**

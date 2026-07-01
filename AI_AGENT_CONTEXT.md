@@ -177,3 +177,39 @@ GitHub 공식 릴리즈 발행 시, 자동 생성되는 소스 코드 외에 다
 
 - 모델 간 전환(Handoff) 및 세션 단절 시, 워크스페이스 내 **`.agent_checkpoint.md`**를 최우선 진실 소스로 활용하여 컨텍스트 무결성을 유지한다.
 - 모든 에이전트는 작업 시작 전 반드시 해당 체크포인트와 `AI_AGENT_CONTEXT.md`를 필독해야 한다.
+
+---
+
+## 9. Graphify MCP Knowledge Graph Integration
+
+- **MCP Server**: Graphify knowledge graph is available as `graphify` MCP tools.
+- Use `graphify_query` to search the knowledge graph when you need to understand relationships between modules, identify cross-component dependencies, or find relevant code for a given concept.
+- Use `shortest_path` to trace dependency chains between two modules.
+- Use `god_nodes` to identify the most central/highly-connected abstractions in the system.
+- The graph lives at `graphify-out/graph.json`. Run `python3 -m graphify.serve graphify-out/graph.json` to start the MCP server manually if needed.
+
+### 9.1. MCP Server Configuration by Tool
+
+| Tool | Config File | Notes |
+|------|------------|-------|
+| **opencode** | `opencode.json` (project root) | `type: "local"`, `command: ["python3", "-m", "graphify.serve", "graphify-out/graph.json"]` |
+| **Claude Desktop** | `~/Library/Application Support/Claude/claude_desktop_config.json` | Add under `mcpServers.graphify` |
+| **Antigravity IDE / Cursor / VS Code** | `.mcp.json` (project root) | Standard project-level MCP config. Antigravity/Antigravity IDE reads `.mcp.json` for MCP tool support. |
+| **Any MCP client** | `python3 -m graphify.serve <path>/graphify-out/graph.json` | 직접 실행 후 stdio 또는 HTTP로 연결 |
+
+### 9.2. `.mcp.json` format (for Cursor, VS Code, Antigravity IDE)
+
+```json
+{
+  "mcpServers": {
+    "graphify": {
+      "command": "python3",
+      "args": ["-m", "graphify.serve", "${workspaceFolder}/graphify-out/graph.json"]
+    }
+  }
+}
+```
+
+### 9.3. Antigravity Skills 경로
+
+Antigravity IDE/CLI 에서는 `~/.agents/skills/` 경로의 SKILL.md를 읽습니다. Graphify MCP는 스킬이 아닌 **프로토콜 레벨**이므로 `.mcp.json`에 설정해야 합니다. 별도 스킬 설치가 필요하면 `npx antigravity-awesome-skills --path ~/.agents/skills` 명령으로 설치 가능합니다.

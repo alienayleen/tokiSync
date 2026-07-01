@@ -22,6 +22,7 @@ const FILES = [
   "View_HistoryService.gs",
   "View_Utils.gs",
   "Migrate_Service.gs",
+  "View_KavitaService.gs",
   "Debug.gs",
 ];
 

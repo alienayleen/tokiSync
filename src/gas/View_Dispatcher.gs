@@ -57,6 +57,19 @@ function View_Dispatcher(data) {
       if (!data.seriesId)
         throw new Error("seriesId is required for filename migration");
       resultBody = Migrate_RenameFiles(data.seriesId, data.folderId);
+    } else if (action === "view_migrate_kavita") {
+      // Legacy Kavita filename migration
+      const executeRename = data.executeRename === true;
+      resultBody = Migrate_KavitaFormat(data.folderId, executeRename);
+    } else if (action === "view_kavita_restructure") {
+      // Kavita flat structure migration (Phase 3)
+      if (!data.folderId) throw new Error("folderId is required for restructure");
+      const selectedIds = data.selectedIds || [];
+      resultBody = Kavita_Restructure(data.folderId, selectedIds);
+    } else if (action === "view_kavita_status") {
+      // Structure diagnosis
+      if (!data.folderId) throw new Error("folderId is required for status");
+      resultBody = Kavita_GetStatus(data.folderId);
     } else if (action === "view_get_merge_index") {
       // [v1.6.1] Fast Path Fallback: Get Merge Index Fragment directly
       if (!data.folderId || !data.sourceId) throw new Error("folderId and sourceId are required for merge index");
@@ -92,7 +105,7 @@ function View_Dispatcher(data) {
       const seriesId = getOrCreateSeriesFolder(
         folderId,
         data.folderName,
-        data.category || "Unknown",
+        null,
         false,
       );
       if (!seriesId) {

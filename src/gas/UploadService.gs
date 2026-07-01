@@ -6,7 +6,7 @@ function initResumableUpload(data, rootFolderId) {
   const folderId = getOrCreateSeriesFolder(
     rootFolderId,
     data.folderName,
-    data.category,
+    null,
     true,
   );
 

@@ -262,6 +262,7 @@
 }
 
 .toki-input, .toki-select, .toki-textarea {
+    box-sizing: border-box;
     width: 100%;
     padding: 14px 18px;
     background: rgba(255, 255, 255, 0.8);
@@ -337,6 +338,18 @@
     color: var(--toki-text) !important;
 }
 
+.toki-btn-danger {
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
+    color: #ffffff !important;
+    border: none !important;
+    box-shadow: 0 4px 10px rgba(239, 68, 68, 0.2) !important;
+}
+
+.toki-btn-danger:hover {
+    background: linear-gradient(135deg, #f87171 0%, #ef4444 100%) !important;
+    box-shadow: 0 6px 15px rgba(239, 68, 68, 0.35) !important;
+}
+
 /* Status & Indicators */
 .toki-status-dot {
     width: 8px;
@@ -392,107 +405,7 @@
     fill: #fff;
 }
 
-/* Tree Editor */
-.toki-tree-modal {
-    width: 1100px !important;
-    height: 85vh !important;
-}
 
-.toki-tree-container {
-    display: flex;
-    flex: 1;
-    overflow: hidden;
-    gap: 24px;
-    padding: 24px;
-    background: rgba(255, 255, 255, 0.2);
-}
-
-.toki-tree-view {
-    flex: 1.5;
-    overflow-y: auto;
-    background: rgba(255, 255, 255, 0.5);
-    border-radius: 16px;
-    padding: 20px;
-    border: 1px solid rgba(0, 0, 0, 0.05);
-    font-family: monospace;
-    font-size: 13px;
-}
-
-.toki-tree-node {
-    margin-left: 20px;
-    position: relative;
-    border-left: 1px dashed rgba(0, 0, 0, 0.1);
-    padding-left: 12px;
-}
-
-.toki-tree-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    border-radius: 8px;
-    transition: all 0.2s;
-}
-
-.toki-tree-item:hover {
-    background: rgba(37, 99, 235, 0.05);
-}
-
-.toki-tree-key {
-    color: #2563eb;
-    font-weight: 700;
-    cursor: pointer;
-    min-width: 90px;
-}
-
-.toki-tree-val {
-    color: #1e293b;
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid transparent;
-    width: 100%;
-}
-
-.toki-tree-val:focus {
-    border-bottom-color: #2563eb;
-    outline: none;
-    background: rgba(37, 99, 235, 0.05);
-}
-
-.toki-tree-toggle {
-    cursor: pointer;
-    user-select: none;
-    width: 18px;
-    text-align: center;
-    color: #94a3b8;
-    font-weight: 700;
-}
-
-.toki-tree-toggle:hover {
-    color: var(--toki-primary);
-}
-
-.toki-tree-right-panel {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-    background: rgba(255, 255, 255, 0.4);
-    padding: 20px;
-    border-radius: 16px;
-}
-
-.toki-tree-json-preview {
-    flex: 1;
-    background: #0f172a;
-    color: #e2e8f0;
-    padding: 20px;
-    border-radius: 16px;
-    font-size: 12px;
-    font-family: monospace;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    resize: none;
-}
 
 .toki-btn-rule {
     background: transparent;
@@ -553,11 +466,11 @@
     padding-left: 20px;
 }
 
-/* 2-Column Form Grid */
+/* 1-Column Form Grid */
 .toki-form-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
+    grid-template-columns: 1fr;
+    gap: 14px;
 }
 
 /* Utility Shortcuts */
@@ -592,7 +505,7 @@
     background: linear-gradient(135deg, #10b981, #059669) !important; 
     box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2) !important;
 }
-.toki-btn-indigo { background: #6366f1 !important; }
+
 .toki-btn-lavender { background: #6a5acd !important; font-weight: bold !important; }
 .toki-btn-slate { background: rgba(0,0,0,0.02) !important; border-style: dashed !important; border-radius: 20px !important; }
 .toki-hidden { display: none !important; }
@@ -651,10 +564,6 @@
 }
 .toki-downloaded:hover {
     opacity: 1;
-}
-
-.toki-tree-modal {
-    z-index: 10002 !important;
 }
 
 /* Iframe Elements */
@@ -1010,23 +919,25 @@
 
 /* --- FormRuleEditor: Hybrid Two-Track Parser GUI (v1.21.0) --- */
 .toki-form-editor-modal {
-    width: 1200px !important;
-    height: 90vh !important;
-    max-height: 90vh !important;
+    width: min(95vw, 1200px) !important;
+    max-height: min(85vh, 700px) !important;
     border-radius: 24px !important;
 }
 
 .toki-form-editor-container {
-    display: flex;
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
     flex: 1;
-    overflow: hidden;
+    overflow: auto !important;
     gap: 20px;
     padding: 20px;
     background: rgba(255, 255, 255, 0.15);
 }
 
 .toki-form-editor-left {
-    flex: 1.2;
+    flex: 1.2 !important;
+    min-width: 550px !important;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -1046,7 +957,8 @@
 }
 
 .toki-form-editor-right {
-    flex: 1;
+    flex: 1 !important;
+    min-width: 450px !important;
     display: flex;
     flex-direction: column;
     gap: 16px;
@@ -1107,6 +1019,9 @@
 }
 
 .toki-input-compact {
+    width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
     padding: 10px 14px;
     background: rgba(255, 255, 255, 0.7);
     border: 1px solid rgba(0, 0, 0, 0.06);
@@ -1154,6 +1069,36 @@
 }
 .toki-form-dropper-btn:hover {
     transform: scale(1.2);
+}
+
+.toki-form-verify-btn {
+    cursor: pointer;
+    font-size: 14px;
+    transition: transform 0.2s;
+    user-select: none;
+}
+.toki-form-verify-btn:hover {
+    transform: scale(1.2);
+}
+
+.toki-form-verify-result {
+    font-size: 11px;
+    font-weight: 600;
+    margin-top: 4px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    line-height: 1.4;
+    word-break: break-all;
+}
+.toki-form-verify-result.success {
+    background: rgba(16, 185, 129, 0.08);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.15);
+}
+.toki-form-verify-result.error {
+    background: rgba(239, 68, 68, 0.08);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.15);
 }
 
 /* --- 📱 Compact Responsive LogBox for Popups & Small Screens (v1.21.0 추가) --- */
@@ -1347,9 +1292,10 @@
     background: transparent !important;
     height: 400px !important;
 }
-#toki-modal-logs #toki-logbox-content {
-    height: 350px !important;
-    max-height: 350px !important;
+#toki-modal-logs .toki-log-panel {
+    height: 330px !important;
+    max-height: 330px !important;
+    overflow-y: auto;
 }
 
 /* 대기열 모달 최대화 시의 너비 및 리스트 세로 높이 확장 */
@@ -1382,4 +1328,638 @@
 }
 .toki-modal-body::-webkit-scrollbar-thumb:hover {
     background: rgba(0, 0, 0, 0.25);
+}
+
+/* --- 🧬 DOM Inspector Panel (v2 — DevTools Style) --- */
+.toki-inspector-mount {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+    border-radius: 12px;
+}
+
+.di-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #1e1e2e;
+    overflow: hidden;
+    font-family: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #cdd6f4;
+}
+
+/* ── Toolbar ── */
+.di-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 7px 14px;
+    background: #181825;
+    border-bottom: 1px solid #313244;
+    flex-shrink: 0;
+}
+
+.di-title {
+    font-weight: 700;
+    font-size: 12px;
+    color: #cba6f7;
+    letter-spacing: -0.01em;
+}
+
+.di-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.di-count {
+    font-size: 10px;
+    color: #585b70;
+}
+
+.di-refresh {
+    background: #313244;
+    border: none;
+    border-radius: 5px;
+    color: #6c7086;
+    cursor: pointer;
+    padding: 1px 7px;
+    font-size: 14px;
+    line-height: 1.5;
+    transition: all 0.15s;
+}
+
+.di-refresh:hover {
+    background: #45475a;
+    color: #cdd6f4;
+}
+
+/* ── Filter ── */
+.di-filter-bar {
+    padding: 5px 14px;
+    background: #181825;
+    border-bottom: 1px solid #313244;
+    flex-shrink: 0;
+}
+
+.di-filter {
+    width: 100%;
+    box-sizing: border-box;
+    background: #313244;
+    border: 1px solid #45475a;
+    border-radius: 5px;
+    padding: 4px 9px;
+    font-size: 11px;
+    color: #cdd6f4;
+    font-family: inherit;
+    outline: none;
+}
+
+.di-filter::placeholder { color: #585b70; }
+.di-filter:focus { border-color: #cba6f7; }
+
+/* ── Tree area ── */
+.di-tree-wrap {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: auto;
+    min-height: 0;
+    background: #1e1e2e;
+}
+
+.di-tree-wrap::-webkit-scrollbar { width: 4px; height: 4px; }
+.di-tree-wrap::-webkit-scrollbar-track { background: transparent; }
+.di-tree-wrap::-webkit-scrollbar-thumb { background: #45475a; border-radius: 999px; }
+
+.di-tree {
+    padding: 2px 0;
+}
+
+/* ── Tree lines ── */
+.di-line {
+    padding: 0 14px 0 0;
+    cursor: pointer;
+    white-space: nowrap;
+    font-size: 11px;
+    line-height: 22px;
+    user-select: none;
+    border-left: 2px solid transparent;
+}
+
+.di-line:hover {
+    background: rgba(203, 166, 247, 0.06);
+}
+
+.di-line.di-selected {
+    background: rgba(203, 166, 247, 0.12);
+    border-left-color: #cba6f7;
+}
+
+.di-line.di-dimmed { opacity: 0.35; }
+
+.di-arrow {
+    display: inline-block;
+    width: 13px;
+    text-align: center;
+    color: #6c7086;
+    font-size: 8px;
+    cursor: pointer;
+    flex-shrink: 0;
+    user-select: none;
+    margin-right: 1px;
+}
+
+.di-arrow:hover { color: #cdd6f4; }
+
+/* Children */
+.di-children { display: block; }
+.di-children.di-collapsed { display: none; }
+
+/* ── Syntax colors ── */
+.di-tag    { color: #89b4fa; }
+.di-id     { color: #f9e2af; }
+.di-class  { color: #a6e3a1; }
+.di-attr   { color: #fab387; }
+.di-text   { color: #cba6f7; }
+
+/* ── Detail panel ── */
+.di-detail {
+    flex-shrink: 0;
+    border-top: 1px solid #313244;
+    background: #181825;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.di-detail-header {
+    padding: 6px 14px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #585b70;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: rgba(255,255,255,0.02);
+    border-bottom: 1px solid #313244;
+    position: sticky;
+    top: 0;
+}
+
+.di-detail-body {
+    padding: 8px 14px 10px;
+}
+
+.di-detail-placeholder {
+    color: #585b70;
+    font-size: 11px;
+    font-style: italic;
+}
+
+.di-detail-grid {
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    gap: 2px 8px;
+    font-size: 11px;
+}
+
+.di-detail-label {
+    color: #585b70;
+    font-weight: 600;
+    text-align: right;
+    line-height: 20px;
+}
+
+.di-detail-val {
+    color: #cdd6f4;
+    word-break: break-all;
+    line-height: 20px;
+}
+
+.di-detail-text {
+    max-height: 38px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.di-detail-selector {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid #313244;
+}
+
+.di-selector-row {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+    margin-top: 4px;
+}
+
+.di-selector-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.di-selector-code {
+    flex: 1;
+    min-width: 0;
+    background: #11111b;
+    border: 1px solid #313244;
+    border-radius: 5px;
+    padding: 5px 9px;
+    font-size: 11px;
+    color: #f5c2e7;
+    overflow-x: auto;
+    white-space: nowrap;
+}
+
+.di-btn-copy,
+.di-btn-apply {
+    border: none;
+    border-radius: 5px;
+    padding: 5px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.12s;
+    flex-shrink: 0;
+    font-family: inherit;
+    font-weight: 600;
+}
+
+.di-btn-copy {
+    background: #313244;
+    color: #a6adc8;
+}
+
+.di-btn-copy:hover {
+    background: #45475a;
+    color: #cdd6f4;
+}
+
+.di-btn-apply {
+    background: #cba6f7;
+    color: #1e1e2e;
+}
+
+.di-btn-apply:hover {
+    background: #b4befe;
+    transform: translateY(-1px);
+}
+
+/* ── Inspector toggle button active state ── */
+.toki-btn-inspector.active {
+    background: #cba6f7 !important;
+    color: #1e1e2e !important;
+    border-color: #cba6f7 !important;
+    font-weight: 700 !important;
+}
+
+/* ── 구독 관리 패널 ── */
+.toki-btn-sub.active {
+    background: #f59e0b !important;
+    color: #1e293b !important;
+    border-color: #f59e0b !important;
+    font-weight: 700 !important;
+}
+
+.sub-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow: hidden;
+    min-height: 0;
+}
+
+.sub-header {
+    font-size: 13px;
+    font-weight: 800;
+    color: #f59e0b;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(0,0,0,0.05);
+}
+
+.sub-add-area {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.sub-url-input {
+    flex: 3;
+    min-width: 200px;
+    box-sizing: border-box;
+    padding: 8px 12px;
+    background: rgba(255,255,255,0.7);
+    border: 1px solid rgba(0,0,0,0.06);
+    border-radius: 8px;
+    font-size: 12px;
+    font-family: inherit;
+}
+
+.sub-name-input {
+    flex: 1;
+    min-width: 100px;
+    box-sizing: border-box;
+    padding: 8px 12px;
+    background: rgba(255,255,255,0.7);
+    border: 1px solid rgba(0,0,0,0.06);
+    border-radius: 8px;
+    font-size: 12px;
+    font-family: inherit;
+}
+
+.sub-url-input:focus, .sub-name-input:focus {
+    outline: none;
+    border-color: #f59e0b;
+    background: #fff;
+}
+
+.sub-btn-add {
+    padding: 8px 14px;
+    background: #f59e0b;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.sub-btn-add:hover {
+    background: #d97706;
+    transform: translateY(-1px);
+}
+
+.sub-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+}
+
+.sub-list::-webkit-scrollbar { width: 5px; }
+.sub-list::-webkit-scrollbar-track { background: transparent; }
+.sub-list::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.08); border-radius: 999px; }
+
+.sub-empty {
+    padding: 24px 16px;
+    text-align: center;
+    color: #94a3b8;
+    font-size: 12px;
+    line-height: 1.6;
+    background: rgba(255,255,255,0.3);
+    border-radius: 12px;
+    border: 1px dashed rgba(0,0,0,0.06);
+}
+
+.sub-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    background: rgba(255,255,255,0.4);
+    border: 1px solid rgba(0,0,0,0.04);
+    border-radius: 10px;
+    transition: all 0.15s;
+}
+
+.sub-item:hover {
+    background: rgba(255,255,255,0.6);
+}
+
+.sub-item-ok { border-left: 3px solid #10b981; }
+.sub-item-pending { border-left: 3px solid #f59e0b; }
+
+.sub-item-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.sub-item-name {
+    font-size: 12px;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+.sub-item-url {
+    font-size: 10px;
+    color: #64748b;
+    word-break: break-all;
+    margin-top: 2px;
+}
+
+.sub-item-meta {
+    font-size: 10px;
+    color: #94a3b8;
+    margin-top: 2px;
+}
+
+.sub-item-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.sub-btn-refresh-sm, .sub-btn-remove {
+    border: none;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: rgba(0,0,0,0.03);
+}
+
+.sub-btn-refresh-sm:hover { background: #e2e8f0; }
+.sub-btn-remove:hover { background: #fee2e2; }
+
+.sub-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding-top: 4px;
+}
+
+.sub-btn-refresh {
+    padding: 8px 16px;
+    background: #6366f1;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.sub-btn-refresh:hover {
+    background: #4f46e5;
+    transform: translateY(-1px);
+}
+
+.sub-status {
+    font-size: 11px;
+    color: #64748b;
+    flex: 1;
+    text-align: right;
+}
+
+/* ── Log Tab Bar ── */
+.toki-log-tabs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 8px;
+    flex-shrink: 0;
+}
+
+.toki-log-tab-btn {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid transparent;
+    padding: 4px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 600;
+    color: #94a3b8;
+    transition: all 0.15s;
+    font-family: inherit;
+}
+
+.toki-log-tab-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #e0e0e0;
+}
+
+.toki-log-tab-btn.active {
+    background: rgba(99, 102, 241, 0.15);
+    border-color: rgba(99, 102, 241, 0.3);
+    color: #a5b4fc;
+}
+
+.toki-log-tabs-right {
+    margin-left: auto;
+}
+
+.toki-log-tabs-right button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+    color: #e6a23c;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-family: inherit;
+    transition: color 0.15s;
+}
+
+.toki-log-tabs-right button:hover {
+    color: #f59e0b;
+}
+
+/* ── Log Panels ── */
+.toki-log-panel {
+    display: none !important;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+}
+
+.toki-log-panel.active {
+    display: flex !important;
+}
+
+/* ── Debug Console ── */
+#toki-debug-console-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    flex-shrink: 0;
+}
+
+.toki-console-toggle-btn {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 3px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    color: #94a3b8;
+    font-family: inherit;
+    font-weight: 600;
+    transition: all 0.15s;
+}
+
+.toki-console-toggle-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.toki-console-toggle-btn.on {
+    color: #4ade80;
+    border-color: rgba(74, 222, 128, 0.3);
+}
+
+.toki-console-status {
+    font-size: 10px;
+    color: #64748b;
+}
+
+#toki-debug-console-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+    margin: 0;
+    list-style: none;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.03);
+    min-height: 280px;
+    font-family: 'Cascadia Code', Consolas, monospace;
+    font-size: 11px;
+}
+
+#toki-debug-console-content::-webkit-scrollbar {
+    width: 4px;
+}
+#toki-debug-console-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+#toki-debug-console-content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+}
+
+#toki-debug-console-content li {
+    margin-bottom: 2px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    word-break: break-all;
+    line-height: 1.5;
+}
+
+#toki-debug-console-content li.log,
+#toki-debug-console-content li.info {
+    color: #e0e0e0;
+}
+
+#toki-debug-console-content li.warn {
+    color: #f9e2af;
+}
+
+#toki-debug-console-content li.error,
+#toki-debug-console-content li.critical {
+    color: #f38ba8;
+}
+
+#toki-debug-console-content li.success {
+    color: #a6e3a1;
 }

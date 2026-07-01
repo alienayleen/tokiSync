@@ -1,23 +1,80 @@
 import { tokiDownload, processItem } from './downloader.js';
-import { detectSite, getMaxEpisodes, parseEpisodeRange } from './detector.js'; 
+import { detectSite } from './detector.js'; 
 import { getConfig, setConfig, isConfigValid } from './config.js';
-import { LogBox, markDownloadedItems, MenuModal, TreeRuleEditor } from './ui.js';
+import { MenuModal, LogBox } from './ui/index.js';
+import { logger } from './logger.js';
 import { extractEpisodeData } from './extractor.js';
 import { EpubBuilder } from './epub.js';
 import { CbzBuilder } from './cbz.js';
 import { TxtBuilder } from './txt.js';
 import { fetchHistory } from './gas.js';
 import { ParserFactory } from './parsers/ParserFactory.js';
+import { SubscriptionManager } from './parsers/SubscriptionManager.js';
 import { getOAuthToken, fetchHistoryDirect } from './network.js';
 
+import { EventBus, EVT } from './EventBus.js';
 import { getCommonPrefix, blobToArrayBuffer, saveFile } from './utils.js';
 
 export async function main() {
     console.log("🚀 TokiDownloader Loaded (New Core v1.20.5)");
-    
-    const logger = LogBox.getInstance();
 
-    // -- 0. Core Logic starts after helper function definitions --
+    // -- 0. Bootstrap UI Instances --
+    const _logbox = LogBox.getInstance();
+
+    // ── Console Log Interceptor ──
+    const _origConsole = {
+        log: console.log.bind(console),
+        warn: console.warn.bind(console),
+        error: console.error.bind(console)
+    };
+    let _forwarding = false;
+    let _consoleActive = true;
+
+    const CONSOLE_WHITELIST = [
+        '[TokiSync', '[WorkerController', '[DirectUpload', '[DirectHistory',
+        '[GAS]', '[Upload]', '[Local]', '[Native]',
+        '[Builder]', '[Cache]', '[Captcha]', '[ScrollEngine',
+        '[Bridge]', '[Debug ', '[Notification]'
+    ];
+
+    function _fmtArg(a) {
+        if (a instanceof Error) return a.stack || a.message;
+        if (typeof a === 'object') {
+            try { return JSON.stringify(a); } catch (_) { return String(a); }
+        }
+        return String(a);
+    }
+
+    function _makeHandler(level) {
+        return function (...args) {
+            _origConsole[level].apply(console, args);
+            if (_forwarding || !_consoleActive) return;
+            const msg = args.map(_fmtArg).join(' ');
+            if (!CONSOLE_WHITELIST.some(p => msg.startsWith(p))) return;
+            if (/^\[(info|warn|error|success|critical|debug)\]/.test(msg)) return;
+            _forwarding = true;
+            try {
+                EventBus.emit(EVT.LOG, {
+                    msg,
+                    level: level === 'log' ? 'info' : level,
+                    tag: 'Console'
+                });
+            } finally {
+                _forwarding = false;
+            }
+        };
+    }
+
+    console.log = _makeHandler('log');
+    console.warn = _makeHandler('warn');
+    console.error = _makeHandler('error');
+
+    _logbox._consoleInterceptor = {
+        setActive: (a) => { _consoleActive = a; },
+        getActive: () => _consoleActive
+    };
+
+    // -- Helper Functions for Menu Actions --
 
     // -- Helper Functions for Menu Actions --
 
@@ -81,27 +138,13 @@ export async function main() {
         }
     };
 
-    const runFilenameMigration = async () => {
-        if (!confirm('현재 작품의 파일명을 표준화하시겠습니까?\n(예: "0001 - 1화.cbz" -> "0001 - 제목 1화.cbz")')) return;
+    const runKavitaMigration = async () => {
+        if (!confirm('구글 드라이브 내 모든 작품의 파일명과 폴더 구조를 Kavita 표준 규격으로 최적화하시겠습니까?\n(이 작업은 전체 라이브러리를 스캔하므로 다소 시간이 소요될 수 있습니다.)')) return;
         
-        const parserInfo = await ParserFactory.getParser();
-        if (!parserInfo) {
-            alert('현재 사이트를 지원하는 파서를 찾을 수 없습니다.');
-            return;
-        }
-        
-        const seriesId = parserInfo.parser.getSeriesId();
-
-        if (!seriesId || seriesId === "0000") {
-            alert('시리즈 ID를 찾을 수 없습니다.');
-            return;
-        }
-
         try {
             logger.show();
-            logger.log('이름 변경 작업 요청 중...');
+            logger.log('Kavita 구조 최적화 작업 요청 중...');
             
-            const token = await getOAuthToken(); // FIXME: OAuth or API Key? Config uses API Key usually.
             const config = getConfig();
             
             if (!config.gasUrl) {
@@ -113,14 +156,13 @@ export async function main() {
                 method: "POST",
                 url: config.gasUrl,
                 data: JSON.stringify({
-                    type: 'view_migrate_filenames',
-                    seriesId: seriesId,
+                    type: 'view_migrate_kavita',
                     folderId: config.folderId,
+                    executeRename: true,
                     apiKey: config.apiKey,
                     protocolVersion: 3
                 }),
                 headers: {
-                    // "Authorization": `Bearer ${token}`, // If using OAuth
                     "Content-Type": "application/json"
                 },
                 onload: (res) => {
@@ -129,7 +171,7 @@ export async function main() {
                         if (result.status === 'success') {
                             const logs = Array.isArray(result.body) ? result.body.join('\n') : result.body;
                             logger.success(`작업 완료!\n로그:\n${logs}`);
-                            alert(`작업이 완료되었습니다.`);
+                            alert(`Kavita 구조 최적화 작업이 완료되었습니다.`);
                         } else {
                             logger.error(`작업 실패: ${result.body}`);
                             alert(`실패: ${result.body}`);
@@ -247,7 +289,7 @@ export async function main() {
             const parser = await ParserFactory.getParser();
             if (!parser) return { min: 1, max: 100 };
             
-            const list = parser.getListItems();
+            const list = await parser.getListItems();
             if (list.length > 0) {
                 const first = parser.parseListItem(list[0]);
                 const last = parser.parseListItem(list[list.length - 1]);
@@ -257,7 +299,7 @@ export async function main() {
             }
             return { min: 1, max: 100 };
         },
-        migrateFilenames: runFilenameMigration,
+        migrateKavita: runKavitaMigration,
         migrateThumbnails: runThumbnailMigration,
         syncHistory: syncHistory,
         testNativeDownload: async () => {
@@ -272,7 +314,6 @@ export async function main() {
         },
         testExtraction: async () => {
             try {
-                const logger = LogBox.getInstance();
                 logger.show();
                 logger.log('🧪 추출 테스트 시작...', 'Debug');
                 
@@ -302,12 +343,11 @@ export async function main() {
                 }
 
             } catch (e) {
-                LogBox.getInstance().error(`❌ 테스트 실패: ${e.message}`, 'Debug');
+                logger.error(`❌ 테스트 실패: ${e.message}`, 'Debug');
                 console.error(e);
             }
         },
         downloadCurrent: async () => {
-            const logger = LogBox.getInstance();
             try {
                 logger.show();
                 logger.log('🚀 현재 에피소드 다운로드 시작...', 'System');
@@ -438,6 +478,9 @@ export async function main() {
     // Initial load
     console.log('[TokiSync] Starting history sync...');
     syncHistory();
+
+    // Background subscription check (silent)
+    SubscriptionManager.checkOnce();
 
     // Cross-tab sync listener
     document.addEventListener("visibilitychange", () => {

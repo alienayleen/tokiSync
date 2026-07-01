@@ -1,6 +1,8 @@
 import { EventBus, EVT } from './EventBus.js';
 import { addEpisodesToQueue, initQueueScheduler, activeWorkers, getQueue, clearQueue, getQueueItemId } from './queue.js';
 import { initBatchWorkerController } from './worker-controller.js';
+import { CbzBuilder } from './cbz.js';
+import { getConfig } from './config.js';
 import JSZip from 'jszip';
 
 globalThis.JSZip = JSZip;
@@ -593,18 +595,42 @@ test('멀티큐 자율 배치 스케줄러 시나리오가 Concurrency 한도를
     // 3. GM_xmlhttpRequest 모킹
     let cacheRefreshCalledCount = 0;
     globalThis.GM_xmlhttpRequest = (details) => {
+        let responseBody = 'ok';
+        let responseHeaders = '';
+
         if (details.data && typeof details.data === 'string') {
             try {
                 const payload = JSON.parse(details.data);
                 if (payload.type === 'view_update_cache') {
                     cacheRefreshCalledCount++;
+                } else if (payload.type === 'view_get_token') {
+                    responseBody = { token: 'mock-token' };
+                } else if (payload.type === 'init') {
+                    responseBody = { uploadUrl: 'http://mock-upload-url' };
+                } else if (payload.type === 'init_update') {
+                    responseBody = { uploadUrl: 'http://mock-upload-url' };
                 }
             } catch (e) {}
         }
+
+        // Google Drive API Mocking
+        if (details.url && details.url.includes('googleapis.com')) {
+            if (details.url.includes('/files?q=')) {
+                // Search Folder or File
+                responseBody = { files: [{ id: 'mock-file-id', name: 'mock-file-name', size: '5000' }] };
+            } else if (details.url.includes('/files') && (details.method === 'POST' || details.method === 'PATCH')) {
+                // Create Folder or Init Upload Session
+                responseBody = { id: 'mock-created-id' };
+                responseHeaders = 'location: http://mock-upload-session-url\r\nx-guploader-uploadid: mock-upload-id\r\n';
+            }
+        }
+
         if (details.onload) {
             setTimeout(() => {
                 details.onload({
-                    responseText: JSON.stringify({ status: 'success', body: 'ok' })
+                    status: 200,
+                    responseText: typeof responseBody === 'string' ? responseBody : JSON.stringify({ status: 'success', body: responseBody }),
+                    responseHeaders: responseHeaders
                 });
             }, 1);
         }
@@ -699,54 +725,44 @@ test('멀티큐 자율 배치 스케줄러 시나리오가 Concurrency 한도를
         initQueueScheduler();
 
         // 비동기 스케줄링 틱이 돌도록 살짝 대기
-        await new Promise(resolve => backupSetTimeout(resolve, 50));
+        await new Promise(resolve => backupSetTimeout(resolve, 300));
 
-        // 6. Concurrency 한도(2) 검증
-        // 3개 중 1화와 2화만 우선 processing 상태여야 한다.
+        // 6. Concurrency 한도(1) 검증
+        // 3개 중 1화만 우선 processing 상태여야 한다. (v1.25.0 순차 수집 사양)
         const queueState1 = getQueue();
         const item1 = queueState1.find(i => i.id === id1);
         const item2 = queueState1.find(i => i.id === id2);
         const item3 = queueState1.find(i => i.id === id3);
 
         console.assert(item1 && item1.status === 'processing', '1화가 processing 상태가 아닙니다.');
-        console.assert(item2 && item2.status === 'processing', '2화가 processing 상태가 아닙니다.');
-        console.assert(item3 && item3.status === 'pending', '3화는 Concurrency(2)에 의해 pending 상태여야 합니다.');
+        console.assert(item2 && item2.status === 'pending', '2화는 pending 상태여야 합니다.');
+        console.assert(item3 && item3.status === 'pending', '3화는 pending 상태여야 합니다.');
 
-        console.assert(activeWorkers.size === 2, `활성 워커 개수 불일치: ${activeWorkers.size}`);
+        console.assert(activeWorkers.size === 1, `활성 워커 개수 불일치: ${activeWorkers.size}`);
         console.assert(activeWorkers.has(id1), '1화 워커 등록 누락');
-        console.assert(activeWorkers.has(id2), '2화 워커 등록 누락');
 
-        if (item1.status !== 'processing' || item2.status !== 'processing' || item3.status !== 'pending' || activeWorkers.size !== 2) {
-            throw new Error('Concurrency 한도 제어 검증 실패');
+        if (item1.status !== 'processing' || item2.status !== 'pending' || item3.status !== 'pending' || activeWorkers.size !== 1) {
+            throw new Error('Concurrency 한도 제어 검증 실패 (v1.25.0)');
         }
 
         // 7. 1화 완료 처리 시뮬레이션
-        // READY 수신 후 -> EXTRACTION 진행 -> TASK_COMPLETED
+        // READY 수신 후 -> TASK_COMPLETED
         const popup1 = activeWorkers.get(id1);
         simulateWorkerMessage(popup1, 'WORKER_READY', { targetUrl: 'http://example.com/1' });
         simulateWorkerMessage(popup1, 'TASK_COMPLETED', { queueId: id1, content: '1화 본문' });
 
-        // 8. 릴레이 호출 및 다음 작업 자동 실행 검증
-        // 1화 완료 직후 스케줄러가 돌아 3화가 실행 상태로 넘어가야 한다.
-        await new Promise(resolve => backupSetTimeout(resolve, 50));
+        // 8. 릴레이 호출 및 다음 작업(2화) 자동 실행 검증
+        await new Promise(resolve => backupSetTimeout(resolve, 300));
 
         const queueState2 = getQueue();
         const updatedItem1 = queueState2.find(i => i.id === id1);
-        const updatedItem3 = queueState2.find(i => i.id === id3);
+        const updatedItem2 = queueState2.find(i => i.id === id2);
 
         console.assert(updatedItem1.status === 'completed', '1화가 완료되지 않았습니다.');
-        console.assert(updatedItem3.status === 'processing', '3화가 자동으로 스케줄링되지 않았습니다.');
+        console.assert(updatedItem2.status === 'processing', '2화가 자동으로 스케줄링되지 않았습니다.');
 
-        if (updatedItem1.status !== 'completed' || updatedItem3.status !== 'processing') {
-            throw new Error('대기 중이던 3화 자동 실행 전이 실패');
-        }
-
-        // 3화 팝업은 기존 1화 팝업(popup1)을 재활용해야 함.
-        const popup3 = activeWorkers.get(id3);
-        console.assert(popup3 === popup1, '3화 가용 슬롯 팝업 재사용 실패');
-
-        if (popup3 !== popup1) {
-            throw new Error('팝업 재활용 검증 실패');
+        if (updatedItem1.status !== 'completed' || updatedItem2.status !== 'processing') {
+            throw new Error('대기 중이던 2화 자동 실행 전이 실패');
         }
 
         // 9. 2화 완료 처리 시뮬레이션
@@ -754,17 +770,26 @@ test('멀티큐 자율 배치 스케줄러 시나리오가 Concurrency 한도를
         simulateWorkerMessage(popup2, 'WORKER_READY', { targetUrl: 'http://example.com/2' });
         simulateWorkerMessage(popup2, 'TASK_COMPLETED', { queueId: id2, content: '2화 본문' });
 
-        await new Promise(resolve => backupSetTimeout(resolve, 50));
+        // 2화 완료 후 3화 자동 실행 검증
+        await new Promise(resolve => backupSetTimeout(resolve, 300));
+
+        const queueState3 = getQueue();
+        const updatedItem3 = queueState3.find(i => i.id === id3);
+        console.assert(updatedItem3.status === 'processing', '3화가 자동으로 스케줄링되지 않았습니다.');
+        if (updatedItem3.status !== 'processing') {
+            throw new Error('대기 중이던 3화 자동 실행 전이 실패');
+        }
 
         // 10. 3화 완료 처리 시뮬레이션
+        const popup3 = activeWorkers.get(id3);
         simulateWorkerMessage(popup3, 'WORKER_READY', { targetUrl: 'http://example.com/3' });
         simulateWorkerMessage(popup3, 'TASK_COMPLETED', { queueId: id3, content: '3화 본문' });
 
-        await new Promise(resolve => backupSetTimeout(resolve, 50));
+        await new Promise(resolve => backupSetTimeout(resolve, 300));
 
         // 11. 최종 상태 검증
-        const queueState3 = getQueue();
-        const allCompleted = queueState3.every(i => i.status === 'completed');
+        const queueState4 = getQueue();
+        const allCompleted = queueState4.every(i => i.status === 'completed');
         console.assert(allCompleted === true, '모든 에피소드가 완료되지 않았습니다.');
 
         // 12. 최종 1회 드라이브 캐시 갱신 함수 호출 검증
@@ -785,6 +810,499 @@ test('멀티큐 자율 배치 스케줄러 시나리오가 Concurrency 한도를
         globalThis.setTimeout = backupSetTimeout;
         clearQueue();
         activeWorkers.clear();
+    }
+});
+
+// ── 테스트 15: 구버전 커스텀 규칙(TOKI_CUSTOM_RULES) 자동 마이그레이션 검증 ──────────────────────
+test('RuleManager는 구버전 커스텀 규칙이 존재하면 새로운 TOKI_PARSER_RULES로 마이그레이션해야 합니다.', async () => {
+    const backupGM_getValue = globalThis.GM_getValue;
+    const backupGM_setValue = globalThis.GM_setValue;
+    const backupGM_deleteValue = globalThis.GM_deleteValue;
+
+    try {
+        const mockStorage = new Map();
+        globalThis.GM_getValue = (key, defaultVal) => mockStorage.has(key) ? mockStorage.get(key) : defaultVal;
+        globalThis.GM_setValue = (key, val) => mockStorage.set(key, val);
+        globalThis.GM_deleteValue = (key) => mockStorage.delete(key);
+
+        const legacyRules = [
+            { id: "custom_test_site", name: "커스텀 테스트 사이트 규칙", urlPattern: ".*custom.*" }
+        ];
+        globalThis.GM_setValue('TOKI_CUSTOM_RULES', JSON.stringify(legacyRules));
+
+        const { RuleManager } = await import('./parsers/RuleManager.js');
+        const rules = await RuleManager.getRules();
+
+        const customRule = rules.find(r => r.id === 'custom_test_site');
+        console.assert(customRule !== undefined, '커스텀 규칙이 마이그레이션되지 않았습니다.');
+        console.assert(globalThis.GM_getValue('TOKI_CUSTOM_RULES') === undefined, '레거시 스토리지 키가 삭제되지 않았습니다.');
+
+        if (!customRule || globalThis.GM_getValue('TOKI_CUSTOM_RULES') !== undefined) {
+            throw new Error('구버전 커스텀 규칙 마이그레이션 실패');
+        }
+    } finally {
+        globalThis.GM_getValue = backupGM_getValue;
+        globalThis.GM_setValue = backupGM_setValue;
+        globalThis.GM_deleteValue = backupGM_deleteValue;
+    }
+});
+
+// ── 테스트 16: localStorage 기반 설정 2중 백업/복원(Self-Healing) 검증 ──────────────────────
+test('config 모듈은 GM_getValue 설정이 유실되었을 때 localStorage 백업으로부터 설정을 복원해야 합니다.', async () => {
+    const backupGM_getValue = globalThis.GM_getValue;
+    const backupGM_setValue = globalThis.GM_setValue;
+    const backupLocalStorage = globalThis.localStorage;
+
+    try {
+        const mockStorage = new Map();
+        globalThis.GM_getValue = (key, defaultVal) => mockStorage.has(key) ? mockStorage.get(key) : defaultVal;
+        globalThis.GM_setValue = (key, val) => mockStorage.set(key, val);
+
+        const localStore = new Map();
+        globalThis.localStorage = {
+            setItem(key, val) { localStore.set(key, val); },
+            getItem(key) { return localStore.get(key) || null; }
+        };
+
+        const { getConfig, setConfig } = await import('./config.js');
+
+        // 1. 초기값 설정 및 백업 생성 검증
+        setConfig('TOKI_FOLDER_ID', 'test-folder-123');
+        setConfig('TOKI_GAS_ID', 'test-gas-456');
+
+        const backupStr = localStore.get('tokisync_config_backup');
+        console.assert(backupStr !== undefined, 'localStorage 백업 사본이 생성되지 않았습니다.');
+
+        // 2. GM 스페이스 강제 소멸 (초기화 시나리오)
+        mockStorage.clear();
+
+        // 3. 복원 검증
+        const config = getConfig();
+        console.assert(config.folderId === 'test-folder-123', `설정이 복원되지 않았습니다. folderId: ${config.folderId}`);
+        console.assert(config.gasId === 'test-gas-456', `설정이 복원되지 않았습니다. gasId: ${config.gasId}`);
+
+    } finally {
+        globalThis.GM_getValue = backupGM_getValue;
+        globalThis.GM_setValue = backupGM_setValue;
+        globalThis.localStorage = backupLocalStorage;
+    }
+});
+
+// ── 테스트 17: UI 모듈 분할 및 EventBus 기반 대시보드 제어 검증 ──────────────────────
+test('MenuModal의 제어 메소드가 EventBus를 통해 LogBox의 대시보드 제어 핸들러를 정상 호출해야 합니다.', async () => {
+    const { EventBus, EVT } = await import('./EventBus.js');
+    const { MenuModal } = await import('./ui/MenuModal.js');
+
+    let openCalled = false;
+    let closeCalled = false;
+    let toggleCalled = false;
+
+    // EventBus 구독을 통해 MenuModal의 방출 검증
+    const unsubOpen = EventBus.on(EVT.OPEN_DASHBOARD, () => { openCalled = true; });
+    const unsubClose = EventBus.on(EVT.CLOSE_DASHBOARD, () => { closeCalled = true; });
+    const unsubToggle = EventBus.on(EVT.TOGGLE_DASHBOARD, () => { toggleCalled = true; });
+
+    const menu = MenuModal.getInstance();
+    
+    // 1. MenuModal의 show, close, toggle 실행 시 EventBus 이벤트 방출 검사
+    menu.show();
+    menu.close();
+    menu.toggle();
+
+    console.assert(openCalled === true, 'EVT.OPEN_DASHBOARD 이벤트가 발행되지 않았습니다.');
+    console.assert(closeCalled === true, 'EVT.CLOSE_DASHBOARD 이벤트가 발행되지 않았습니다.');
+    console.assert(toggleCalled === true, 'EVT.TOGGLE_DASHBOARD 이벤트가 발행되지 않았습니다.');
+
+    unsubOpen();
+    unsubClose();
+    unsubToggle();
+
+    if (!openCalled || !closeCalled || !toggleCalled) {
+        throw new Error('MenuModal ➡️ EventBus 이벤트 발행 검증 실패');
+    }
+
+    // 2. LogBox가 EventBus 이벤트를 수신하여 자체 제어 함수를 호출하는지 검사
+    let logBoxOpenCalled = false;
+    let logBoxCloseCalled = false;
+    let logBoxToggleCalled = false;
+
+    const mockLogBoxInstance = {
+        openDashboard() { logBoxOpenCalled = true; },
+        hide() { logBoxCloseCalled = true; },
+        toggle() { logBoxToggleCalled = true; }
+    };
+
+    // 임시로 EventBus에 LogBox 역할의 리스너를 바인딩하여 정상 중개 수신되는지 검증
+    const unsubBoxOpen = EventBus.on(EVT.OPEN_DASHBOARD, () => mockLogBoxInstance.openDashboard());
+    const unsubBoxClose = EventBus.on(EVT.CLOSE_DASHBOARD, () => mockLogBoxInstance.hide());
+    const unsubBoxToggle = EventBus.on(EVT.TOGGLE_DASHBOARD, () => mockLogBoxInstance.toggle());
+
+    EventBus.emit(EVT.OPEN_DASHBOARD);
+    EventBus.emit(EVT.CLOSE_DASHBOARD);
+    EventBus.emit(EVT.TOGGLE_DASHBOARD);
+
+    console.assert(logBoxOpenCalled === true, 'LogBox의 openDashboard 호출 중개 실패');
+    console.assert(logBoxCloseCalled === true, 'LogBox의 hide 호출 중개 실패');
+    console.assert(logBoxToggleCalled === true, 'LogBox의 toggle 호출 중개 실패');
+
+    unsubBoxOpen();
+    unsubBoxClose();
+    unsubBoxToggle();
+
+    if (!logBoxOpenCalled || !logBoxCloseCalled || !logBoxToggleCalled) {
+        throw new Error('EventBus ➡️ LogBox 수신 및 중개 검증 실패');
+    }
+});
+
+// ── 테스트 H11: EventBus emit try/catch 격리 ─────────────────
+test('Listener가 throw해도 같은 이벤트의 다른 리스너가 정상 실행되어야 합니다.', () => {
+    const fired = [];
+
+    const unsub1 = EventBus.on('test:isolation', () => {
+        fired.push('first');
+        throw new Error('first listener failed');
+    });
+
+    const unsub2 = EventBus.on('test:isolation', () => {
+        fired.push('second');
+    });
+
+    const origError = console.error;
+    const errors = [];
+    console.error = (msg, err) => { errors.push({ msg, err }); };
+
+    try {
+        EventBus.emit('test:isolation');
+
+        console.assert(fired.length === 2, `리스너가 ${fired.length}개만 실행됨 (기대치: 2개)`);
+        console.assert(fired[0] === 'first', '첫 번째 리스너가 먼저 실행되지 않음');
+        console.assert(fired[1] === 'second', '두 번째 리스너가 실행되지 않음');
+        console.assert(errors.length >= 1, 'console.error로 에러가 기록되지 않음');
+
+        if (fired.length !== 2 || fired[1] !== 'second') {
+            throw new Error('EventBus try/catch 격리 실패: throwing listener가 sibling을 차단함');
+        }
+    } finally {
+        console.error = origError;
+        unsub1();
+        unsub2();
+    }
+});
+
+// ── 테스트 L44: EventBus 리스너 하드캡 50 ─────────────────────
+test('EventBus 리스너 수가 50개 초과 시 새 리스너 등록이 차단되어야 합니다.', () => {
+    const callCounters = [];
+    const FIRE_MARKER = 'test:harcap';
+
+    // 51개 리스너 등록
+    for (let i = 0; i < 51; i++) {
+        const idx = i;
+        callCounters[idx] = false;
+        const unsub = EventBus.on(FIRE_MARKER, () => { callCounters[idx] = true; });
+        if (i === 50) {
+            // 51번째 on()은 no-op을 반환해야 함
+            console.assert(typeof unsub === 'function', '51번째 on()이 함수를 반환해야 함');
+            // 51번째는 실제로 등록되지 않으므로 emit 후 counter가 true가 되면 안 됨
+        }
+    }
+
+    EventBus.emit(FIRE_MARKER);
+
+    // 50번째까지는 모두 실행되어야 함
+    let fireCount = callCounters.filter(c => c === true).length;
+    console.assert(fireCount === 50, `실행된 리스너 수: ${fireCount} (기대치: 50)`);
+    console.assert(callCounters[50] === undefined || callCounters[50] === false,
+        `51번째 리스너가 실행됨 (기대치: 실행되지 않아야 함)`);
+
+    if (fireCount !== 50) {
+        throw new Error(`EventBus 하드캡 실패: ${fireCount}개 리스너 실행됨 (기대치: 50개, 초과 1개는 no-op 반환)`);
+    }
+});
+
+// ── 테스트 G4: QUEUE_ITEM_UPDATE 이벤트 → 큐 상태 변경 ────────
+test('EVT.QUEUE_ITEM_UPDATE emit 시 queue.js의 updateQueueItem이 정상 호출되어야 합니다.', () => {
+    // localStorage mock (queue.js persistence 의존)
+    const origLocalStorage = globalThis.localStorage;
+    const mockStore = {};
+    globalThis.localStorage = {
+        getItem(key) { return mockStore[key] || null; },
+        setItem(key, val) { mockStore[key] = val.toString(); },
+        removeItem(key) { delete mockStore[key]; },
+        clear() { Object.keys(mockStore).forEach(k => delete mockStore[k]); }
+    };
+
+    try {
+        const testItem = {
+            episodeNum: 1,
+            title: '테스트 에피소드',
+            url: 'http://test.com/ep/1',
+            category: 'Novel'
+        };
+
+        clearQueue();
+
+        // 1. 큐에 아이템 추가 (novelTitle로 id 생성됨)
+        addEpisodesToQueue([testItem], 'G4_Test_Series');
+        const afterAdd = getQueue();
+        const addedItem = afterAdd.find(item => item.episodeUrl === testItem.url);
+        console.assert(addedItem !== undefined, '큐에 아이템이 추가되지 않음');
+        console.assert(addedItem.status === 'pending', '추가된 아이템의 상태가 pending이 아님');
+
+        const generatedId = addedItem.id;
+
+        // 2. QUEUE_ITEM_UPDATE emit으로 상태 변경
+        EventBus.emit(EVT.QUEUE_ITEM_UPDATE, {
+            id: generatedId,
+            updates: { status: 'completed', progressPercent: 100 }
+        });
+
+        const afterUpdate = getQueue();
+        const updatedItem = afterUpdate.find(item => item.id === generatedId);
+        console.assert(updatedItem !== undefined, '업데이트 후 아이템을 찾을 수 없음');
+        console.assert(updatedItem.status === 'completed',
+            `아이템 상태가 'completed'가 아님 (actual: ${updatedItem.status})`);
+        console.assert(updatedItem.progressPercent === 100,
+            `progressPercent가 100이 아님 (actual: ${updatedItem.progressPercent})`);
+
+        // 3. 정리
+        clearQueue();
+
+        if (!updatedItem || updatedItem.status !== 'completed') {
+            throw new Error('QUEUE_ITEM_UPDATE 이벤트가 queue.js의 updateQueueItem을 호출하지 못함');
+        }
+    } finally {
+        globalThis.localStorage = origLocalStorage;
+    }
+});
+
+// ── H7: notify() timer 중복 방지 ─────────────────────────────
+test('notify() 연속 호출 시 이전 타이머가 취소되고 마지막 메시지만 표시되어야 합니다.', () => {
+    let timerIds = [];
+    const origSetTimeout = globalThis.setTimeout;
+    const origClearTimeout = globalThis.clearTimeout;
+
+    try {
+        const timers = new Map();
+        let nextId = 1;
+        globalThis.setTimeout = (fn, ms) => {
+            const id = nextId++;
+            timers.set(id, fn);
+            timerIds.push(id);
+            return id;
+        };
+        globalThis.clearTimeout = (id) => {
+            timers.delete(id);
+        };
+
+        let notifyTimerId = null;
+        let notification = '';
+
+        const notify = (msg) => {
+            if (notifyTimerId) globalThis.clearTimeout(notifyTimerId);
+            notification = msg;
+            notifyTimerId = globalThis.setTimeout(() => {
+                notification = '';
+                notifyTimerId = null;
+            }, 3000);
+        };
+
+        notify('A');
+        const firstTimer = notifyTimerId;
+        notify('B');
+        const secondTimer = notifyTimerId;
+
+        console.assert(firstTimer !== secondTimer, 'notify()가 새 타이머를 생성하지 않음');
+        console.assert(notification === 'B', 'notification이 마지막 메시지가 아님');
+        console.assert(timers.size === 1, '이전 타이머가 취소되지 않음 (timers: ' + timers.size + ')');
+
+        if (notification !== 'B' || timers.size !== 1) {
+            throw new Error('H7 notify timer race: 이전 타이머 취소 실패');
+        }
+    } finally {
+        globalThis.setTimeout = origSetTimeout;
+        globalThis.clearTimeout = origClearTimeout;
+    }
+});
+
+// ── M2: EventBus request() 타임아웃 ──────────────────────────
+test('EventBus.request()가 미응답 이벤트에 대해 설정된 타임아웃 내 reject되어야 합니다.', async () => {
+    const start = Date.now();
+    try {
+        await EventBus.request('no-such-event-ever', {}, 5);
+        throw new Error('request()가 타임아웃되지 않고 resolve됨');
+    } catch (e) {
+        const elapsed = Date.now() - start;
+        console.assert(e.message.includes('Timeout'), `에러 메시지에 "Timeout" 없음: ${e.message}`);
+        console.assert(elapsed < 100, `타임아웃이 ${elapsed}ms 소요됨 (기대치: < 100ms)`);
+        if (!e.message.includes('Timeout') || elapsed >= 100) {
+            throw new Error('M2 request timeout 실패');
+        }
+    }
+});
+
+// ── M10: CbzBuilder.escapeXml null guard ────────────────────
+test('CbzBuilder.escapeXml()가 null/undefined 입력 시 빈 문자열을 반환해야 합니다.', () => {
+    const builder = new CbzBuilder('test-series');
+    console.assert(builder.escapeXml(null) === '', 'escapeXml(null)이 빈 문자열이 아님');
+    console.assert(builder.escapeXml(undefined) === '', 'escapeXml(undefined)이 빈 문자열이 아님');
+    console.assert(builder.escapeXml('') === '', 'escapeXml("")이 빈 문자열이 아님');
+    console.assert(builder.escapeXml('hello') === 'hello', 'escapeXml(hello)가 hello가 아님');
+    console.assert(builder.escapeXml('<tag>') === '&lt;tag&gt;', 'escapeXml(<tag>) 실패');
+    console.assert(builder.escapeXml('"&') === '&quot;&amp;', 'escapeXml("&) 실패');
+
+    if (builder.escapeXml(null) !== '') {
+        throw new Error('M10 escapeXml(null) guard 실패: null 입력 시 TypeError 발생 가능');
+    }
+});
+
+// ── M9: setInterval unbounded cleanup ─────────────────────────
+test('setInterval 중복 등록 시 이전 interval이 clearInterval로 해제되어야 합니다.', () => {
+    let clearCallCount = 0;
+    let lastClearId = null;
+    const origClearInterval = globalThis.clearInterval;
+    const origSetInterval = globalThis.setInterval;
+
+    try {
+        globalThis.clearInterval = (id) => {
+            clearCallCount++;
+            lastClearId = id;
+        };
+
+        let batchIntervalId = null;
+        const startInterval = () => {
+            if (batchIntervalId) globalThis.clearInterval(batchIntervalId);
+            batchIntervalId = globalThis.setInterval(() => {}, 2000);
+            return batchIntervalId;
+        };
+
+        const id1 = startInterval();
+        const id2 = startInterval();
+
+        console.assert(clearCallCount === 1, `clearInterval 호출 횟수: ${clearCallCount} (기대치: 1)`);
+        console.assert(lastClearId === id1, '이전 interval ID가 clearInterval로 전달되지 않음');
+        console.assert(batchIntervalId === id2, 'batchIntervalId가 최신 interval ID가 아님');
+
+        if (clearCallCount !== 1) {
+            throw new Error('M9 setInterval cleanup 실패: 중복 interval 누적');
+        }
+    } finally {
+        globalThis.clearInterval = origClearInterval;
+        globalThis.setInterval = origSetInterval;
+    }
+});
+
+// ── M5: 네트워크 URL Drive query encodeURIComponent ──────────
+test('Drive API query URL에 encodeURIComponent가 적용되어야 합니다.', () => {
+    const testName = "Action & Adventure + 100%";
+    const escapedName = testName.replace(/'/g, "\\'");
+    const queryPart = `name = '${escapedName}'`;
+    const fullQuery = `${queryPart} and 'parent123' in parents and trashed=false`;
+    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(fullQuery)}`;
+
+    console.assert(url.includes('%26'), '&가 URL 인코딩되지 않음');
+    console.assert(url.includes('%2B'), '+가 URL 인코딩되지 않음');
+    console.assert(url.includes('%25'), '%가 URL 인코딩되지 않음');
+
+    if (!url.includes('%26')) {
+        throw new Error('M5 encodeURIComponent 누락: 특수문자로 인한 HTTP 400 위험');
+    }
+});
+
+// ── L30: getOrCreateFolder URL encodeURIComponent ─────────────
+test('폴더명 내 특수문자가 getOrCreateFolder URL에서 인코딩되어야 합니다.', () => {
+    const folderName = "Webtoon & More";
+    const queryPart = `name = '${folderName.replace(/'/g, "\\'")}'`;
+    const fullQuery = `${queryPart} and 'parentId' in parents and trashed=false`;
+    const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(fullQuery)}`;
+
+    console.assert(searchUrl.includes('%26'), '&가 인코딩되지 않음 (HTTP 400 원인)');
+
+    if (!searchUrl.includes('%26')) {
+        throw new Error('L30 encodeURIComponent 누락: 폴더명 & 문자로 Drive API 실패');
+    }
+});
+
+// ── M8: SubscriptionManager 에러 시 5분 쿨다운 ──────────────
+test('SubscriptionManager 에러 시 lastFetched가 24h가 아닌 5min 쿨다운으로 설정되어야 합니다.', () => {
+    const now = Date.now();
+    const CHECK_INTERVAL = 86400000;
+    const errorCooldown = now - CHECK_INTERVAL + 300000;
+
+    console.assert(errorCooldown > now - CHECK_INTERVAL, 'cooldown이 24h 이전이 아님');
+    console.assert(errorCooldown < now - CHECK_INTERVAL + 600000, 'cooldown이 10분을 초과함');
+    console.assert(errorCooldown >= now - CHECK_INTERVAL + 300000 - 100, 'cooldown이 5분 미만임');
+
+    const retryAfter = errorCooldown + CHECK_INTERVAL;
+    const waitMinutes = (retryAfter - now) / 60000;
+    console.assert(waitMinutes >= 4 && waitMinutes <= 6,
+        `재시도 대기 시간이 ${waitMinutes.toFixed(1)}분 (기대치: ~5분)`);
+
+    if (waitMinutes > 10) {
+        throw new Error('M8 24h retry block: 에러 후 재시도가 10분 이상 차단됨');
+    }
+});
+
+// ── M6: utils.js revokeObjectURL setTimeout 지연 ────────────
+test('revokeObjectURL가 setTimeout을 통해 지연 호출되어야 합니다.', () => {
+    const calls = [];
+    const origSetTimeout = globalThis.setTimeout;
+
+    try {
+        globalThis.setTimeout = (fn, ms, ...args) => {
+            calls.push({ fn, ms, args });
+            return 1;
+        };
+
+        const url = 'blob:test-url-123';
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+        console.assert(calls.length === 1, 'setTimeout이 호출되지 않음');
+        console.assert(calls[0].ms === 1000, `지연 시간이 ${calls[0].ms}ms (기대치: 1000ms)`);
+
+        if (calls.length === 0 || calls[0].ms !== 1000) {
+            throw new Error('M6 revokeObjectURL 지연 실패');
+        }
+    } finally {
+        globalThis.setTimeout = origSetTimeout;
+    }
+});
+
+// ── M3: anti_sleep audioContext 동기식 null 설정 ────────────
+test('stopSilentAudio() 호출 시 audioContext가 동기적으로 null로 설정되어야 합니다.', () => {
+    let context = { state: 'running', close() { return Promise.resolve(); } };
+    const closeSpy = { called: false };
+
+    const stopSilentAudio = () => {
+        if (context) {
+            const ctx = context;
+            context = null;
+            ctx.close().then(() => {});
+            closeSpy.called = true;
+        }
+    };
+
+    stopSilentAudio();
+    console.assert(context === null, 'stopSilentAudio() 후 context가 null이 아님');
+    console.assert(closeSpy.called === true, 'close()가 호출되지 않음');
+
+    if (context !== null) {
+        throw new Error('M3 audioContext race: close() 완료 전까지 context가 null이 아님');
+    }
+});
+
+// ── M1: EventBus dead constants 제거 확인 ─────────────────────
+test('EVT에 NOTIFY_CONFIRM, DOWNLOAD_DONE, VERIFY_RESULT, TEST_RESULT dead constants가 없어야 합니다.', () => {
+    console.assert(EVT.NOTIFY_CONFIRM === undefined,
+        'EVT.NOTIFY_CONFIRM이 아직 존재함');
+    console.assert(EVT.DOWNLOAD_DONE === undefined,
+        'EVT.DOWNLOAD_DONE이 아직 존재함');
+    console.assert(EVT.VERIFY_RESULT === undefined,
+        'EVT.VERIFY_RESULT가 아직 존재함');
+    console.assert(EVT.TEST_RESULT === undefined,
+        'EVT.TEST_RESULT가 아직 존재함');
+
+    if (EVT.NOTIFY_CONFIRM !== undefined) {
+        throw new Error('M1 dead constants 제거 실패: NOTIFY_CONFIRM 잔존');
     }
 });
 

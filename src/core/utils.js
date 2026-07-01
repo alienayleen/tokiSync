@@ -1,5 +1,27 @@
 import { uploadToGAS } from './gas.js';
-import { LogBox, Notifier } from './ui.js';
+import { LogBox, Notifier } from './ui/index.js';
+
+export function arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    const chunk_size = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk_size) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk_size));
+    }
+    return window.btoa(binary);
+}
+
+export function extractEpisodeNum(filename) {
+    if (!filename) return null;
+    const kavitaMatch = filename.match(/[- ]c(h)?(\d+)/i);
+    const legacyMatch = filename.match(/(\d+)화/);
+    const startNumMatch = filename.match(/^(\d+)/);
+
+    if (kavitaMatch) return kavitaMatch[2];
+    if (legacyMatch) return legacyMatch[1];
+    if (startNumMatch) return startNumMatch[1];
+    return null;
+}
 
 export async function blobToArrayBuffer(blob) {
     if (blob.arrayBuffer) {
@@ -193,7 +215,59 @@ export async function scrollToLoad(iframeDoc, stallTimeoutMs = 20000, viewerCfg 
 
     const isHidden = document.visibilityState === 'hidden';
     const behavior = isHidden ? 'auto' : 'smooth';
-    const logger = LogBox.getInstance();
+    
+    // [개선] 자식 워커 환경인 경우, 부모 창에 postMessage로 로그를 중계하는 가상 로거 프록시를 적용
+    let logger = null;
+    const isWorker = typeof window !== 'undefined' && window.opener && window.opener !== window;
+    
+    if (isWorker) {
+        logger = {
+            log: (msg, context = '') => {
+                const prefix = context ? `[${context}] ` : '';
+                try {
+                    if (window.opener && !window.opener.closed) {
+                        window.opener.postMessage({
+                            type: 'TOKI_WORKER_LOG',
+                            payload: { msg: `${prefix}${msg}`, level: 'info' },
+                            timestamp: Date.now()
+                        }, '*');
+                    }
+                } catch (e) {
+                    console.log(`[ScrollEngine] ${prefix}${msg}`);
+                }
+            },
+            warn: (msg, context = '') => {
+                const prefix = context ? `[${context}] ` : '';
+                try {
+                    if (window.opener && !window.opener.closed) {
+                        window.opener.postMessage({
+                            type: 'TOKI_WORKER_LOG',
+                            payload: { msg: `${prefix}${msg}`, level: 'warn' },
+                            timestamp: Date.now()
+                        }, '*');
+                    }
+                } catch (e) {
+                    console.warn(`[ScrollEngine] ${prefix}${msg}`);
+                }
+            },
+            error: (msg, context = '') => {
+                const prefix = context ? `[${context}] ` : '';
+                try {
+                    if (window.opener && !window.opener.closed) {
+                        window.opener.postMessage({
+                            type: 'TOKI_WORKER_LOG',
+                            payload: { msg: `${prefix}${msg}`, level: 'error' },
+                            timestamp: Date.now()
+                        }, '*');
+                    }
+                } catch (e) {
+                    console.error(`[ScrollEngine] ${prefix}${msg}`);
+                }
+            }
+        };
+    } else {
+        logger = LogBox.getInstance();
+    }
 
     logger.log('⏳ [ScrollEngine] 동적 가상화(div ➔ img) 둔갑 대기 스크롤 모드를 작동합니다.', 'DOM:Scroll');
 
@@ -248,6 +322,12 @@ export async function scrollToLoad(iframeDoc, stallTimeoutMs = 20000, viewerCfg 
                     targetImg = currentEl;
                 } else {
                     targetImg = currentEl.querySelector('img');
+                }
+
+                // [개선] 1초(1000ms * multiplier) 동안 이미지 엘리먼트 자체가 생성되지 않으면 가상화 이미지 노드가 아닌 것으로 판정 (광고/댓글 등 건너뛰기)
+                if (!targetImg && elapsed >= Math.round(1000 * multiplier)) {
+                    logger.warn(`⚠️ [Scroll] 페이지 [${displayIdx} / ${pageElements.length}] 이미지 태그 미발견 (무관한 노드로 판단하여 대기 건너뜀)`, 'DOM:Scroll');
+                    break;
                 }
 
                 // 둔갑 성공 확인 시, 해당 진짜 이미지의 바이너리 로드 완료(complete && naturalWidth > 0)까지 대기
@@ -438,7 +518,8 @@ export async function saveFile(data, filename, type = 'local', extension = 'zip'
         link.href = URL.createObjectURL(content);
         link.download = fullFileName;
         link.click();
-        URL.revokeObjectURL(link.href);
+        const url = link.href;
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
         link.remove();
         console.log(`[Local] 완료`);
     } else if (type === 'native') {
@@ -493,7 +574,7 @@ export async function saveFile(data, filename, type = 'local', extension = 'zip'
         } catch (e) {
             console.error(e);
             logger.error(`[Drive] 업로드 실패: ${e.message}`);
-            // Optional: Notify on error only if it's critical, but for individual files, log is better.
+            throw e;
         }
     }
 }
