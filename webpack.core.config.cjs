@@ -45,6 +45,7 @@ const METADATA_MAIN = `// ==UserScript==
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip-utils/0.1.0/jszip-utils.js
 // @run-at       document-start
+// @noframes
 // @license      MIT
 // ==/UserScript==
 `;
@@ -80,20 +81,21 @@ const METADATA_NEW_CORE = `// ==UserScript==
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip-utils/0.1.0/jszip-utils.js
 // @run-at       document-start
+// @noframes
 // @license      MIT
 // ==/UserScript==
 `;
 
-// Copy rules.sample.json to docs/rules.json for remote distribution
+// Copy rules.sample.json to dist/rules.json for remote distribution
 try {
-  const destDir = path.resolve(__dirname, 'docs');
+  const destDir = path.resolve(__dirname, 'dist');
   if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
   
   fs.copyFileSync(
     path.resolve(__dirname, 'src/core/parsers/rules.sample.json'),
-    path.resolve(__dirname, 'docs/rules.json')
+    path.resolve(__dirname, 'dist/rules.json')
   );
-  console.log("✅ Copied rules.sample.json to docs/rules.json");
+  console.log("✅ Copied rules.sample.json to dist/rules.json");
 } catch (e) {
   console.error("❌ Failed to copy rules.json:", e.message);
 }
@@ -103,7 +105,7 @@ module.exports = {
   entry: './src/core/index.js',
   output: {
     filename: 'tokiSync.user.js',
-    path: path.resolve(__dirname, 'docs'),
+    path: path.resolve(__dirname, 'dist'),
     clean: false,
   },
   module: {

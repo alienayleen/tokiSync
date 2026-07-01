@@ -109,6 +109,7 @@ export const addEpisodesToQueue = (episodes, novelTitle) => {
         novelFormat: ep.novelFormat || 'epub',
         matchedRule: ep.matchedRule || {},
         protocolDomain: ep.protocolDomain || '',
+        seriesMetadata: ep.seriesMetadata || {},
         status: 'pending',
         progressPercent: 0,
         stage: WORKER_STAGE.INIT,
@@ -144,41 +145,7 @@ export const updateQueueItem = (id, updates) => {
   return false;
 };
 
-/**
- * 팝업 재사용(Relay) 시 디스크 I/O 갭으로 인한 세마포어 중복 기동을 차단하기 위한 원자적 전이 함수
- */
-export const transitionQueueItemsForRelay = (completedId, nextId) => {
-  const queue = getRawQueue();
-  let changed = false;
 
-  const compIndex = queue.findIndex(item => item.id === completedId);
-  if (compIndex !== -1) {
-    queue[compIndex] = {
-      ...queue[compIndex],
-      status: 'completed',
-      stage: WORKER_STAGE.COMPLETED,
-      progressPercent: 100,
-      completedAt: Date.now()
-    };
-    changed = true;
-  }
-
-  const nextIndex = queue.findIndex(item => item.id === nextId);
-  if (nextIndex !== -1) {
-    queue[nextIndex] = {
-      ...queue[nextIndex],
-      status: 'processing',
-      stage: WORKER_STAGE.INIT,
-      progressPercent: 0
-    };
-    changed = true;
-  }
-
-  if (changed) {
-    saveRawQueue(queue);
-  }
-  return changed;
-};
 
 /**
  * 특정 큐 아이템의 실시간 진행률 고속 갱신
@@ -311,6 +278,11 @@ export const stopAllWorkers = () => {
   for (const [id, popupRef] of activeWorkers.entries()) {
     try {
       if (popupRef && !popupRef.closed) {
+        // [v1.21.8] 워커에 긴급 정지 postMessage 메시지 전파
+        const actualRef = popupRef.ref || popupRef;
+        if (actualRef && typeof actualRef.postMessage === 'function') {
+          actualRef.postMessage({ type: 'EMERGENCY_STOP', payload: { queueId: id } }, '*');
+        }
         popupRef.close();
       }
     } catch (e) {
@@ -335,8 +307,15 @@ export const stopAllWorkers = () => {
   });
   saveRawQueue(updatedQueue);
 
-  // 3. 일시 정지 해제
+  // 3. 일시 정지 해제 및 크로스 탭 정지 동기화 트리거
   setQueuePaused(false);
+  try {
+    if (typeof GM_setValue !== 'undefined') {
+      GM_setValue('tokisync_queue_stopped_trigger', Date.now());
+    } else if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('tokisync_queue_stopped_trigger', String(Date.now()));
+    }
+  } catch (e) {}
 };
 
 let isSchedulerRunning = false;
@@ -390,11 +369,15 @@ export const runSchedulerOnce = async () => {
       }
     }
 
-    // 1. 현재 processing(작업 중) 상태인 큐 아이템의 개수를 산출
-    const currentProcessing = queue.filter(item => item.status === 'processing');
+    // 1. 현재 수집 중인 활성 팝업(activeWorkers)의 개수를 제약 (순차 수집: 최대 1개)
+    if (activeWorkers.size >= 1) {
+      isSchedulerRunning = false;
+      return;
+    }
 
-    // 2. 동시성 임계값(MAX_CONCURRENCY = 2) 도달 시 즉시 대기 차단
-    if (currentProcessing.length >= MAX_CONCURRENCY) {
+    // 2. 전체 진행 중(수집 + 업로드)인 세션이 최대 허용 한계(3개) 이상이면 리소스 가드를 위해 차단
+    const currentProcessing = queue.filter(item => item.status === 'processing');
+    if (currentProcessing.length >= 3) {
       isSchedulerRunning = false;
       return;
     }
@@ -419,7 +402,7 @@ export const runSchedulerOnce = async () => {
       return;
     }
 
-    // 4. 인간 행동 모사를 위한 1.5초~3초 랜덤 지연 완충
+    // 4. 인간 행동 모사를 위한 2.0초~4.0초 랜덤 지연 완충
     console.log(`[Queue Scheduler] 🛡️ 안전 지연 대기 시작 (Target: ${nextItem.episodeTitle})`);
     
     // 배치 수집 기동을 위해 안티 슬립 기동
@@ -427,68 +410,30 @@ export const runSchedulerOnce = async () => {
       startSilentAudio();
     } catch (e) {}
 
-    await sleepJitter(1500, 3000);
+    await sleepJitter(2000, 4000);
 
-    // 5. 팝업 실행 및 상태 갱신
-    console.log(`[Queue Scheduler] 🚀 팝업 릴레이 기동: ${nextItem.episodeTitle} (${nextItem.episodeUrl})`);
-    updateQueueItem(nextItem.id, { status: 'processing' });
-    
-    // 유효한 기존 팝업 채널 재사용 탐색
-    let recycledPopup = null;
-    let targetSlotId = null;
-
-    // 2개의 슬롯 중 비어있거나 완료된 팝업 슬롯을 탐색하여 재사용
-    for (const [id, popupRef] of activeWorkers.entries()) {
-        const item = queue.find(i => i.id === id);
-        if (popupRef && !popupRef.closed && (!item || item.status === 'completed' || item.status === 'failed')) {
-            recycledPopup = popupRef;
-            targetSlotId = id;
-            break;
-        }
+    // [v1.21.8] 대기 지터 완료 후 사용자의 정지/일시정지 클릭 및 상태 정합성 재검증
+    const freshQueue = getRawQueue();
+    const freshItem = freshQueue.find(item => item.id === nextItem.id);
+    if (!freshItem || freshItem.status !== 'pending' || getQueuePaused()) {
+      console.log(`[Queue Scheduler] ⏹️ 지터 대기 중 중단/일시정지 또는 상태 변경 감지 -> 기동 취소: ${nextItem.episodeTitle}`);
+      isSchedulerRunning = false;
+      return;
     }
 
-    if (recycledPopup) {
-        const targetWindowName = `tokisync_novel_worker_${targetSlotId}`.replace(/[^a-zA-Z0-9_]/g, '');
-        const newWindowName = `tokisync_novel_worker_${nextItem.id}`.replace(/[^a-zA-Z0-9_]/g, '');
-
-        console.log(`[Queue Scheduler] ♻️ 기존 자식 팝업 슬롯 재사용 (이름: ${targetWindowName} -> 신규: ${newWindowName})`);
-        // activeWorkers 정리 및 교체
-        activeWorkers.delete(targetSlotId);
-        activeWorkers.set(nextItem.id, recycledPopup);
-
-        try {
-            // [우회 극대화] window.open 대신 window 객체 참조를 직접 제어하여 100% 확실하게 기존 팝업창을 재사용합니다.
-            console.log(`[Queue Scheduler] location.replace로 팝업 리다이렉션 시도: ${nextItem.episodeUrl}`);
-            try {
-                recycledPopup.location.replace(nextItem.episodeUrl);
-            } catch (replaceErr) {
-                console.warn('[Queue Scheduler] location.replace 제한 감지 -> location.href 폴백 시도:', replaceErr);
-                recycledPopup.location.href = nextItem.episodeUrl;
-            }
-            
-            // 통신용 window.name 갱신 시도 (크로스 도메인 보안 경계 등으로 예외 시 대비하여 안전 조치)
-            try {
-                recycledPopup.name = newWindowName;
-            } catch (nameErr) {
-                console.warn('[Queue Scheduler] recycledPopup.name 설정 실패 (무시 가능):', nameErr);
-            }
-            
-            activeWorkers.set(nextItem.id, recycledPopup);
-        } catch (err) {
-            console.warn('[Queue Scheduler] 팝업 직접 리다이렉트 제한 감지 (메시지 기반 간접 릴레이로 자동 위임됨):', err.message);
-        }
+    // 5. 팝업 실행 및 상태 갱신
+    console.log(`[Queue Scheduler] 🚀 1회성 신규 팝업 기동: ${nextItem.episodeTitle} (${nextItem.episodeUrl})`);
+    updateQueueItem(nextItem.id, { status: 'processing', startedAt: Date.now() });
+    
+    const popupRef = openEpisodePopup(nextItem.episodeUrl, nextItem.id);
+    if (popupRef) {
+        activeWorkers.set(nextItem.id, popupRef);
     } else {
-        // 가용 팝업이 없을 때만 물리적 open 수행 (최초 진입 시 2회만 동작)
-        const popupRef = openEpisodePopup(nextItem.episodeUrl, nextItem.id);
-        if (popupRef) {
-            activeWorkers.set(nextItem.id, popupRef);
-        } else {
-            // 팝업 차단 등으로 창 생성 실패 시 즉시 failed 처리
-            updateQueueItem(nextItem.id, { 
-                status: 'failed', 
-                errorMsg: '브라우저 팝업 차단막에 의해 창 생성에 실패했습니다.' 
-            });
-        }
+        // 팝업 차단 등으로 창 생성 실패 시 즉시 failed 처리
+        updateQueueItem(nextItem.id, { 
+            status: 'failed', 
+            errorMsg: '브라우저 팝업 차단막에 의해 창 생성에 실패했습니다.' 
+        });
     }
 
   } catch (err) {
@@ -525,15 +470,41 @@ const openEpisodePopup = (url, id) => {
   }
 };
 
+let isQueueSchedulerInitialized = false;
+
 /**
  * 이벤트 기반 백그라운드 세마포어 스케줄러 등록
  */
 export const initQueueScheduler = () => {
+  if (isQueueSchedulerInitialized) {
+    console.log('[Queue] 🚦 스케줄러가 이미 초기화되었습니다. 중복 기동을 차단합니다.');
+    return;
+  }
+  isQueueSchedulerInitialized = true;
   // 1. Tampermonkey 네이티브 비동기 스토리지 리스너 감시 활성화
   if (typeof GM_addValueChangeListener !== 'undefined') {
     GM_addValueChangeListener(STORAGE_KEY, (key, oldValue, newValue, remote) => {
       // 대기열 변동 이벤트가 오면 1회성 스케줄러 즉시 발동
       runSchedulerOnce();
+    });
+    // [v1.21.8] 크로스 탭 정지 동기화 감지기 추가
+    GM_addValueChangeListener('tokisync_queue_stopped_trigger', (key, oldValue, newValue, remote) => {
+      if (remote) {
+        console.log('[Queue] ⏹️ 타 탭의 중단 신호 감지 -> 현재 탭의 자식 워커 강제 폐쇄 및 클린업');
+        for (const [id, popupRef] of activeWorkers.entries()) {
+          try {
+            if (popupRef && !popupRef.closed) {
+              const actualRef = popupRef.ref || popupRef;
+              if (actualRef && typeof actualRef.postMessage === 'function') {
+                actualRef.postMessage({ type: 'EMERGENCY_STOP', payload: { queueId: id } }, '*');
+              }
+              popupRef.close();
+            }
+          } catch (e) {}
+        }
+        activeWorkers.clear();
+        closedCounts.clear();
+      }
     });
     console.log('[TokiSync Queue] 🚦 이벤트 기반(Event-Driven) 고성능 스케줄러가 활성화되었습니다.');
   } else {
@@ -541,6 +512,28 @@ export const initQueueScheduler = () => {
     setInterval(() => {
       runSchedulerOnce();
     }, 2000);
+    // Fallback: LocalStorage를 사용하는 멀티 탭 정지 감시
+    let lastStoppedTrigger = localStorage.getItem('tokisync_queue_stopped_trigger') || '0';
+    setInterval(() => {
+      const currentTrigger = localStorage.getItem('tokisync_queue_stopped_trigger') || '0';
+      if (currentTrigger !== lastStoppedTrigger) {
+        lastStoppedTrigger = currentTrigger;
+        console.log('[Queue] ⏹️ 타 탭의 중단 신호 감지(Fallback) -> 현재 탭의 자식 워커 강제 폐쇄 및 클린업');
+        for (const [id, popupRef] of activeWorkers.entries()) {
+          try {
+            if (popupRef && !popupRef.closed) {
+              const actualRef = popupRef.ref || popupRef;
+              if (actualRef && typeof actualRef.postMessage === 'function') {
+                actualRef.postMessage({ type: 'EMERGENCY_STOP', payload: { queueId: id } }, '*');
+              }
+              popupRef.close();
+            }
+          } catch (e) {}
+        }
+        activeWorkers.clear();
+        closedCounts.clear();
+      }
+    }, 1000);
     console.warn('[TokiSync Queue] ⚠️ GM_addValueChangeListener 미지원 환경. 2초 폴링 스케줄러로 기동합니다.');
   }
 

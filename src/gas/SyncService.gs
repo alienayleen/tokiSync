@@ -28,8 +28,27 @@ function checkDownloadHistory(data, rootFolderId) {
     });
 
     files.forEach((file) => {
-      const match = file.name.match(/^(\d+)/);
-      if (match) existingEpisodes.push(parseInt(match[1]));
+      let num = null;
+      // 1. Kavita 스타일 'c001' 또는 'ch001' 매칭
+      const kavitaMatch = file.name.match(/[-_ ]c(?:h)?(\d+)/i);
+      if (kavitaMatch) {
+        num = parseInt(kavitaMatch[1]);
+      } else {
+        // 2. '1화' 등의 명시적 화수 매칭
+        const hwaMatch = file.name.match(/(\d+)화/);
+        if (hwaMatch) {
+          num = parseInt(hwaMatch[1]);
+        } else {
+          // 3. 파일명의 첫 숫자로 시작하는 레거시 매칭
+          const startNumMatch = file.name.match(/^(\d+)/);
+          if (startNumMatch) {
+            num = parseInt(startNumMatch[1]);
+          }
+        }
+      }
+      if (num !== null && !isNaN(num)) {
+        existingEpisodes.push(num);
+      }
     });
 
     Debug.log(`🎉 Scan Complete. Found ${existingEpisodes.length} episodes.`);
@@ -64,11 +83,13 @@ function saveSeriesInfo(data, rootFolderId) {
   const infoData = {
     id: data.id,
     title: data.title,
+    vendor: data.vendor || "",
     metadata: {
       authors: [data.author || "Unknown"],
       status: data.status || "Unknown",
       category: data.category || "Unknown",
       publisher: data.site || "",
+      vendor: data.vendor || "",
     },
     thumbnail: data.thumbnail || "",
     url: data.url,
