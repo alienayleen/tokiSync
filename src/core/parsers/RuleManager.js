@@ -8,6 +8,41 @@ export class RuleManager {
     // Built-in sample rules as fallback/templates (Offline Seeding)
     static #builtInRules = [
         {
+            id: "toki_novel",
+            name: "토끼 계열 (뉴토끼) 소설 전용 규칙",
+            urlPattern: ".*newtoki[0-9]*\\.org/novel/.*",
+            category: "Novel",
+            meta: {
+                title: "meta[name=\"subject\"]",
+                author: ".view-content",
+                thumb: {
+                    selector: "img[itemprop=\"image\"]",
+                    attr: "src"
+                }
+            },
+            list: {
+                container: ".list-body, .serial-list, ul.list-desc",
+                item: "li, .list-item",
+                num: ".wr-num, .num, span.no",
+                title: "a.item-subject, a",
+                link: {
+                    selector: "a",
+                    attr: "href"
+                }
+            },
+            viewer: {
+                fetchMethod: "iframe",
+                imageRegex: "https?:\\\\/\\\\/[a-zA-Z0-9_\\\\.\\\\/-]+\\\\.(?:jpg|png|webp|gif)",
+                imageContainer: "div.view-padding, div.viewer",
+                imageItem: "img",
+                lazyAttrOptions: [
+                    "data-src",
+                    "data-lazy",
+                    "src"
+                ]
+            }
+        },
+        {
             id: "toki_common",
             name: "토끼 계열 (뉴토끼/마나토끼) 통합 규칙",
             urlPattern: ".*(newtoki|manatoki|comic|booktoki).*",
@@ -23,7 +58,7 @@ export class RuleManager {
             list: {
                 container: ".list-body",
                 item: "li",
-                num: "span.no",
+                num: ".wr-num, span.no",
                 title: "a",
                 link: {
                     selector: "a",
