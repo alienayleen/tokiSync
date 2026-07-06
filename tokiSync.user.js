@@ -8342,11 +8342,21 @@ async function extractEpisodeData(targetDoc, parser, siteInfo, isStaticDoc = fal
  */
 
 const MSG_PREFIX = 'TOKI_';
+const GM_NONCE_PREFIX = 'tokisync_ipc_nonce_';
 
 // --- Security: Trusted worker origins and nonce registry ---
 const _trustedWorkerOrigins = new Map(); // workerId -> origin
 const _activeNonces = new Set();         // Set of valid session nonces
 const _nonceToWorkerId = new Map();      // nonce -> workerId (for reverse lookup)
+
+// Parent(Controller)와 Child(Worker Popup)는 서로 다른 window(별도 JS 실행 컨텍스트)이므로
+// 이 모듈의 인메모리 Set/Map은 두 창 사이에서 공유되지 않는다 — 즉, 부모 창에서 생성/등록한
+// nonce를 자식 창의 validateNonce()는 절대 찾을 수 없어 모든 nonce 첨부 메시지가 차단된다.
+// Tampermonkey GM 저장소는 창이 아닌 스크립트 단위로 공유되므로, 이를 2차 조회 경로로 사용해
+// 부모/자식 어느 쪽에서 검증하든 동일한 결과를 얻도록 한다.
+function _hasGmStorage() {
+    return typeof GM_setValue === 'function' && typeof GM_getValue === 'function';
+}
 
 /**
  * Generate a cryptographically random nonce (32 bytes, hex-encoded = 64 chars)
@@ -8374,6 +8384,9 @@ function registerWorkerOrigin(workerId, origin) {
     const nonce = generateNonce();
     _activeNonces.add(nonce);
     _nonceToWorkerId.set(nonce, workerId);
+    if (_hasGmStorage()) {
+        try { GM_setValue(GM_NONCE_PREFIX + nonce, workerId); } catch (e) {}
+    }
     console.log(`[IPC:Broker] Worker origin registered: ${workerId} (origin=${origin})`);
     return nonce;
 }
@@ -8389,12 +8402,18 @@ function removeWorkerOrigin(workerId, nonce) {
     if (nonce) {
         _activeNonces.delete(nonce);
         _nonceToWorkerId.delete(nonce);
+        if (_hasGmStorage()) {
+            try { GM_deleteValue(GM_NONCE_PREFIX + nonce); } catch (e) {}
+        }
     } else {
         // Invalidate all nonces belonging to this worker
         for (const [n, wid] of _nonceToWorkerId.entries()) {
             if (wid === workerId) {
                 _activeNonces.delete(n);
                 _nonceToWorkerId.delete(n);
+                if (_hasGmStorage()) {
+                    try { GM_deleteValue(GM_NONCE_PREFIX + n); } catch (e) {}
+                }
             }
         }
     }
@@ -8405,8 +8424,18 @@ function removeWorkerOrigin(workerId, nonce) {
  * Validate a nonce. Returns the associated workerId if valid, null otherwise.
  */
 function validateNonce(nonce) {
-    if (!nonce || !_activeNonces.has(nonce)) return null;
-    return _nonceToWorkerId.get(nonce) || null;
+    if (!nonce) return null;
+    if (_activeNonces.has(nonce)) {
+        return _nonceToWorkerId.get(nonce) || null;
+    }
+    // 인메모리에 없으면(다른 창에서 등록된 nonce일 수 있음) GM 저장소에서 2차 조회
+    if (_hasGmStorage()) {
+        try {
+            const workerId = GM_getValue(GM_NONCE_PREFIX + nonce, null);
+            if (workerId) return workerId;
+        } catch (e) {}
+    }
+    return null;
 }
 
 /**
