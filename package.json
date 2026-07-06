@@ -29,15 +29,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/pray4skylark/tokiSync.git"
+    "url": "git+https://github.com/alienayleen/tokiSync.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/pray4skylark/tokiSync/issues"
+    "url": "https://github.com/alienayleen/tokiSync/issues"
   },
-  "homepage": "https://github.com/pray4skylark/tokiSync#readme",
+  "homepage": "https://github.com/alienayleen/tokiSync#readme",
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.4",
     "css-loader": "^6.8.1",

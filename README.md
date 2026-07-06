@@ -45,10 +45,10 @@
 * **`main` (Production / Stable)**: 
   - **오직 검증 완료된 정식 안정 버전**만 관리되는 실서비스 배포 브랜치입니다.
   - 정식 릴리즈 태그는 이 브랜치에 부여됩니다.
-  - 🌟 **정식 배포판 타겟**: [stable 뷰어](https://pray4skylark.github.io/tokiSync/) 및 관련 에셋
+  - 🌟 **정식 배포판 타겟**: [stable 뷰어](https://alienayleen.github.io/tokiSync/) 및 관련 에셋
 * **`develop` (Integration / Dev)**:
   - **모든 새로운 기능 개발 및 통합**을 진행하는 중심 개발 브랜치입니다.
-  - 🧪 **개발용 배포판 타겟**: [dev 개발 빌드 뷰어](https://pray4skylark.github.io/tokiSync/dev/) 및 관련 에셋
+  - 🧪 **개발용 배포판 타겟**: [dev 개발 빌드 뷰어](https://alienayleen.github.io/tokiSync/dev/) 및 관련 에셋
 
 ---
 
@@ -58,8 +58,8 @@
 
 ### 1. 📡 GAS 서버 배포
 
-1. **[TokiSync_Server_Bundle.gs (정식 버전)](https://pray4skylark.github.io/tokiSync/TokiSync_Server_Bundle.gs)** 코드를 복사하여 [Google Apps Script](https://script.google.com/)에 붙여넣습니다.
-   - 🧪 *(선택 사항)* 최신 기능 사전 테스트를 원하시면 **[개발 빌드(Dev)](https://pray4skylark.github.io/tokiSync/dev/TokiSync_Server_Bundle.gs)** 코드를 사용하세요.
+1. **[TokiSync_Server_Bundle.gs (정식 버전)](https://alienayleen.github.io/tokiSync/TokiSync_Server_Bundle.gs)** 코드를 복사하여 [Google Apps Script](https://script.google.com/)에 붙여넣습니다.
+   - 🧪 *(선택 사항)* 최신 기능 사전 테스트를 원하시면 **[개발 빌드(Dev)](https://alienayleen.github.io/tokiSync/dev/TokiSync_Server_Bundle.gs)** 코드를 사용하세요.
 2. **프로젝트 설정** > **스크립트 속성**에서 `API_KEY`를 추가하고 원하는 비밀번호를 입력합니다.
 3. `배포` > `새 배포` > `웹 앱` 선택 후 `Anyone (모든 사용자)` 권한으로 배포합니다.
 
@@ -67,14 +67,14 @@
 
 1. 브라우저에 [Tampermonkey](https://www.tampermonkey.net/) 확장 프로그램을 설치합니다.
 2. 다음 링크 중 하나를 선택하여 UserScript를 설치합니다:
-   - 🌟 **[TokiSync UserScript (Stable 정식 버전)](https://pray4skylark.github.io/tokiSync/tokiSync.user.js)** (권장)
-   - 🧪 **[TokiSync UserScript (Dev 개발 빌드)](https://pray4skylark.github.io/tokiSync/dev/tokiSync.user.js)** (최신 기능 테스트)
+   - 🌟 **[TokiSync UserScript (Stable 정식 버전)](https://alienayleen.github.io/tokiSync/tokiSync.user.js)** (권장)
+   - 🧪 **[TokiSync UserScript (Dev 개발 빌드)](https://alienayleen.github.io/tokiSync/dev/tokiSync.user.js)** (최신 기능 테스트)
 3. 웹툰 사이트 접속 후 메뉴에서 **설정**을 열고 `GAS URL`, `Folder ID`, `API Key`를 입력합니다.
 
 ### 3. 📊 뷰어 실행
 
-- 🌟 **[TokiSync 웹 뷰어 (Stable 정식 버전)](https://pray4skylark.github.io/tokiSync/)** (권장)
-- 🧪 **[TokiSync 웹 뷰어 (Dev 개발 빌드)](https://pray4skylark.github.io/tokiSync/dev/)** (최신 기능 테스트)
+- 🌟 **[TokiSync 웹 뷰어 (Stable 정식 버전)](https://alienayleen.github.io/tokiSync/)** (권장)
+- 🧪 **[TokiSync 웹 뷰어 (Dev 개발 빌드)](https://alienayleen.github.io/tokiSync/dev/)** (최신 기능 테스트)
 
 ---
 

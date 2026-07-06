@@ -11,8 +11,8 @@ const METADATA_MAIN = `// ==UserScript==
 // @version      ${pkg.components.script}
 // @description  Toki series sites -> Google Drive syncing tool (Bundled)
 // @author       pray4skylark
-// @updateURL    https://pray4skylark.github.io/tokiSync/tokiSync.user.js
-// @downloadURL  https://pray4skylark.github.io/tokiSync/tokiSync.user.js
+// @updateURL    https://alienayleen.github.io/tokiSync/tokiSync.user.js
+// @downloadURL  https://alienayleen.github.io/tokiSync/tokiSync.user.js
 // @match        *://*/*webtoon/*
 // @match        *://*/*novel/*
 // @match        *://*/*manhwa/*
@@ -23,7 +23,7 @@ const METADATA_MAIN = `// ==UserScript==
 // @include      *://*toon*/*
 // @match        https://script.google.com/*
 // @match        https://*.github.io/tokiSync/*
-// @match        https://pray4skylark.github.io/tokiSync/*
+// @match        https://alienayleen.github.io/tokiSync/*
 // @include      http://localhost:*/*
 // @include      http://127.0.0.1:*/*
 // @icon         https://github.com/user-attachments/assets/99f5bb36-4ef8-40cc-8ae5-e3bf1c7952ad
@@ -38,7 +38,7 @@ const METADATA_MAIN = `// ==UserScript==
 // @connect      raw.githubusercontent.com
 // @connect      script.google.com
 // @connect      script.googleusercontent.com
-// @connect      pray4skylark.github.io
+// @connect      alienayleen.github.io
 // @connect      127.0.0.1
 // @connect      localhost
 // @connect      *

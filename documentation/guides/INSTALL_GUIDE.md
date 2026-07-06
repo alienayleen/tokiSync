@@ -26,7 +26,7 @@ Google Apps Script(GAS)는 사용자 본인만 접근 가능한 독립된 클라
    - 처음 프로젝트를 열면 코드 편집기에 기본적으로 `function myFunction() {}` 코드가 적혀 있습니다.
    - **이 기본 코드를 반드시 드래그하여 완전히 지우고, 화면을 빈 문서 상태로 만드셔야 합니다.**
 4. 아래 링크에서 최신 번들 코드를 복사하여 빈 문서창에 그대로 붙여넣습니다.
-   - 🌟 **[TokiSync_Server_Bundle.gs (Stable 정식 버전)](https://pray4skylark.github.io/tokiSync/TokiSync_Server_Bundle.gs)** (강력 권장)
+   - 🌟 **[TokiSync_Server_Bundle.gs (Stable 정식 버전)](https://alienayleen.github.io/tokiSync/TokiSync_Server_Bundle.gs)** (강력 권장)
 
 ### 1-2. Drive API v3 서비스 활성화 (매우 중요)
 
@@ -117,7 +117,7 @@ UserScript를 실행하려면 브라우저 전용 크래들인 `Tampermonkey`가
 ### 2-2. TokiSync UserScript 최종 설치
 
 1. 브라우저에 Tampermonkey가 활성화된 상태에서 아래 링크를 단 한 번만 클릭합니다.
-   - 2. 최신 **[TokiSync UserScript](https://pray4skylark.github.io/tokiSync/tokiSync.user.js)**를 설치합니다. 클릭하는 즉시 Tampermonkey 전용 인스톨 검토 창이 브라우저에 열립니다.
+   - 2. 최신 **[TokiSync UserScript](https://alienayleen.github.io/tokiSync/tokiSync.user.js)**를 설치합니다. 클릭하는 즉시 Tampermonkey 전용 인스톨 검토 창이 브라우저에 열립니다.
 3. 좌측 상단에 노출된 **[설치(Install)]** 또는 **[업데이트(Update)]** 버튼을 명시적으로 꼭 클릭해 주셔야 브라우저 런타임에 최종 각인됩니다.
 
 > [!TIP]
@@ -162,7 +162,7 @@ UserScript를 실행하려면 브라우저 전용 크래들인 `Tampermonkey`가
 
 공식 웹 뷰어는 구글 드라이브에 저장된 만화/소설 데이터를 브라우저 환경에서 깔끔하고 유려하게 스트리밍 방식으로 실시간 조회 및 정독할 수 있는 공간입니다.
 
-1. **[TokiSync 공식 웹 뷰어](https://pray4skylark.github.io/tokiSync/)**에 접속합니다.
+1. **[TokiSync 공식 웹 뷰어](https://alienayleen.github.io/tokiSync/)**에 접속합니다.
 2. 2단계의 UserScript가 설치 및 활성화된 브라우저라면, 뷰어 접속 즉시 스크립트 내부의 크로스도메인 Proxy 브릿지가 작동하여 **설정(GAS URL 및 API Key)을 자동으로 감지하고 주입**해 줍니다. 
 3. 주입 완료 후, 뷰어 대화상자가 연결 성공 메시지를 띄우며 드라이브 내 라이브러리 데이터를 즉시 읽어 들입니다.
 

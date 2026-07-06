@@ -12,7 +12,7 @@
           </p>
         </div>
       </div>
-      <a href="https://github.com/pray4skylark/tokiSync/blob/main/INSTALL_GUIDE.md" target="_blank"
+      <a href="https://github.com/alienayleen/tokiSync/blob/main/documentation/guides/INSTALL_GUIDE.md" target="_blank"
          class="px-6 py-2.5 bg-red-500/20 hover:bg-red-500/30 text-red-500 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all border border-red-500/30">
         설치 가이드 보기
       </a>
