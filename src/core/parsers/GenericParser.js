@@ -182,8 +182,35 @@ export class GenericParser extends BaseParser {
     getNovelContent(iframeDocument) {
         const viewerCfg = this.rule.viewer || {};
         const selector = viewerCfg.novelContent || 'body';
-        const el = iframeDocument.querySelector(selector);
-        return el ? el.innerText : "";
+
+        // 일반 querySelector는 Shadow DOM 경계를 관통하지 못하므로,
+        // 익명(anonymous) Shadow Host 내부에만 존재하는 본문 컨테이너 대응
+        const el = iframeDocument.querySelector(selector)
+                || this._deepQuerySelector(iframeDocument, [selector, '.novel-epub-rendered', '.theme-novel-content']);
+
+        if (!el) return "";
+        const searchRoot = el.shadowRoot || el;
+        return searchRoot.innerText || searchRoot.textContent || "";
+    }
+
+    /**
+     * @private
+     */
+    _deepQuerySelector(root, selectors) {
+        for (const sel of selectors) {
+            try {
+                const found = root.querySelector(sel);
+                if (found) return found;
+            } catch (e) {}
+        }
+        const children = root.querySelectorAll('*');
+        for (const child of children) {
+            if (child.shadowRoot) {
+                const found = this._deepQuerySelector(child.shadowRoot, selectors);
+                if (found) return found;
+            }
+        }
+        return null;
     }
 
     getImageList(iframeDocument) {

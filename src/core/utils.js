@@ -13,6 +13,32 @@ export async function blobToArrayBuffer(blob) {
     });
 }
 
+/**
+ * 일반 querySelector는 Shadow DOM 경계를 통과하지 못하므로,
+ * 대상 셀렉터가 이름 없는(anonymous) Shadow Host 내부에만 존재하는 경우
+ * 탐지가 불가능한 문제를 해결하기 위한 재귀 관통 탐색 유틸.
+ * @param {Document|ShadowRoot|Element} root 탐색을 시작할 루트 노드
+ * @param {string[]} selectors 우선순위 순으로 시도할 셀렉터 목록
+ * @returns {Element|null}
+ */
+export function deepQuerySelector(root, selectors) {
+    for (const sel of selectors) {
+        try {
+            const found = root.querySelector(sel);
+            if (found) return found;
+        } catch (e) {}
+    }
+
+    const children = root.querySelectorAll('*');
+    for (const el of children) {
+        if (el.shadowRoot) {
+            const found = deepQuerySelector(el.shadowRoot, selectors);
+            if (found) return found;
+        }
+    }
+    return null;
+}
+
 export function sleep(ms, randomRange) {
     if (randomRange) {
         ms = Math.floor(Math.random() * randomRange) + ms;
