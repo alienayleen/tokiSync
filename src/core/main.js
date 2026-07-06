@@ -80,7 +80,7 @@ export async function main() {
 
     const openViewer = () => {
          const config = getConfig();
-         const viewerUrl = "https://pray4skylark.github.io/tokiSync/";
+         const viewerUrl = "https://alienayleen.github.io/tokiSync/";
          const win = window.open(viewerUrl, "_blank");
          
          if(win) {
