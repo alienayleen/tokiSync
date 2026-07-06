@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TokiSync (Link to Drive)
 // @namespace    http://tampermonkey.net/
-// @version      1.26.4
+// @version      1.26.5
 // @description  Toki series sites -> Google Drive syncing tool (Bundled)
 // @author       pray4skylark
 // @updateURL    https://alienayleen.github.io/tokiSync/tokiSync.user.js
@@ -2735,7 +2735,7 @@ ${tocNav}
 class RuleManager {
     // Built-in sample rules as fallback/templates (Offline Seeding)
     static get _version() {
-        return  true ? "1.26.4" : 0;
+        return  true ? "1.26.5" : 0;
     }
 
     static #builtInRules = [
@@ -4806,7 +4806,7 @@ class FormRuleEditor {
     }
 
     render() {
-        const scriptVer =  true ? "1.26.4" : 0;
+        const scriptVer =  true ? "1.26.5" : 0;
         this.overlay.innerHTML = `
             <div class="toki-modal toki-form-editor-modal">
                 <div class="toki-modal-header">
