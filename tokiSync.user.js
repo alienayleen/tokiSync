@@ -4,8 +4,8 @@
 // @version      1.26.4
 // @description  Toki series sites -> Google Drive syncing tool (Bundled)
 // @author       pray4skylark
-// @updateURL    https://pray4skylark.github.io/tokiSync/tokiSync.user.js
-// @downloadURL  https://pray4skylark.github.io/tokiSync/tokiSync.user.js
+// @updateURL    https://alienayleen.github.io/tokiSync/tokiSync.user.js
+// @downloadURL  https://alienayleen.github.io/tokiSync/tokiSync.user.js
 // @match        *://*/*webtoon/*
 // @match        *://*/*novel/*
 // @match        *://*/*manhwa/*
@@ -16,7 +16,7 @@
 // @include      *://*toon*/*
 // @match        https://script.google.com/*
 // @match        https://*.github.io/tokiSync/*
-// @match        https://pray4skylark.github.io/tokiSync/*
+// @match        https://alienayleen.github.io/tokiSync/*
 // @include      http://localhost:*/*
 // @include      http://127.0.0.1:*/*
 // @icon         https://github.com/user-attachments/assets/99f5bb36-4ef8-40cc-8ae5-e3bf1c7952ad
@@ -31,7 +31,7 @@
 // @connect      raw.githubusercontent.com
 // @connect      script.google.com
 // @connect      script.googleusercontent.com
-// @connect      pray4skylark.github.io
+// @connect      alienayleen.github.io
 // @connect      127.0.0.1
 // @connect      localhost
 // @connect      *
@@ -2042,8 +2042,35 @@ class GenericParser extends BaseParser {
     getNovelContent(iframeDocument) {
         const viewerCfg = this.rule.viewer || {};
         const selector = viewerCfg.novelContent || 'body';
-        const el = iframeDocument.querySelector(selector);
-        return el ? el.innerText : "";
+
+        // 일반 querySelector는 Shadow DOM 경계를 관통하지 못하므로,
+        // 익명(anonymous) Shadow Host 내부에만 존재하는 본문 컨테이너 대응
+        const el = iframeDocument.querySelector(selector)
+                || this._deepQuerySelector(iframeDocument, [selector, '.novel-epub-rendered', '.theme-novel-content']);
+
+        if (!el) return "";
+        const searchRoot = el.shadowRoot || el;
+        return searchRoot.innerText || searchRoot.textContent || "";
+    }
+
+    /**
+     * @private
+     */
+    _deepQuerySelector(root, selectors) {
+        for (const sel of selectors) {
+            try {
+                const found = root.querySelector(sel);
+                if (found) return found;
+            } catch (e) {}
+        }
+        const children = root.querySelectorAll('*');
+        for (const child of children) {
+            if (child.shadowRoot) {
+                const found = this._deepQuerySelector(child.shadowRoot, selectors);
+                if (found) return found;
+            }
+        }
+        return null;
     }
 
     getImageList(iframeDocument) {
@@ -7459,6 +7486,7 @@ function isConfigValid() {
 /* harmony export */   Px: function() { return /* binding */ extractEpisodeNum; },
 /* harmony export */   UF: function() { return /* binding */ waitForContent; },
 /* harmony export */   Vs: function() { return /* binding */ scrollToLoad; },
+/* harmony export */   YZ: function() { return /* binding */ deepQuerySelector; },
 /* harmony export */   Yi: function() { return /* binding */ arrayBufferToBase64; },
 /* harmony export */   _L: function() { return /* binding */ blobToArrayBuffer; },
 /* harmony export */   iL: function() { return /* binding */ getCommonPrefix; },
@@ -7469,6 +7497,32 @@ function isConfigValid() {
 /* harmony import */ var _ui_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(605);
 
 
+
+/**
+ * 일반 querySelector는 Shadow DOM 경계를 통과하지 못하므로,
+ * 대상 셀렉터가 이름 없는(anonymous) Shadow Host 내부에만 존재하는 경우
+ * 탐지가 불가능한 문제를 해결하기 위한 재귀 관통 탐색 유틸.
+ * @param {Document|ShadowRoot|Element} root 탐색을 시작할 루트 노드
+ * @param {string[]} selectors 우선순위 순으로 시도할 셀렉터 목록
+ * @returns {Element|null}
+ */
+function deepQuerySelector(root, selectors) {
+    for (const sel of selectors) {
+        try {
+            const found = root.querySelector(sel);
+            if (found) return found;
+        } catch (e) {}
+    }
+
+    const children = root.querySelectorAll('*');
+    for (const el of children) {
+        if (el.shadowRoot) {
+            const found = deepQuerySelector(el.shadowRoot, selectors);
+            if (found) return found;
+        }
+    }
+    return null;
+}
 
 function arrayBufferToBase64(buffer) {
     const bytes = new Uint8Array(buffer);
@@ -9949,7 +10003,7 @@ async function main() {
 
     const openViewer = () => {
          const config = (0,core_config/* getConfig */.zj)();
-         const viewerUrl = "https://pray4skylark.github.io/tokiSync/";
+         const viewerUrl = "https://alienayleen.github.io/tokiSync/";
          const win = window.open(viewerUrl, "_blank");
          
          if(win) {
@@ -10624,33 +10678,36 @@ function initWorkerExtractor() {
                     const maxAttempts = 10;
 
                     // Poll Shadow DOM for novel text
+                    const novelSel = viewerCfg.novelContent || '#novel_content';
+                    const candidateSelectors = [novelSel, '.novel-epub-rendered', '.theme-novel-content'];
+
                     while (attempt < maxAttempts) {
                         attempt++;
                         console.log(`[TokiSync:Worker] 소설 Shadow DOM 폴링 중... (${attempt}/${maxAttempts})`);
-                        
-                        const novelSel = viewerCfg.novelContent || '#novel_content';
-                        const shadowHost = document.querySelector(novelSel)?.getRootNode()?.host
-                                        || document.querySelector('.novel-epub-rendered')?.getRootNode()?.host
-                                        || document.querySelector('.vw-bot-mini--novel')?.parentElement?.querySelector('div[style*="--novel-font-size"]');
 
-                        if (shadowHost && shadowHost.shadowRoot) {
+                        // [Shadow DOM 관통 탐색] 셀렉터가 이름 없는(anonymous) Shadow Host 내부
+                        // 깊숙이 중첩되어 있어도 일반 querySelector가 닿지 못하던 문제를 해결
+                        let contentEl = (0,utils/* deepQuerySelector */.YZ)(document, candidateSelectors);
+                        if (!contentEl) {
+                            // 레거시 사이트 구조 특화 폴백 (형제 엘리먼트 기반 탐지)
+                            contentEl = document.querySelector('.vw-bot-mini--novel')?.parentElement?.querySelector('div[style*="--novel-font-size"]') || null;
+                        }
+
+                        if (contentEl) {
                             reportProgress(queueId, 50, core_queue/* WORKER_STAGE */.WB.PARSING);
-                            const pTags = shadowHost.shadowRoot.querySelectorAll('.novel-epub-rendered p, p');
+                            // 매칭된 엘리먼트 자신이 Shadow Host라면 내부 shadowRoot가 실제 탐색 대상
+                            const searchRoot = contentEl.shadowRoot || contentEl;
+                            const pTags = searchRoot.querySelectorAll('p');
                             if (pTags.length > 0) {
                                 content = Array.from(pTags)
                                     .map(p => p.textContent.trim())
                                     .filter(text => text.length > 0)
                                     .join('\n\n');
                             } else {
-                                const bodyEl = shadowHost.shadowRoot.querySelector('.novel-epub-rendered');
-                                if (bodyEl) {
-                                    content = bodyEl.innerText || bodyEl.textContent;
-                                } else {
-                                    const tempDiv = document.createElement('div');
-                                    tempDiv.innerHTML = shadowHost.shadowRoot.innerHTML;
-                                    tempDiv.querySelectorAll('style, script').forEach(el => el.remove());
-                                    content = tempDiv.innerText || tempDiv.textContent;
-                                }
+                                const tempDiv = document.createElement('div');
+                                tempDiv.innerHTML = searchRoot.innerHTML || '';
+                                tempDiv.querySelectorAll('style, script').forEach(el => el.remove());
+                                content = tempDiv.innerText || tempDiv.textContent;
                             }
                             break;
                         }
