@@ -851,6 +851,11 @@ export function initBatchWorkerController() {
                 const queue = getQueue();
                 const item = queue.find(i => i.id === matchedId);
                 if (item) {
+                    // [Liveness Guard 오작동 방지] 단일 모드는 캡차 감지 시 타임아웃을 5분으로
+                    // 연장하지만, 배치 모드는 이 신호를 받고도 lastActivity를 갱신하지 않아
+                    // 60초 타임아웃 감시에 그대로 걸려 캡차 해제를 기다리는 정상 회차까지
+                    // 강제로 닫히고 재시도(팝업 재오픈)되는 문제가 있었다.
+                    updateQueueItem(matchedId, { lastActivity: Date.now() });
                     EventBus.emit(EVT.LOG, {
                         msg: `[배치] ⚠️ [캡차 대기] [${item.episodeTitle}] 브라우저 창에서 보안 해제를 수행해 주세요.`,
                         tag: 'Downloader:Batch',
