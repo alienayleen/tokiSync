@@ -585,7 +585,7 @@ export async function saveFile(data, filename, type = 'local', extension = 'zip'
                 }
             });
         });
-    } else if (type === 'drive') {
+    } else if (type === 'drive' || type === 'drive_kavita') {
         const logger = LogBox.getInstance();
         logger.log(`[Drive] 구글 드라이브 업로드 준비 중... (${fullFileName})`);
         
