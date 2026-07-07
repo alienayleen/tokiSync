@@ -8082,7 +8082,7 @@ async function saveFile(data, filename, type = 'local', extension = 'zip', metad
                 }
             });
         });
-    } else if (type === 'drive') {
+    } else if (type === 'drive' || type === 'drive_kavita') {
         const logger = _ui_index_js__WEBPACK_IMPORTED_MODULE_1__/* .LogBox */ .ej.getInstance();
         logger.log(`[Drive] 구글 드라이브 업로드 준비 중... (${fullFileName})`);
         
