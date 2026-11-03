@@ -4,7 +4,7 @@
     {
       "id": "blacktoon_webtoon",
       "name": "통합 웹툰 규칙 (신형 v2 & 뉴토끼/마나토끼 호환)",
-      "_version": "1.26.6",
+      "_version": "1.26.7",
       "urlPattern": ".*/(webtoon|toon)/.*",
       "idExtraction": {
         "source": "url",
@@ -13,6 +13,7 @@
       "category": "Webtoon",
       "meta": {
         "title": [
+          ".view-title .view-content strong",
           "h1.hero-v2-title",
           "div.nd-info > h1",
           {
@@ -20,7 +21,6 @@
             "attr": "content"
           },
           ".view-title h1",
-          ".page-desc",
           {
             "selector": "meta[property=\"og:title\"]",
             "attr": "content"
@@ -49,10 +49,13 @@
           "span.ep-row-v2-no",
           ".wr-num",
           "span.no",
-          "p"
+          "p",
+          ".num",
+          ".td_num"
         ],
         "title": [
           ".ep-row-v2-title strong",
+          ".ep-row-v2-title",
           ".wr-subject a",
           "a.item-subject",
           "a",
@@ -93,7 +96,7 @@
     {
       "id": "blacktoon_manhwa",
       "name": "통합 만화 규칙 (신형 v2 & 마나토끼/뉴토끼 호환)",
-      "_version": "1.26.6",
+      "_version": "1.26.7",
       "urlPattern": ".*/(manhwa|manga|comic)/.*",
       "idExtraction": {
         "source": "url",
@@ -102,6 +105,7 @@
       "category": "Manga",
       "meta": {
         "title": [
+          ".view-title .view-content strong",
           "h1.hero-v2-title",
           "div.nd-info > h1",
           {
@@ -109,7 +113,6 @@
             "attr": "content"
           },
           ".view-title h1",
-          ".page-desc",
           {
             "selector": "meta[property=\"og:title\"]",
             "attr": "content"
@@ -138,10 +141,13 @@
           "span.ep-row-v2-no",
           ".wr-num",
           "span.no",
-          "p"
+          "p",
+          ".num",
+          ".td_num"
         ],
         "title": [
           ".ep-row-v2-title strong",
+          ".ep-row-v2-title",
           ".wr-subject a",
           "a.item-subject",
           "a",
@@ -182,7 +188,7 @@
     {
       "id": "blacktoon_novel",
       "name": "통합 소설 규칙 (신형 v2 & 북토끼/뉴토끼 호환)",
-      "_version": "1.26.6",
+      "_version": "1.26.7",
       "urlPattern": ".*/(novel|book)/.*",
       "idExtraction": {
         "source": "url",
@@ -191,6 +197,7 @@
       "category": "Novel",
       "meta": {
         "title": [
+          ".view-title .view-content strong",
           "div.nd-info > h1",
           "h1.hero-v2-title",
           {
@@ -198,7 +205,6 @@
             "attr": "content"
           },
           ".view-title h1",
-          ".page-desc",
           {
             "selector": "meta[property=\"og:title\"]",
             "attr": "content"
@@ -226,11 +232,14 @@
           "span.ne-num",
           "span.ep-row-v2-no",
           ".wr-num",
-          "span.no"
+          "span.no",
+          ".num",
+          ".td_num"
         ],
         "title": [
           "span.ne-title",
           ".ep-row-v2-title strong",
+          ".ep-row-v2-title",
           ".wr-subject a",
           "a.item-subject",
           "a"
@@ -264,11 +273,12 @@
     {
       "id": "toki_common",
       "name": "구형 토끼 계열 (그누보드 뉴토끼/마나토끼/북토끼) 통합 규칙",
-      "_version": "1.26.6",
+      "_version": "1.26.7",
       "urlPattern": "^(?!.*(newtoki[0-9]*\\.org|sbxh[0-9]*\\.|ntk[0-9]*\\.)).*(newtoki|manatoki|comic|booktoki).*",
       "category": "Webtoon",
       "meta": {
         "title": [
+          ".view-title .view-content strong",
           {
             "selector": "meta[name=\"subject\"]",
             "attr": "content"
@@ -294,12 +304,15 @@
           ".wr-num",
           "span.no",
           "span.ep-row-v2-no",
-          "span.ne-num"
+          "span.ne-num",
+          ".num",
+          ".td_num"
         ],
         "title": [
           ".wr-subject a",
           "a.item-subject",
           ".ep-row-v2-title strong",
+          ".ep-row-v2-title",
           "span.ne-title",
           "a"
         ],
@@ -327,5 +340,7 @@
         ]
       }
     }
-  ]
+  ],
+  "_version": "1.26.7",
+  "updatedAt": "2026-11-04T00:00:00Z"
 }
