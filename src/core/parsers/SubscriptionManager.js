@@ -124,9 +124,13 @@ export class SubscriptionManager {
         const version = RuleManager._version;
         let added = 0, updated = 0, skipped = 0;
 
+        const builtInIds = new Set(['blacktoon_webtoon', 'blacktoon_manhwa', 'blacktoon_novel', 'toki_common']);
         remoteRules.forEach(remote => {
             if (!remote.id) { skipped++; return; }
-            // Ensure _version on incoming rules
+            if (builtInIds.has(remote.id) && remote._version !== version) {
+                skipped++;
+                return;
+            }
             if (!remote._version) remote._version = version;
             remote._subscribed = sourceUrl;
 

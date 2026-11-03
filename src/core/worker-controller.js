@@ -5,7 +5,7 @@
 
 import { fetchNovelTextViaApi } from './novel-decryptor.js';
 import { registerIpcListener, sendToWorker, registerWorkerOrigin, removeWorkerOrigin, validateNonce } from './ipc-broker.js';
-import { updateQueueItem, WORKER_STAGE, activeWorkers, getQueue, runSchedulerOnce, getQueuePaused, _activeProcessing } from './queue.js';
+import { updateQueueItem, WORKER_STAGE, activeWorkers, getQueue, runSchedulerOnce, getQueuePaused, _activeProcessing, TAB_ID, removeSeriesFromQueue } from './queue.js';
 import { EventBus, EVT } from './EventBus.js';
 import { getConfig, SLEEP_MULTIPLIERS } from './config.js';
 import { refreshCacheAfterUpload } from './gas.js';
@@ -389,8 +389,9 @@ export function initBatchWorkerController() {
         const queue = getQueue();
         const now = Date.now();
 
-        // 1. 60초(업로드 중인 경우 5분) 이상 무반응인 워커 강제 타임아웃 회수
+        // 1. 60초(업로드 중인 경우 5분) 이상 무반응인 현재 탭 배치 워커 강제 타임아웃 회수
         queue.forEach(item => {
+            if (item.isSingleVolume || (item.ownerTabId && item.ownerTabId !== TAB_ID)) return;
             const lastActive = item.lastActivity || item.startedAt;
             if (item.status === 'processing' && lastActive) {
                 const isUploading = (item.stage === WORKER_STAGE.UPLOADING);
@@ -615,9 +616,10 @@ export function initBatchWorkerController() {
             } else {
                 // local / native: 사용자 설정 localNameTemplate 동적 파싱 적용 + 작품명(문서 이름) 자동 포함 보장
                 const template = getConfig().localNameTemplate || "{number:4} - {title}";
-                const cleanSeries = (title || rootFolder || '').replace(/^\[[^\]]+\]\s*/, '').trim();
+                const rawSeriesCandidate = item.seriesMetadata?.originalSeriesTitle || title || rootFolder || '';
+                const cleanSeries = rawSeriesCandidate.replace(/^\[[^\]]+\]\s*/, '').replace(/^Unknown\s*Series$/i, '').trim();
                 const rawEpTitle = (episodeTitle || '').trim();
-                const hasSeriesInTitle = !cleanSeries || cleanSeries === 'UnknownSeries' || rawEpTitle.includes(cleanSeries);
+                const hasSeriesInTitle = !cleanSeries || rawEpTitle.includes(cleanSeries);
                 const effectiveEpTitle = (!template.includes('{series}') && !hasSeriesInTitle)
                     ? `${cleanSeries} ${rawEpTitle}`.trim()
                     : rawEpTitle;
@@ -628,6 +630,10 @@ export function initBatchWorkerController() {
                     .replace(/\{rawNumber\}/g, (episodeNum || '').toString())
                     .replace(/\{series\}/g, cleanSeries)
                     .replace(/\{title\}/g, effectiveEpTitle);
+
+                if (cleanSeries && !fullFilename.includes(cleanSeries)) {
+                    fullFilename = `${cleanSeries} - ${fullFilename}`.trim();
+                }
             }
 
             console.log(`[WorkerController] [배치 저장] 파일 조립 완료 (정책: ${destination}). 전송 시작: ${fullFilename}.${extension}`);
@@ -712,15 +718,19 @@ export function initBatchWorkerController() {
 
         EventBus.emit(EVT.UPDATE_PROGRESS);
 
-        // 드라이브 캐시 최종 갱신
+        // 작품 단위 완료 시 드라이브 캐시 최종 갱신 및 대기열 자동 청소
         const currentQueue = getQueue();
-        const hasActive = currentQueue.some(i => i.status === 'pending' || i.status === 'processing');
-        if (!hasActive) {
-            const completedItem = currentQueue.find(i => i.id === matchedId);
-            if (completedItem && (completedItem.destination === 'drive' || completedItem.destination === 'drive_kavita')) {
-                const cleanFolder = completedItem.rootFolder.replace(/^\[[^\]]+\]\s*/, '');
+        const completedItem = currentQueue.find(i => i.id === matchedId) || item;
+        const seriesName = completedItem?.title;
+        const hasSeriesActive = seriesName
+            ? currentQueue.some(i => i.title === seriesName && (i.status === 'pending' || i.status === 'processing'))
+            : currentQueue.some(i => i.status === 'pending' || i.status === 'processing');
+
+        if (!hasSeriesActive && completedItem) {
+            if (completedItem.destination === 'drive' || completedItem.destination === 'drive_kavita') {
+                const cleanFolder = (completedItem.rootFolder || '').replace(/^\[[^\]]+\]\s*/, '');
                 const targetFolder = completedItem.destination === 'drive_kavita' ? cleanFolder : completedItem.rootFolder;
-                console.log(`[WorkerController] ☁️ 전 대기열 수집 완료 -> 드라이브 캐시 갱신 시작: ${targetFolder}`);
+                console.log(`[WorkerController] ☁️ [${seriesName}] 수집 완료 -> 드라이브 캐시 갱신 시작: ${targetFolder}`);
                 refreshCacheAfterUpload(
                     targetFolder,
                     completedItem.category,
@@ -728,6 +738,11 @@ export function initBatchWorkerController() {
                 ).catch(e =>
                     console.warn(`[WorkerController] 캐시 갱신 실패: ${e.message}`)
                 );
+            }
+            const hasSeriesFailed = currentQueue.some(i => i.title === seriesName && i.status === 'failed');
+            if (seriesName && !hasSeriesFailed) {
+                removeSeriesFromQueue(seriesName);
+                EventBus.emit(EVT.UPDATE_PROGRESS);
             }
         }
 

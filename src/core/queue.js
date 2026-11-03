@@ -17,6 +17,7 @@ export const WORKER_STAGE = {
 };
 
 const STORAGE_KEY = 'TOKI_DOWNLOAD_QUEUE';
+export const TAB_ID = 'tab_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
 const MAX_CONCURRENCY = 2; // 최대 동시 다운로드 수
 
 // 임시 팝업 창 참조 보관용 맵 (Liveness check 및 재활용 루프 대비)
@@ -84,7 +85,7 @@ export const getQueue = () => {
 /**
  * 에피소드 대기열 다중 추가
  */
-export const addEpisodesToQueue = (episodes, novelTitle) => {
+export const addEpisodesToQueue = (episodes, novelTitle, options = {}) => {
   const queue = getRawQueue();
   let addedCount = 0;
 
@@ -92,31 +93,37 @@ export const addEpisodesToQueue = (episodes, novelTitle) => {
     // FNV 해시를 적용하여 작품명 한글 유실을 차단하고 100% 안전한 고유 아스키 식별자 생성
     const hashPart = tokiHash(`${novelTitle}_${ep.episodeNum}`);
     const id = `toki_${hashPart}`;
-    
-    // 이미 존재하는지 중복성 검사
-    const exists = queue.some(item => item.id === id);
-    if (!exists) {
-      queue.push({
-        id,
-        title: novelTitle,
-        episodeTitle: ep.title,
-        episodeUrl: ep.url,
-        episodeNum: ep.episodeNum || '',
-        folderId: ep.folderId || '',             // 구글 드라이브 스캔 위치 폴더 ID 보존
-        category: ep.category || 'Manga',       // 파서 룰 카테고리 (워커 targetType 판별용)
-        viewerCfg: ep.viewerCfg || {},           // 파서 룰 viewer 설정 (워커 이미지 셀렉터용)
-        rootFolder: ep.rootFolder || '',
-        destination: ep.destination || 'local',
-        novelFormat: ep.novelFormat || 'epub',
-        matchedRule: ep.matchedRule || {},
-        protocolDomain: ep.protocolDomain || '',
-        seriesMetadata: ep.seriesMetadata || {},
-        status: 'pending',
-        progressPercent: 0,
-        stage: WORKER_STAGE.INIT,
-        retryCount: 0,
-        addedAt: Date.now()
-      });
+    const newItem = {
+      id,
+      title: novelTitle,
+      episodeTitle: ep.title,
+      episodeUrl: ep.url,
+      episodeNum: ep.episodeNum || '',
+      folderId: ep.folderId || '',             // 구글 드라이브 스캔 위치 폴더 ID 보존
+      category: ep.category || 'Manga',       // 파서 룰 카테고리 (워커 targetType 판별용)
+      viewerCfg: ep.viewerCfg || {},           // 파서 룰 viewer 설정 (워커 이미지 셀렉터용)
+      rootFolder: ep.rootFolder || '',
+      destination: ep.destination || 'local',
+      novelFormat: ep.novelFormat || 'epub',
+      matchedRule: ep.matchedRule || {},
+      protocolDomain: ep.protocolDomain || '',
+      seriesMetadata: ep.seriesMetadata || {},
+      ownerTabId: ep.ownerTabId || options.ownerTabId || TAB_ID,
+      isSingleVolume: Boolean(ep.isSingleVolume ?? options.isSingleVolume),
+      status: 'pending',
+      progressPercent: 0,
+      stage: WORKER_STAGE.INIT,
+      retryCount: 0,
+      addedAt: Date.now()
+    };
+
+    // 이미 존재하는지 중복성 검사 (완료/실패 상태인 구 항목이 남아있으면 새 작업으로 갱신)
+    const existingIdx = queue.findIndex(item => item.id === id);
+    if (existingIdx === -1) {
+      queue.push(newItem);
+      addedCount++;
+    } else if (queue[existingIdx].status === 'completed' || queue[existingIdx].status === 'failed') {
+      queue[existingIdx] = newItem;
       addedCount++;
     }
   });
@@ -415,15 +422,18 @@ export const runSchedulerOnce = async () => {
       return;
     }
 
-    // 2. 전체 진행 중(수집 + 업로드)인 세션이 최대 허용 한계(3개) 이상이면 리소스 가드를 위해 차단
-    const currentProcessing = queue.filter(item => item.status === 'processing');
+    // 현재 탭이 담당하는 배치 아이템 판별 (단행본 합본 루프 아이템 및 타 탭 전용 아이템은 침범하지 않음)
+    const isMyBatchItem = (item) => !item.isSingleVolume && (!item.ownerTabId || item.ownerTabId === TAB_ID);
+
+    // 2. 현재 탭에서 진행 중인 배치 세션이 최대 허용 한계(3개) 이상이면 리소스 가드를 위해 차단
+    const currentProcessing = queue.filter(item => item.status === 'processing' && isMyBatchItem(item));
     if (currentProcessing.length >= 3) {
       isSchedulerRunning = false;
       return;
     }
 
-    // 3. pending(대기 중) 상태인 첫 번째 에피소드 추출
-    const nextItem = queue.find(item => item.status === 'pending');
+    // 3. 현재 탭 소속의 pending(대기 중) 상태인 첫 번째 배치 에피소드 추출
+    const nextItem = queue.find(item => item.status === 'pending' && isMyBatchItem(item));
     if (!nextItem) {
       // 대기 중인 작업도 없고 현재 진행 중인 활성 작업도 없다면 안티 슬립 오디오를 정지시킵니다.
       if (currentProcessing.length === 0) {

@@ -68,7 +68,7 @@ export class GenericParser extends BaseParser {
                 try {
                     const clone = el.cloneNode(true);
                     if (typeof clone.querySelectorAll === 'function') {
-                        clone.querySelectorAll('.count, .orangered, .wr-icon, .ep-badge-new, .ep-badge-ready, .sound_only, .sub').forEach(n => n.remove());
+                        clone.querySelectorAll('.count, .orangered, .wr-icon, .ep-badge-new, .ep-badge-ready, .sound_only, .pg_only, .sub, .item-details, .ep-row-v2-no, .ep-row-v2-date, .ep-row-v2-meta, .ep-row-v2-arrow, .ne-num, .ne-date').forEach(n => n.remove());
                     }
                     val = clone.innerText?.trim() || clone.textContent?.trim() || null;
                 } catch (e) {
@@ -228,36 +228,219 @@ export class GenericParser extends BaseParser {
     }
 
     /**
-     * 페이지 내 표시된 총 회차 수(예: "총 1,307회차")를 기반으로 예상 최대 페이지 수 추정
+     * 페이지 내 표시된 총 회차 수(예: "총 1,307회차", "최신화 934화") 및 현재 페이지 회차 번호를 기반으로 예상 최대 페이지 수 추정
      * @private
      */
-    _estimateMaxPagesFromTotalCount(doc, perPageCount) {
+    _estimateMaxPagesFromTotalCount(doc, perPageCount, currentPageItems = []) {
         if (!doc || typeof doc.querySelector !== 'function' || !perPageCount || perPageCount < 5) return 1;
-        const countSelectors = ['.ep-section-count', '.stat-num', '.page-desc', '.view-content'];
+        let maxTotal = 0;
+        const countSelectors = ['.ep-section-count', '.stat-num', '.page-desc', '.view-content', '.view-info', 'main', 'body'];
         for (const sel of countSelectors) {
             try {
                 const el = doc.querySelector(sel);
                 const txt = el?.textContent || '';
-                const m = txt.match(/총\s*([0-9,]+)\s*(?:회차|화|편)/) || (sel === '.ep-section-count' ? txt.match(/([0-9,]+)/) : null);
+                const m = txt.match(/총\s*([0-9,]+)\s*(?:회차|화|편)/) ||
+                          txt.match(/최신화\s*:?\s*([0-9,]+)\s*(?:회차|화|편)/) ||
+                          (sel === '.ep-section-count' ? txt.match(/([0-9,]+)/) : null);
                 if (m) {
-                    const total = parseInt(m[1].replace(/,/g, ''), 10);
-                    if (total > perPageCount && total <= 20000) {
-                        return Math.ceil(total / perPageCount);
-                    }
+                    const parsed = parseInt(m[1].replace(/,/g, ''), 10);
+                    if (parsed > maxTotal && parsed <= 20000) maxTotal = parsed;
+                    if (maxTotal > perPageCount) break;
                 }
             } catch (e) {}
+        }
+
+        // 현재 페이지 첫/끝 에피소드 번호 기반 역산 (예: 1페이지가 934~834화이면 최소 ceil(934/100)=10페이지)
+        if (Array.isArray(currentPageItems) && currentPageItems.length >= 10) {
+            try {
+                const firstParsed = this.parseListItem(currentPageItems[0]);
+                const lastParsed = this.parseListItem(currentPageItems[currentPageItems.length - 1]);
+                const n1 = parseInt(firstParsed.num, 10) || 0;
+                const n2 = parseInt(lastParsed.num, 10) || 0;
+                const highestNum = Math.max(n1, n2);
+                const lowestNum = Math.min(n1, n2);
+                if (highestNum > perPageCount && lowestNum > 1 && highestNum <= 20000) {
+                    if (highestNum > maxTotal) maxTotal = highestNum;
+                }
+            } catch (e) {}
+        }
+
+        if (maxTotal > perPageCount && maxTotal <= 20000) {
+            return Math.ceil(maxTotal / perPageCount);
         }
         return 1;
     }
 
     /**
+     * 페이지네이션 컨테이너 내부의 말단(leaf) 컨트롤 요소들을 태그에 구애받지 않고 추출
+     * - button, a, strong, span, em, b, li, div 등 모든 태그 지원 (현재1페이지 strong/span 및 sbxh9의 듀얼 페이지네이션 대응)
+     * @private
+     */
+    _getLeafPaginationControls(root, listEl = null) {
+        if (!root || typeof root.querySelectorAll !== 'function') return [];
+        const rawEls = Array.from(root.querySelectorAll('button, a, [role="button"], strong, span, em, b, li, div'));
+        return rawEls.filter(el => {
+            if (listEl && (el === listEl || (typeof listEl.contains === 'function' && listEl.contains(el)) || (typeof el.contains === 'function' && el.contains(listEl)))) {
+                return false;
+            }
+            if (el.closest?.('ul.ep-list-v2, ul.novel-eps, .list-body, #toon_list, li.ep-row-v2, li.list-item')) return false;
+            if (el.closest?.('#bo_vc, #bo_v_cmt, .view-comment, #comment, #comments, [class*="comment" i], [id*="comment" i], [class*="cmt" i], [id*="cmt" i]')) return false;
+
+            const rawTxt = (el.textContent || '').trim();
+            if (!rawTxt || rawTxt.length > 24) return false;
+
+            const children = Array.from(el.children || []).filter(ch => !/pg_only|sound_only|sr-only|blind/i.test(ch.className || ''));
+            if (children.length > 0) {
+                if (children.some(ch => (ch.textContent || '').trim() === rawTxt)) return false;
+                if (children.length > 1) return false;
+            }
+            return true;
+        });
+    }
+
+    /**
+     * 회차 목록 섹션 내의 페이지네이션 바(컨테이너)를 클래스명/태그에 구애받지 않고 탐색
+     * @private
+     */
+    _findPaginationRoot(listCfg, doc = this._doc) {
+        if (!doc || typeof doc.querySelectorAll !== 'function') return null;
+
+        const containerSelectors = String(listCfg?.container || '').split(',').map(s => s.trim()).filter(Boolean);
+        let listEl = null;
+        for (const sel of containerSelectors) {
+            try {
+                const found = doc.querySelector(sel);
+                if (found) { listEl = found; break; }
+            } catch (e) {}
+        }
+
+        const hasPageControls = (el) => {
+            if (!el || typeof el.querySelectorAll !== 'function') return false;
+            if (el.closest?.('#bo_vc, #bo_v_cmt, .view-comment, #comment, #comments, [class*="comment" i], [id*="comment" i], [class*="cmt" i], [id*="cmt" i]')) return false;
+            const controls = this._getLeafPaginationControls(el, listEl);
+            const nums = new Set();
+            let hasInteractive = false;
+            for (const c of controls) {
+                const t = (c.textContent || '').replace(/현재|열린|페이지|쪽|\s+/g, '').replace(/^\[|\]$/g, '').trim();
+                if (/^\d+$/.test(t)) {
+                    const n = parseInt(t, 10);
+                    if (n >= 1 && n <= 500) {
+                        nums.add(n);
+                        const tag = (c.tagName || '').toUpperCase();
+                        if (tag === 'A' || tag === 'BUTTON' || c.getAttribute?.('role') === 'button' || typeof c.onclick === 'function' || c.style?.cursor === 'pointer' || n >= 2) {
+                            hasInteractive = true;
+                        }
+                    }
+                }
+            }
+            if (!hasInteractive || nums.size < 2) return false;
+            for (const n of nums) {
+                if (nums.has(n + 1)) return true;
+            }
+            return nums.has(1) && nums.size >= 2;
+        };
+
+        // 1. 에피소드 리스트 컨테이너로부터 최대 4단계 상위 조상까지 올라가며 가장 가까운 섹션 탐색
+        // (단, pc/mobile 듀얼 페이지네이션 바가 형제로 공존하는 경우를 모두 포괄하기 위해 조상 섹션 자체를 우선 반환)
+        let anc = listEl ? listEl.parentElement : null;
+        for (let depth = 0; depth < 4 && anc && anc !== doc.body && anc !== doc.documentElement; depth++, anc = anc.parentElement) {
+            if (hasPageControls(anc)) {
+                return anc;
+            }
+            const siblings = Array.from(anc.children || []);
+            for (const sib of siblings) {
+                if (sib === listEl || (listEl && typeof sib.contains === 'function' && sib.contains(listEl))) continue;
+                if (hasPageControls(sib)) return anc;
+            }
+        }
+
+        // 2. 문서 전체에서 알려진 페이지네이션 컨테이너 탐색 (댓글 영역 제외)
+        const candidates = Array.from(doc.querySelectorAll(
+            '.ep-pagination, .ep-page, .ep-pages, .pagination, .paging, .pg_wrap, .page-box, .list-page, .write-pages, .page-nav, [class*="pagin" i], [class*="pager" i], nav[aria-label*="page" i]'
+        ));
+        for (const cand of candidates) {
+            if (hasPageControls(cand)) return cand.parentElement && hasPageControls(cand.parentElement) ? cand.parentElement : cand;
+        }
+
+        // 3. '2페이지', '3페이지' 텍스트를 가진 앵커/버튼 역추적 (newtoki1.org 등 클래스명이 달라도 100% 포착)
+        try {
+            const allLinks = Array.from(doc.querySelectorAll('a, button, span, strong'));
+            for (const node of allLinks) {
+                if (node.closest?.('#bo_vc, #bo_v_cmt, .view-comment, #comment, #comments, [class*="comment" i], [id*="comment" i]')) continue;
+                const txt = (node.textContent || '').trim();
+                if (/^(?:현재|열린)?\s*2\s*페이지$/.test(txt) && node.parentElement) {
+                    const p = node.parentElement.parentElement && hasPageControls(node.parentElement.parentElement)
+                        ? node.parentElement.parentElement
+                        : node.parentElement;
+                    if (hasPageControls(p)) return p;
+                }
+            }
+        } catch (e) {}
+
+        return null;
+    }
+
+    /**
+     * 단일 URL 문자열에서 페이지 번호와 템플릿 유형을 추출하는 헬퍼
+     * @private
+     */
+    _extractPageNumFromUrl(u, cleanBasePath) {
+        // 1) /__q/<base64>
+        const qMatch = u.pathname.match(/^(.*)\/__q\/([A-Za-z0-9+/=_-]+)\/?$/);
+        if (qMatch) {
+            const rawB64 = qMatch[2];
+            const decoded = this._decodeBase64Query(rawB64);
+            if (decoded) {
+                const sp = new URLSearchParams(decoded);
+                for (const key of ['spage', 'ep_page', 'page', 'p', 'pg']) {
+                    const val = sp.get(key);
+                    if (val && /^\d+$/.test(val)) {
+                        return {
+                            num: parseInt(val, 10),
+                            type: 'b64_query',
+                            paramName: key,
+                            b64PrefixPath: qMatch[1].replace(/\/+$/, ''),
+                            b64TemplateQuery: decoded,
+                            b64KeepPadding: rawB64.endsWith('=')
+                        };
+                    }
+                }
+            }
+        }
+        // 2) Query parameter (?spage=2, ?ep_page=2, ?page=2, ?p=2, ?pg=2)
+        for (const paramName of ['spage', 'ep_page', 'page', 'p', 'pg']) {
+            const val = u.searchParams.get(paramName);
+            if (val && /^\d+$/.test(val)) {
+                return {
+                    num: parseInt(val, 10),
+                    type: 'query',
+                    paramName,
+                    templateUrl: u.href
+                };
+            }
+        }
+        // 3) Path segment (/page/2, /p/2, /p2)
+        const pathMatch = u.pathname.match(/^(.*)\/(page|p)\/(\d+)\/?$/i);
+        if (pathMatch) {
+            return {
+                num: parseInt(pathMatch[3], 10),
+                type: 'path',
+                pathPrefix: pathMatch[1].replace(/\/+$/, ''),
+                pathWord: pathMatch[2]
+            };
+        }
+        return null;
+    }
+
+    /**
      * 현재 문서에서 페이지네이션(1, 2, 3...) 정보를 탐지하여 페이지 번호 -> URL 생성기 반환
+     * - 페이지네이션 바 내부 <a> 태그의 실제 href(directUrlMap)를 최우선 보존
      * - ?spage=N, ?page=N, ?p=N
      * - /__q/<base64(page=N)> (newtoki1.org 방식)
      * - /page/N, /p/N
      * @private
      */
-    _detectPaginationInfo(doc, baseUrlStr, currentItemCount = 0) {
+    _detectPaginationInfo(doc, baseUrlStr, currentItemCount = 0, currentPageItems = []) {
         if (!doc || typeof doc.querySelectorAll !== 'function' || !baseUrlStr) return null;
         let baseUrl;
         try {
@@ -267,33 +450,51 @@ export class GenericParser extends BaseParser {
         }
 
         const listCfg = this.rule.list || {};
+        const pagRoot = this._findPaginationRoot(listCfg, doc);
+
         const pagSelectors = [
             ...(listCfg.pagination ? [listCfg.pagination] : []),
+            'a.pg_page[href]',
             '.ep-section a[href]',
             '.pagination a[href]',
             '.pg_wrap a[href]',
             '.paging a[href]',
             '.page-box a[href]',
+            '.list-page a[href]',
+            '.write-pages a[href]',
             '.ep-pagination a[href]',
             '.ep-page a[href]',
             'nav[aria-label*="page" i] a[href]',
-            '[class*="pagin"] a[href]',
-            '[class*="pager"] a[href]',
+            '[class*="pagin" i] a[href]',
+            '[class*="pager" i] a[href]',
             'a[href*="__q/"]',
             'a[href*="spage="]',
+            'a[href*="ep_page="]',
             'a[href*="page="]'
         ];
 
         const anchors = [];
         const seenEl = new Set();
+
+        // 1순위: 에피소드 페이지네이션 루트 내부의 <a> 태그
+        if (pagRoot && typeof pagRoot.querySelectorAll === 'function') {
+            try {
+                for (const a of Array.from(pagRoot.querySelectorAll('a[href]'))) {
+                    if (a.closest?.('ul.ep-list-v2, ul.novel-eps, .list-body, #toon_list, li.ep-row-v2, li.list-item')) continue;
+                    if (a.closest?.('#bo_vc, #bo_v_cmt, .view-comment, #comment, #comments, [class*="comment" i], [id*="comment" i], [class*="cmt" i], [id*="cmt" i]')) continue;
+                    seenEl.add(a);
+                    anchors.push(a);
+                }
+            } catch (e) {}
+        }
+
+        // 2순위: 알려진 페이지네이션 셀렉터
         for (const sel of pagSelectors) {
             try {
                 for (const a of Array.from(doc.querySelectorAll(sel))) {
                     if (seenEl.has(a)) continue;
-                    // 댓글(Comment) 페이지네이션 영역 내부의 링크는 철저히 배제
-                    if (a.closest?.('#bo_vc, .view-comment, #comment, #comments, [class*="comment"], [id*="comment"]')) {
-                        continue;
-                    }
+                    if (a.closest?.('ul.ep-list-v2, ul.novel-eps, .list-body, #toon_list, li.ep-row-v2, li.list-item')) continue;
+                    if (a.closest?.('#bo_vc, #bo_v_cmt, .view-comment, #comment, #comments, [class*="comment" i], [id*="comment" i], [class*="cmt" i], [id*="cmt" i]')) continue;
                     seenEl.add(a);
                     anchors.push(a);
                 }
@@ -307,318 +508,293 @@ export class GenericParser extends BaseParser {
             .replace(/\/(page|p)\/\d+\/?$/i, '')
             .replace(/\/+$/, '');
 
-        const estimatedMax = this._estimateMaxPagesFromTotalCount(doc, currentItemCount);
+        const seriesId = this.getSeriesId();
+        const isSameSeriesPath = (uPath) => {
+            const norm = uPath.replace(/\/__q\/[A-Za-z0-9+/=_-]+\/?$/, '').replace(/\/(page|p)\/\d+\/?$/i, '').replace(/\/+$/, '');
+            if (norm === cleanBasePath) return true;
+            if (seriesId && seriesId !== '0000' && new RegExp(`\\/${seriesId}(\\/|$)`).test(norm)) return true;
+            return false;
+        };
 
-        // 1. newtoki1.org 방식의 /__q/<base64> 경로 페이지네이션 탐지
-        const b64Pages = new Set();
-        let b64ParamKey = 'page';
-        let b64TemplateQuery = 'page=1';
-        let b64KeepPadding = false;
+        const estimatedMax = this._estimateMaxPagesFromTotalCount(doc, currentItemCount, currentPageItems);
+        const directUrlMap = new Map();
+        let detectedInfo = null;
 
         for (const a of anchors) {
-            const rawHref = a.getAttribute('href');
+            const rawHref = a.getAttribute?.('href');
             if (!rawHref || rawHref.startsWith('#') || rawHref.startsWith('javascript')) continue;
             try {
                 const u = new URL(rawHref, baseUrl.href);
-                const qMatch = u.pathname.match(/^(.*)\/__q\/([A-Za-z0-9+/=_-]+)\/?$/);
-                if (!qMatch) continue;
-                const linkBasePath = qMatch[1].replace(/\/+$/, '');
-                if (linkBasePath !== cleanBasePath) continue;
+                if (u.hash && /vc|comment|cmt/i.test(u.hash)) continue;
+                if (!isSameSeriesPath(u.pathname)) continue;
 
-                const rawB64 = qMatch[2];
-                const decoded = this._decodeBase64Query(rawB64);
-                if (!decoded) continue;
+                const parsed = this._extractPageNumFromUrl(u, cleanBasePath);
+                const cleanTxt = (a.textContent || '').replace(/현재|열린|페이지|쪽|\s+/g, '').replace(/^\[|\]$/g, '').trim();
+                const txtNum = /^\d+$/.test(cleanTxt) ? parseInt(cleanTxt, 10) : null;
 
-                const sp = new URLSearchParams(decoded);
-                const key = sp.has('spage') ? 'spage' : (sp.has('page') ? 'page' : (sp.has('p') ? 'p' : null));
-                if (key) {
-                    const val = sp.get(key);
-                    if (val && /^\d+$/.test(val)) {
-                        const num = parseInt(val, 10);
-                        if (num >= 1 && num <= 500) {
-                            b64Pages.add(num);
-                            b64ParamKey = key;
-                            b64TemplateQuery = decoded;
-                            b64KeepPadding = rawB64.endsWith('=');
-                        }
+                const pageNum = parsed ? parsed.num : txtNum;
+                if (pageNum && pageNum >= 1 && pageNum <= 500) {
+                    if (!directUrlMap.has(pageNum)) {
+                        directUrlMap.set(pageNum, u.href);
+                    }
+                    if (parsed && (!detectedInfo || (detectedInfo.type !== 'b64_query' && parsed.type === 'b64_query') || (parsed.paramName === 'spage'))) {
+                        detectedInfo = parsed;
                     }
                 }
             } catch (e) {}
         }
 
-        if (b64Pages.size > 0) {
-            let currentPage = 1;
-            const curQMatch = baseUrl.pathname.match(/\/__q\/([A-Za-z0-9+/=_-]+)\/?$/);
-            if (curQMatch) {
-                const curDecoded = this._decodeBase64Query(curQMatch[1]);
-                const curSp = new URLSearchParams(curDecoded || '');
-                const curVal = curSp.get(b64ParamKey);
-                if (curVal && /^\d+$/.test(curVal)) currentPage = parseInt(curVal, 10);
+        if (directUrlMap.size === 0 && !detectedInfo) return null;
+
+        let currentPage = 1;
+        const curParsed = this._extractPageNumFromUrl(baseUrl, cleanBasePath);
+        if (curParsed && curParsed.num >= 1) {
+            currentPage = curParsed.num;
+        }
+        directUrlMap.set(currentPage, baseUrl.href);
+
+        const maxDiscovered = Math.max(...Array.from(directUrlMap.keys()), currentPage);
+        const maxPage = Math.max(maxDiscovered, estimatedMax);
+        if (maxPage <= 1) return null;
+
+        const buildUrl = (pageNum) => {
+            if (directUrlMap.has(pageNum)) {
+                return directUrlMap.get(pageNum);
             }
-            b64Pages.add(currentPage);
-            const maxPage = Math.max(...Array.from(b64Pages), estimatedMax);
-            if (maxPage > 1) {
-                return {
-                    type: 'b64_query',
-                    paramName: b64ParamKey,
-                    currentPage,
-                    maxPage,
-                    buildUrl: (pageNum) => {
-                        const u = new URL(baseUrl.href);
-                        u.search = '';
-                        if (pageNum === 1) {
-                            u.pathname = cleanBasePath;
-                            return u.href;
-                        }
-                        const sp = new URLSearchParams(b64TemplateQuery);
-                        sp.set(b64ParamKey, String(pageNum));
-                        const encoded = this._encodeBase64Query(sp.toString(), b64KeepPadding);
-                        u.pathname = `${cleanBasePath}/__q/${encoded}`;
+            if (detectedInfo) {
+                if (detectedInfo.type === 'b64_query') {
+                    const u = new URL(baseUrl.href);
+                    u.search = '';
+                    const prefix = detectedInfo.b64PrefixPath || cleanBasePath;
+                    if (pageNum === 1) {
+                        u.pathname = prefix;
                         return u.href;
                     }
-                };
-            }
-        }
-
-        // 2. 일반 Query 파라미터 기반 페이지네이션 (?spage=2, ?ep_page=2, ?page=2, ?p=2) — 댓글용 cpage 제외!
-        const paramCandidates = ['spage', 'ep_page', 'page', 'p'];
-        for (const paramName of paramCandidates) {
-            const pageNumbers = new Set();
-            for (const a of anchors) {
-                const rawHref = a.getAttribute('href');
-                if (!rawHref || rawHref.startsWith('#') || rawHref.startsWith('javascript')) continue;
-                try {
-                    const u = new URL(rawHref, baseUrl.href);
-                    const uCleanPath = u.pathname.replace(/\/+$/, '');
-                    if (uCleanPath !== cleanBasePath) continue;
-                    // 댓글 앵커(#bo_vc 등)로 점프하는 링크 배제
-                    if (u.hash && /vc|comment/i.test(u.hash)) continue;
-                    const val = u.searchParams.get(paramName);
-                    if (val && /^\d+$/.test(val)) {
-                        const num = parseInt(val, 10);
-                        if (num >= 1 && num <= 500) pageNumbers.add(num);
-                    }
-                } catch (e) {}
-            }
-
-            if (pageNumbers.size > 0) {
-                const currentVal = baseUrl.searchParams.get(paramName);
-                const currentPage = (currentVal && /^\d+$/.test(currentVal)) ? parseInt(currentVal, 10) : 1;
-                pageNumbers.add(currentPage);
-                const maxPage = Math.max(...Array.from(pageNumbers), estimatedMax);
-                if (maxPage > 1) {
-                    return {
-                        type: 'query',
-                        paramName,
-                        currentPage,
-                        maxPage,
-                        buildUrl: (pageNum) => {
-                            const u = new URL(baseUrl.href);
-                            u.pathname = cleanBasePath;
-                            u.searchParams.set(paramName, String(pageNum));
-                            return u.href;
-                        }
-                    };
+                    const sp = new URLSearchParams(detectedInfo.b64TemplateQuery);
+                    sp.set(detectedInfo.paramName, String(pageNum));
+                    const encoded = this._encodeBase64Query(sp.toString(), detectedInfo.b64KeepPadding);
+                    u.pathname = `${prefix}/__q/${encoded}`;
+                    return u.href;
+                }
+                if (detectedInfo.type === 'query') {
+                    const u = new URL(detectedInfo.templateUrl || baseUrl.href);
+                    u.searchParams.set(detectedInfo.paramName, String(pageNum));
+                    return u.href;
+                }
+                if (detectedInfo.type === 'path') {
+                    const u = new URL(baseUrl.href);
+                    const prefix = detectedInfo.pathPrefix || cleanBasePath;
+                    u.pathname = pageNum === 1 ? prefix : `${prefix}/${detectedInfo.pathWord}/${pageNum}`;
+                    return u.href;
                 }
             }
-        }
-
-        // 3. 경로 기반 페이지네이션 확인 (예: /novel/20/page/2 또는 /novel/20/p/2)
-        const pathRegex = new RegExp(`^${cleanBasePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\/(page|p)\/(\d+)\/?$`, 'i');
-        let pathWord = 'page';
-        const pathPages = new Set();
-        for (const a of anchors) {
-            const rawHref = a.getAttribute('href');
-            if (!rawHref) continue;
-            try {
-                const u = new URL(rawHref, baseUrl.href);
-                const m = u.pathname.match(pathRegex);
-                if (m) {
-                    pathWord = m[1];
-                    const num = parseInt(m[2], 10);
-                    if (num >= 1 && num <= 500) pathPages.add(num);
-                }
-            } catch (e) {}
-        }
-        if (pathPages.size > 0) {
-            const curMatch = baseUrl.pathname.match(pathRegex);
-            const currentPage = curMatch ? parseInt(curMatch[2], 10) : 1;
-            pathPages.add(currentPage);
-            const maxPage = Math.max(...Array.from(pathPages), estimatedMax);
-            if (maxPage > 1) {
-                return {
-                    type: 'path',
-                    currentPage,
-                    maxPage,
-                    buildUrl: (pageNum) => {
-                        const u = new URL(baseUrl.href);
-                        u.pathname = pageNum === 1 ? cleanBasePath : `${cleanBasePath}/${pathWord}/${pageNum}`;
-                        return u.href;
-                    }
-                };
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * 회차 목록 섹션 내의 페이지네이션 바(컨테이너)를 클래스명에 구애받지 않고 탐색
-     * @private
-     */
-    _findPaginationRoot(listCfg) {
-        if (!this._doc || typeof this._doc.querySelectorAll !== 'function') return null;
-
-        // 1. 에피소드 리스트 컨테이너의 부모 섹션(.ep-section 등) 내부를 최우선 탐색
-        const containerSelectors = String(listCfg.container || '').split(',').map(s => s.trim()).filter(Boolean);
-        let listEl = null;
-        for (const sel of containerSelectors) {
-            try {
-                const found = this._doc.querySelector(sel);
-                if (found) { listEl = found; break; }
-            } catch (e) {}
-        }
-
-        const hasPageButtons = (el) => {
-            if (!el || typeof el.querySelectorAll !== 'function') return false;
-            if (el.closest?.('#bo_vc, .view-comment, #comment, #comments, [class*="comment"], [id*="comment"]')) return false;
-            const clickables = Array.from(el.querySelectorAll('button, a, span[role="button"]'));
-            let has1 = false, has2 = false;
-            for (const c of clickables) {
-                const t = (c.textContent || '').replace(/페이지|현재/g, '').trim();
-                if (t === '1') has1 = true;
-                if (t === '2') has2 = true;
-            }
-            return has1 && has2;
+            const u = new URL(baseUrl.href);
+            u.searchParams.set('page', String(pageNum));
+            return u.href;
         };
 
-        if (listEl && listEl.parentElement) {
-            const siblings = Array.from(listEl.parentElement.children || []);
-            for (const sib of siblings) {
-                if (sib === listEl) continue;
-                if (hasPageButtons(sib)) return sib;
-            }
-            if (hasPageButtons(listEl.parentElement)) return listEl.parentElement;
-        }
-
-        // 2. 문서 전체에서 알려진 페이지네이션 컨테이너 탐색 (댓글 영역 제외)
-        const candidates = Array.from(this._doc.querySelectorAll(
-            '.ep-pagination, .ep-page, .ep-pages, .pagination, .paging, .pg_wrap, .page-nav, [class*="pagin"], [class*="pager"], nav[aria-label*="page" i]'
-        ));
-        for (const cand of candidates) {
-            if (hasPageButtons(cand)) return cand;
-        }
-
-        return null;
+        return {
+            type: detectedInfo ? detectedInfo.type : 'direct',
+            paramName: detectedInfo ? detectedInfo.paramName : 'page',
+            currentPage,
+            maxPage,
+            directUrlMap,
+            buildUrl
+        };
     }
 
     /**
      * SPA 버튼 클릭형 페이지네이션(« ‹ 1 2 ... 10 … › » 등) 자동 순회 수집
+     * - 매 스텝마다 실시간 DOM에서 페이지네이션 루트를 재탐색하여 React/Next.js 리렌더링 시에도 끊김 없이 추적
+     * - sbxh9.com 등의 PC/모바일 듀얼 페이지네이션 바(«‹12345678910…›» «‹12345…›») 동시 지원
      * - 10페이지 이후(… 뒤의 11, 12, 13페이지)도 '›' (다음) 버튼을 눌러 끝까지 자동 추적
      * @private
      */
     async _collectViaButtonPagination(listCfg, currentPageItems) {
-        const pagRoot = this._findPaginationRoot(listCfg);
-        if (!pagRoot) return null;
+        const containerSelectors = String(listCfg?.container || '').split(',').map(s => s.trim()).filter(Boolean);
+        const getListEl = () => {
+            for (const sel of containerSelectors) {
+                try {
+                    const found = this._doc.querySelector(sel);
+                    if (found) return found;
+                } catch (e) {}
+            }
+            return null;
+        };
+
+        const isVisibleEl = (el) => {
+            if (!el || typeof el.getBoundingClientRect !== 'function') return true;
+            try {
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            } catch (e) {
+                return true;
+            }
+        };
 
         const getControls = () => {
-            const els = Array.from(pagRoot.querySelectorAll('button, a, span[role="button"]'))
-                .filter(el => !el.closest?.('ul.ep-list-v2, ul.novel-eps, .list-body, #toon_list'));
-            const numMap = new Map();
-            let nextBtn = null;
-            let firstBtn = null;
+            const pagRoot = this._findPaginationRoot(listCfg, this._doc);
+            if (!pagRoot) return null;
+            const listEl = getListEl();
+            const els = this._getLeafPaginationControls(pagRoot, listEl);
+
+            const numMap = new Map(); // pageNum -> Array<{ el, isDisabled, isVisible }>
+            const nextBtns = [];
+            const firstBtns = [];
 
             for (const el of els) {
                 const rawTxt = (el.textContent || '').trim();
-                const cleanNumTxt = rawTxt.replace(/현재|페이지/g, '').trim();
+                const cleanNumTxt = rawTxt.replace(/현재|열린|페이지|쪽|\s+/g, '').replace(/^\[|\]$/g, '').trim();
                 const aria = (el.getAttribute?.('aria-label') || el.getAttribute?.('title') || '').toLowerCase();
-                const isDisabled = el.disabled || el.getAttribute?.('aria-disabled') === 'true' ||
-                                   /(disabled|inactive)/i.test(el.className || '');
+                const isDisabled = Boolean(
+                    el.disabled ||
+                    el.getAttribute?.('aria-disabled') === 'true' ||
+                    /\b(disabled|inactive)\b/i.test(el.className || '') ||
+                    (el.parentElement && /\b(disabled|inactive)\b/i.test(el.parentElement.className || ''))
+                );
+                const isVisible = isVisibleEl(el);
 
                 if (/^\d+$/.test(cleanNumTxt)) {
                     const num = parseInt(cleanNumTxt, 10);
-                    if (num >= 1 && num <= 500 && !numMap.has(num)) {
-                        numMap.set(num, { el, isDisabled });
+                    if (num >= 1 && num <= 500) {
+                        if (!numMap.has(num)) numMap.set(num, []);
+                        numMap.get(num).push({ el, isDisabled, isVisible });
                     }
                 } else if (!isDisabled && (rawTxt === '›' || rawTxt === '>' || rawTxt === '다음' || /next|다음/.test(aria))) {
-                    nextBtn = el;
+                    nextBtns.push({ el, isVisible });
                 } else if (!isDisabled && (rawTxt === '«' || rawTxt === '<<' || rawTxt === '처음' || /first|처음/.test(aria))) {
-                    firstBtn = el;
+                    firstBtns.push({ el, isVisible });
                 }
             }
-            return { numMap, nextBtn, firstBtn };
+
+            // 화면에 보이는(visible) 버튼을 앞쪽으로 정렬하고, button/a 태그를 우선 배치
+            const sortCandidates = (arr) => arr.sort((a, b) => {
+                if (a.isVisible !== b.isVisible) return a.isVisible ? -1 : 1;
+                const aInteractive = /^(BUTTON|A)$/i.test(a.el.tagName || '');
+                const bInteractive = /^(BUTTON|A)$/i.test(b.el.tagName || '');
+                if (aInteractive !== bInteractive) return aInteractive ? -1 : 1;
+                return 0;
+            });
+
+            for (const arr of numMap.values()) sortCandidates(arr);
+            sortCandidates(nextBtns);
+            sortCandidates(firstBtns);
+
+            return { numMap, nextBtns, firstBtns };
         };
 
         const initCtrl = getControls();
-        if (initCtrl.numMap.size <= 1) return null;
+        if (!initCtrl || initCtrl.numMap.size <= 1) return null;
 
-        console.log(`[GenericParser] 🖱️ 페이지네이션 버튼 감지 (초기 버튼 ${initCtrl.numMap.size}개) -> 전체 페이지 순차 수집을 시작합니다.`);
+        console.log(`[GenericParser] 🖱️ 페이지네이션 버튼 감지 (초기 페이지 수: ${initCtrl.numMap.size}개) -> 전체 페이지 순차 수집을 시작합니다.`);
 
         const cloneItems = (items) => items.map(el => (typeof el.cloneNode === 'function' ? el.cloneNode(true) : el));
-        const allClonedPages = [];
-        allClonedPages.push(cloneItems(currentPageItems));
+        const allClonedPages = [cloneItems(currentPageItems)];
 
         const getListSignature = () => {
             const items = this._extractItemsFromDoc(this._doc, listCfg);
             if (items.length === 0) return '';
             const first = this.parseListItem(items[0]);
             const last = this.parseListItem(items[items.length - 1]);
-            return `${items.length}:${first.num}_${first.title}:${last.num}_${last.title}`;
+            return `${items.length}:${first.num}_${first.title}_${first.src}:${last.num}_${last.title}_${last.src}`;
         };
 
-        const seenSignatures = new Set([getListSignature()]);
-        let currentPageNum = 1;
-        const MAX_SAFETY_PAGES = 100;
-
-        for (let step = 0; step < MAX_SAFETY_PAGES; step++) {
-            const targetPageNum = currentPageNum + 1;
-            const { numMap, nextBtn } = getControls();
-            const targetEntry = numMap.get(targetPageNum);
-
-            let btnToClick = null;
-            if (targetEntry && !targetEntry.isDisabled) {
-                btnToClick = targetEntry.el;
-            } else if (nextBtn) {
-                // 1..10 다음의 11페이지처럼 번호가 '…' 뒤에 숨겨진 경우 '›'(다음) 버튼 클릭
-                btnToClick = nextBtn;
+        const triggerClick = (el) => {
+            if (!el) return false;
+            if (typeof el.click === 'function') {
+                el.click();
+                return true;
             }
-
-            if (!btnToClick || typeof btnToClick.click !== 'function') break;
-
-            const prevSig = getListSignature();
-            btnToClick.click();
-
-            let changed = false;
-            let waited = 0;
-            while (waited < 2500) {
-                await new Promise(r => setTimeout(r, 120));
-                waited += 120;
-                const newSig = getListSignature();
-                if (newSig && newSig !== prevSig) {
-                    changed = true;
-                    break;
-                }
+            if (el.parentElement && typeof el.parentElement.click === 'function') {
+                el.parentElement.click();
+                return true;
             }
+            return false;
+        };
 
-            if (!changed) break;
-
-            const newSig = getListSignature();
-            if (seenSignatures.has(newSig)) break;
-            seenSignatures.add(newSig);
-
-            const newItems = this._extractItemsFromDoc(this._doc, listCfg);
-            if (newItems.length > 0) {
-                allClonedPages.push(cloneItems(newItems));
-            }
-            currentPageNum = targetPageNum;
+        // <a> 태그 클릭 시 SPA 라우터(#__next, document)는 통과하되 브라우저 전체 페이지 새로고침만 최상단(window)에서 방어
+        const win = (this._doc && this._doc.defaultView) || (typeof window !== 'undefined' ? window : null);
+        const preventFullPageNav = (e) => {
+            try {
+                const a = e.target?.closest?.('a[href]');
+                if (a) e.preventDefault();
+            } catch (_) {}
+        };
+        if (win && typeof win.addEventListener === 'function') {
+            win.addEventListener('click', preventFullPageNav, false);
         }
 
-        // 수집 완료 후 원래 1페이지로 화면 복구
-        const finalCtrl = getControls();
-        const restoreBtn = finalCtrl.firstBtn || finalCtrl.numMap.get(1)?.el;
-        if (restoreBtn && typeof restoreBtn.click === 'function') {
-            restoreBtn.click();
-            await new Promise(r => setTimeout(r, 150));
+        try {
+            const seenSignatures = new Set([getListSignature()]);
+            let currentPageNum = 1;
+            const MAX_SAFETY_PAGES = 100;
+
+            for (let step = 0; step < MAX_SAFETY_PAGES; step++) {
+                const targetPageNum = currentPageNum + 1;
+                const ctrl = getControls();
+                if (!ctrl) break;
+
+                const { numMap, nextBtns } = ctrl;
+                const targetEntries = (numMap.get(targetPageNum) || []).filter(c => !c.isDisabled);
+
+                const candidateButtons = [];
+                for (const entry of targetEntries) candidateButtons.push(entry.el);
+                for (const nb of nextBtns) {
+                    if (!candidateButtons.includes(nb.el)) candidateButtons.push(nb.el);
+                }
+
+                if (candidateButtons.length === 0) break;
+
+                const prevSig = getListSignature();
+                triggerClick(candidateButtons[0]);
+
+                let changed = false;
+                let waited = 0;
+                let triedFallbacks = false;
+
+                while (waited < 2500) {
+                    await new Promise(r => setTimeout(r, 120));
+                    waited += 120;
+                    const newSig = getListSignature();
+                    if (newSig && newSig !== prevSig) {
+                        changed = true;
+                        break;
+                    }
+                    // PC/모바일 듀얼 페이지네이션 바 중 첫 번째가 비활성일 경우 600ms 시점에 나머지 후보 버튼도 클릭
+                    if (!triedFallbacks && waited >= 600 && candidateButtons.length > 1) {
+                        triedFallbacks = true;
+                        for (let k = 1; k < candidateButtons.length; k++) {
+                            triggerClick(candidateButtons[k]);
+                        }
+                    }
+                }
+
+                if (!changed) break;
+
+                const newSig = getListSignature();
+                if (seenSignatures.has(newSig)) break;
+                seenSignatures.add(newSig);
+
+                const newItems = this._extractItemsFromDoc(this._doc, listCfg);
+                if (newItems.length > 0) {
+                    allClonedPages.push(cloneItems(newItems));
+                }
+                currentPageNum = targetPageNum;
+            }
+
+            // 수집 완료 후 원래 1페이지로 화면 복구
+            const finalCtrl = getControls();
+            if (finalCtrl) {
+                const restoreEl = finalCtrl.firstBtns[0]?.el || finalCtrl.numMap.get(1)?.[0]?.el;
+                if (restoreEl) {
+                    triggerClick(restoreEl);
+                    await new Promise(r => setTimeout(r, 150));
+                }
+            }
+        } finally {
+            if (win && typeof win.removeEventListener === 'function') {
+                win.removeEventListener('click', preventFullPageNav, false);
+            }
         }
 
         const merged = [];
@@ -636,22 +812,119 @@ export class GenericParser extends BaseParser {
     }
 
     /**
-     * 원격 페이지 HTML을 가져와 Document로 파싱
+     * 원격 페이지 HTML을 가져와 Document로 파싱 (fetch 우선 시도 후 GM_xmlhttpRequest 폴백)
      * @private
      */
     async _fetchPageDocument(pageUrl) {
-        if (typeof fetch !== 'function') return null;
-        try {
-            const resp = await fetch(pageUrl, { credentials: 'same-origin' });
-            if (!resp.ok) return null;
-            const html = await resp.text();
-            if (typeof DOMParser !== 'undefined') {
-                return new DOMParser().parseFromString(html, 'text/html');
+        if (typeof fetch === 'function') {
+            try {
+                const resp = await fetch(pageUrl, {
+                    credentials: 'include',
+                    headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' }
+                });
+                if (resp && resp.ok) {
+                    const html = await resp.text();
+                    if (html && typeof DOMParser !== 'undefined') {
+                        return new DOMParser().parseFromString(html, 'text/html');
+                    }
+                }
+            } catch (e) {
+                console.warn(`[GenericParser] fetch 페이지 로드 실패 (${pageUrl}):`, e);
             }
-        } catch (e) {
-            console.warn(`[GenericParser] 페이지 로드 실패 (${pageUrl}):`, e);
+        }
+        if (typeof GM_xmlhttpRequest === 'function' && typeof DOMParser !== 'undefined') {
+            try {
+                const html = await new Promise((resolve, reject) => {
+                    GM_xmlhttpRequest({
+                        method: 'GET',
+                        url: pageUrl,
+                        timeout: 15000,
+                        onload: (res) => (res.status >= 200 && res.status < 300) ? resolve(res.responseText) : reject(new Error(`HTTP ${res.status}`)),
+                        onerror: reject,
+                        ontimeout: reject
+                    });
+                });
+                if (html) {
+                    return new DOMParser().parseFromString(html, 'text/html');
+                }
+            } catch (e) {
+                console.warn(`[GenericParser] GM_xmlhttpRequest 페이지 로드 실패 (${pageUrl}):`, e);
+            }
         }
         return null;
+    }
+
+    /**
+     * Tier 3 폴백: CSR 전용 다중 페이지 URL을 숨김 iframe에서 렌더링하여 회차 추출
+     * @private
+     */
+    async _collectViaIframePagination(pagInfo, listCfg, currentPageItems) {
+        if (!this._doc || typeof this._doc.createElement !== 'function' || !this._doc.body) return null;
+        const firstContSel = String(listCfg.container || '').split(',')[0].trim();
+        if (!firstContSel) return null;
+
+        const cloneItems = (items) => items.map(el => (typeof el.cloneNode === 'function' ? el.cloneNode(true) : el));
+        const pageItemsMap = new Map([[pagInfo.currentPage, cloneItems(currentPageItems)]]);
+        let knownMaxPage = Math.min(pagInfo.maxPage, 50);
+
+        const iframe = this._doc.createElement('iframe');
+        if (iframe.style) {
+            iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:360px;height:480px;opacity:0.01;pointer-events:none;z-index:-9999;';
+        }
+        this._doc.body.appendChild(iframe);
+
+        try {
+            for (let pNum = 1; pNum <= knownMaxPage; pNum++) {
+                if (pNum === pagInfo.currentPage) continue;
+                const pageUrl = pagInfo.buildUrl(pNum);
+                const loaded = await new Promise((resolve) => {
+                    const timer = setTimeout(() => resolve(false), 6000);
+                    iframe.onload = () => { clearTimeout(timer); resolve(true); };
+                    iframe.onerror = () => { clearTimeout(timer); resolve(false); };
+                    iframe.src = pageUrl;
+                });
+                if (!loaded || !iframe.contentDocument) continue;
+
+                let waited = 0;
+                let items = [];
+                while (waited < 3500) {
+                    items = this._extractItemsFromDoc(iframe.contentDocument, listCfg);
+                    if (items.length > 0) break;
+                    await new Promise(r => setTimeout(r, 150));
+                    waited += 150;
+                }
+                if (items.length > 0) {
+                    pageItemsMap.set(pNum, cloneItems(items));
+                    const subPag = this._detectPaginationInfo(iframe.contentDocument, pageUrl, currentPageItems.length, items);
+                    if (subPag) {
+                        if (subPag.directUrlMap) {
+                            for (const [k, v] of subPag.directUrlMap.entries()) {
+                                if (!pagInfo.directUrlMap.has(k)) pagInfo.directUrlMap.set(k, v);
+                            }
+                        }
+                        if (subPag.maxPage > knownMaxPage && subPag.maxPage <= 50) {
+                            knownMaxPage = subPag.maxPage;
+                        }
+                    }
+                }
+            }
+        } finally {
+            try { iframe.remove(); } catch (_) {}
+        }
+
+        const sortedPageNums = Array.from(pageItemsMap.keys()).sort((a, b) => a - b);
+        const merged = [];
+        const seenKeys = new Set();
+        for (const pNum of sortedPageNums) {
+            for (const el of (pageItemsMap.get(pNum) || [])) {
+                const parsed = this.parseListItem(el);
+                const key = parsed.src || `${parsed.num}_${parsed.title}`;
+                if (key && seenKeys.has(key)) continue;
+                if (key) seenKeys.add(key);
+                merged.push(el);
+            }
+        }
+        return merged;
     }
 
     /**
@@ -688,10 +961,10 @@ export class GenericParser extends BaseParser {
             return this._cachedAllPageItems;
         }
 
-        // 1. URL 기반 페이지네이션 감지 (?page=2, ?spage=2, /__q/<base64>, /page/2 등)
-        const pagInfo = this._detectPaginationInfo(this._doc, currentUrl, currentPageItems.length);
+        // Tier 1. URL 기반 페이지네이션 감지 (?page=2, ?spage=2, /__q/<base64>, /page/2, 직접 href 등)
+        const pagInfo = this._detectPaginationInfo(this._doc, currentUrl, currentPageItems.length, currentPageItems);
         if (pagInfo && pagInfo.maxPage > 1) {
-            console.log(`[GenericParser] 📄 다중 페이지 감지 (유형: ${pagInfo.type}, 현재 ${pagInfo.currentPage}p / 최대 ${pagInfo.maxPage}p) -> 전체 페이지 자동 수집을 시작합니다.`);
+            console.log(`[GenericParser] 📄 다중 페이지 감지 (유형: ${pagInfo.type}, 현재 ${pagInfo.currentPage}p / 예상 최대 ${pagInfo.maxPage}p) -> 전체 페이지 자동 수집을 시작합니다.`);
 
             const pageItemsMap = new Map();
             pageItemsMap.set(pagInfo.currentPage, currentPageItems);
@@ -716,20 +989,26 @@ export class GenericParser extends BaseParser {
                 const results = await Promise.all(batchPages.map(async (pNum) => {
                     const pageUrl = pagInfo.buildUrl(pNum);
                     const pageDoc = await this._fetchPageDocument(pageUrl);
-                    if (!pageDoc) return { pNum, items: [], nextMax: pNum };
+                    if (!pageDoc) return { pNum, items: [], subPag: null };
 
                     const items = this._extractItemsFromDoc(pageDoc, listCfg);
-                    const subPag = this._detectPaginationInfo(pageDoc, pageUrl, currentPageItems.length);
-                    const nextMax = subPag ? subPag.maxPage : pNum;
-                    return { pNum, items, nextMax };
+                    const subPag = this._detectPaginationInfo(pageDoc, pageUrl, currentPageItems.length, items);
+                    return { pNum, items, subPag };
                 }));
 
-                for (const { pNum, items, nextMax } of results) {
+                for (const { pNum, items, subPag } of results) {
                     if (items && items.length > 0) {
                         pageItemsMap.set(pNum, items);
                     }
-                    if (nextMax > knownMaxPage && nextMax <= 100) {
-                        knownMaxPage = nextMax;
+                    if (subPag) {
+                        if (subPag.directUrlMap && pagInfo.directUrlMap) {
+                            for (const [k, v] of subPag.directUrlMap.entries()) {
+                                if (!pagInfo.directUrlMap.has(k)) pagInfo.directUrlMap.set(k, v);
+                            }
+                        }
+                        if (subPag.maxPage > knownMaxPage && subPag.maxPage <= 100) {
+                            knownMaxPage = subPag.maxPage;
+                        }
                     }
                 }
             }
@@ -753,17 +1032,17 @@ export class GenericParser extends BaseParser {
                 }
             }
 
-            // URL Fetch 방식으로 2페이지 이상의 고유 회차가 정상 병합된 경우 반환
+            // Tier 1(URL Fetch)으로 2페이지 이상의 고유 회차가 정상 병합된 경우 반환
             if (mergedItems.length > currentPageItems.length) {
                 console.log(`[GenericParser] ✅ 전체 ${sortedPageNums.length}개 페이지 병합 완료: 총 ${mergedItems.length}개 회차 추출됨.`);
                 this._cachedAllPageUrl = currentUrl;
                 this._cachedAllPageItems = mergedItems;
                 return mergedItems;
             }
-            console.warn('[GenericParser] ⚠️ URL 기반 페이지 요청에서 추가 회차가 감지되지 않아 실시간 버튼 클릭 모드로 전환합니다.');
+            console.warn('[GenericParser] ⚠️ 정적 URL 요청에서 추가 회차가 감지되지 않아 실시간 DOM 버튼 클릭 모드로 전환합니다.');
         }
 
-        // 2. SPA 버튼 클릭형 페이지네이션(« ‹ 1 2 ... 10 … › ») 폴백 수행
+        // Tier 2. SPA/실시간 버튼 클릭형 페이지네이션(« ‹ 1 2 ... 10 … › » 또는 JS 페이지네이션) 수행
         const btnMerged = await this._collectViaButtonPagination(listCfg, currentPageItems);
         if (btnMerged && btnMerged.length > currentPageItems.length) {
             console.log(`[GenericParser] ✅ 버튼 순회 페이지 병합 완료: 총 ${btnMerged.length}개 회차 추출됨.`);
@@ -772,12 +1051,24 @@ export class GenericParser extends BaseParser {
             return btnMerged;
         }
 
+        // Tier 3. URL 페이지네이션은 존재하나 CSR 렌더링이 필요한 경우 숨김 iframe 폴백 수행
+        if (pagInfo && pagInfo.maxPage > 1) {
+            console.log('[GenericParser] 🔄 CSR 다중 페이지 렌더링을 위해 숨김 iframe 수집 폴백을 가동합니다.');
+            const iframeMerged = await this._collectViaIframePagination(pagInfo, listCfg, currentPageItems);
+            if (iframeMerged && iframeMerged.length > currentPageItems.length) {
+                console.log(`[GenericParser] ✅ 숨김 iframe 페이지 병합 완료: 총 ${iframeMerged.length}개 회차 추출됨.`);
+                this._cachedAllPageUrl = currentUrl;
+                this._cachedAllPageItems = iframeMerged;
+                return iframeMerged;
+            }
+        }
+
         return currentPageItems;
     }
 
     parseListItem(el) {
         const listCfg = this.rule.list || {};
-        const numRaw = this._extractValue(el, listCfg.num, true) || "0";
+        let numRaw = this._extractValue(el, listCfg.num, true) || "";
         const subRaw = this._extractValue(el, listCfg.sub, true) || "";
         let title = this._extractValue(el, listCfg.title, true) || "Unknown";
         const src = this._extractValue(el, listCfg.link, false) || "";
@@ -785,17 +1076,36 @@ export class GenericParser extends BaseParser {
         // 앞쪽의 불필요한 UP / NEW 배지 텍스트 제거
         title = title.replace(/^(UP|NEW)\s+/i, '').trim();
 
-        let num = numRaw;
+        // 번호 셀렉터 매칭 실패 시 행 내부의 순수 숫자 배지(.wr-num, span, td 등) 자동 탐색
+        if (!numRaw && el && typeof el.querySelectorAll === 'function') {
+            try {
+                const numNodes = Array.from(el.querySelectorAll('.wr-num, .ep-row-v2-no, .ne-num, .no, .num, .td_num, span, td, div'));
+                for (const node of numNodes) {
+                    if (node.children && node.children.length > 0) continue;
+                    const t = (node.textContent || '').trim();
+                    if (/^\d{1,5}$/.test(t)) {
+                        numRaw = t;
+                        break;
+                    }
+                }
+            } catch (e) {}
+        }
+
+        let num = numRaw || "0";
         const match = numRaw.match(/(\d+)/);
         if (match) {
             num = match[1];
         } else {
-            const titleNumMatch = title.match(/(\d+)\s*(?:화|회|편|권)/) || title.match(/^(\d+)/);
+            const titleNumMatch = title.match(/(\d+)\s*(?:화|회|편|권)/) || title.match(/^(\d+)/) || title.match(/\((\d+)\)/);
             if (titleNumMatch) num = titleNumMatch[1];
         }
 
         if (subRaw) {
             num = `${num}_${subRaw}`;
+        }
+
+        if (el && el._tokiEffectiveNum) {
+            num = el._tokiEffectiveNum;
         }
 
         return {
@@ -944,17 +1254,33 @@ export class GenericParser extends BaseParser {
     }
 
     /**
-     * 문서 제목(작품명) 정제 헬퍼 — 사이트 접미사("- 북토끼 소설 - 뉴토끼", "| 뉴토끼" 등) 제거
+     * 문서 제목(작품명) 정제 헬퍼 — 사이트 접미사("- 북토끼 소설 - 뉴토끼", "| 뉴토끼"), 작가 접미사 및 카테고리 배지("웹소설", "일본만화") 완벽 필터링
      * @private
      */
     _cleanSeriesTitleText(raw) {
         if (!raw || typeof raw !== 'string') return null;
+        const hadPipe = raw.includes('|');
         let cleaned = raw
             .replace(/\s*\|\s*.*$/, '')
-            .replace(/\s+-\s+(?:북토끼|마나토끼|뉴토끼|블랙툰|웹툰|일본만화|웹소설|소설|만화).*$/i, '')
+            .replace(/\s+-\s+(?:북토끼|마나토끼|뉴토끼|블랙툰|웹툰|일본만화|웹소설|소설|만화|무료).*$/i, '')
             .replace(/^(?:북토끼|마나토끼|뉴토끼|블랙툰)\s*[-|:]\s*/i, '')
             .trim();
-        if (!cleaned || /^(뉴토끼|북토끼|마나토끼|블랙툰|홈|웹툰|만화|소설)$/i.test(cleaned)) {
+
+        // "전설급 영웅은 아카데미 우등생 - 만성이(...) | 뉴토끼" 형태에서 파이프(|) 앞의 "- 작가명" 제거
+        if (hadPipe && /\s+-\s+[^-]+$/.test(cleaned)) {
+            const strippedAuthor = cleaned.replace(/\s+-\s+[^-]+$/, '').trim();
+            if (strippedAuthor.length >= 2) {
+                cleaned = strippedAuthor;
+            }
+        }
+
+        if (!cleaned || cleaned.length < 1) return null;
+
+        // 사이트명, 반복된 사이트명("북토끼 북토끼"), 카테고리 단독 명칭("웹소설", "일본만화", "일반웹툰" 등) 배제
+        if (/^(?:뉴토끼|북토끼|마나토끼|블랙툰|홈|메인|웹툰|일반웹툰|성인웹툰|완결웹툰|BL\/GL|만화|일본만화|완결만화|소설|웹소설|완결소설|애니|업데이트|로그인|회원가입|검색|공지사항|자유게시판|소설목록|만화목록|웹툰목록|전체\s*회차|작품\s*정보|unknown\s*series|unknownseries)(?:\s+(?:뉴토끼|북토끼|마나토끼|블랙툰|웹툰|만화|소설|미리보기))*$/i.test(cleaned)) {
+            return null;
+        }
+        if (/웹툰\s*미리보기|최신\s*웹툰|무료\s*웹툰|팝업레이어|로그인\s*하러/i.test(cleaned)) {
             return null;
         }
         return cleaned;
@@ -962,24 +1288,27 @@ export class GenericParser extends BaseParser {
 
     getSeriesTitle() {
         const meta = this.rule.meta || {};
-        let val = this._cleanSeriesTitleText(this._extractValue(this._doc, meta.title));
-        if (val) return val;
-
-        // 범용 다중 폴백 체인 (v2 DOM, 그누보드 meta[name=subject], og:title, document.title)
+        const rawCandidates = Array.isArray(meta.title) ? meta.title : (meta.title ? [meta.title] : []);
         const fallbackConfigs = [
             'h1.hero-v2-title',
             'div.nd-info > h1',
+            '.nd-title',
             { selector: 'meta[name="subject"]', attr: 'content' },
+            '.view-title .view-content strong',
             '.view-title h1',
-            '.page-desc',
             { selector: 'meta[property="og:title"]', attr: 'content' }
         ];
-        val = this._cleanSeriesTitleText(this._extractValue(this._doc, fallbackConfigs));
-        if (val) return val;
+
+        for (const cfg of [...rawCandidates, ...fallbackConfigs]) {
+            if (cfg === '.page-desc') continue; // .page-desc는 카테고리명("웹소설", "일본만화")이므로 타이틀에서 배제
+            const rawVal = this._extractValue(this._doc, cfg);
+            const cleaned = this._cleanSeriesTitleText(rawVal);
+            if (cleaned) return cleaned;
+        }
 
         if (this._doc && this._doc.title) {
-            val = this._cleanSeriesTitleText(this._doc.title);
-            if (val) return val;
+            const cleanedDocTitle = this._cleanSeriesTitleText(this._doc.title);
+            if (cleanedDocTitle) return cleanedDocTitle;
         }
 
         return null;

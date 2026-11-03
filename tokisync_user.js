@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TokiSync (Link to Drive)
 // @namespace    http://tampermonkey.net/
-// @version      1.26.6
+// @version      1.26.7
 // @description  Toki series sites -> Google Drive syncing tool (Bundled)
 // @author       pray4skylark
 // @updateURL    https://alienayleen.github.io/tokiSync/tokiSync.user.js
@@ -2223,21 +2223,30 @@ class AutoDomDiscoverer {
         const meta = {};
         if (!doc || typeof doc.querySelector !== 'function') return meta;
 
+        const isJunkTitle = (txt) => {
+            if (!txt) return true;
+            const c = txt.replace(/\s*\|\s*.*$/, '').replace(/\s+-\s+(?:북토끼|마나토끼|뉴토끼|블랙툰|웹툰|일본만화|웹소설|소설|만화).*$/i, '').trim();
+            if (!c || c.length < 2) return true;
+            if (/^(?:뉴토끼|북토끼|마나토끼|블랙툰|홈|메인|웹툰|일반웹툰|성인웹툰|완결웹툰|만화|일본만화|완결만화|소설|웹소설|완결소설|로그인|회원가입|검색|공지사항)(\s+.*)?$/i.test(c)) return true;
+            if (/미리보기|팝업레이어|로그인/.test(c)) return true;
+            return false;
+        };
+
         const titleCandidates = [
             'h1.hero-v2-title',
             'div.nd-info > h1',
             '.nd-title',
             'h1.title',
             'h1.series-title',
+            '.view-title .view-content strong',
             '.view-title h1',
             '.hero h1',
-            'main h1',
-            'h1'
+            'main h1'
         ];
         for (const sel of titleCandidates) {
             try {
                 const el = doc.querySelector(sel);
-                if (el && el.textContent && el.textContent.trim().length > 1) {
+                if (el && !el.closest?.('header, nav, #hd, #header, .header, .navbar, .modal') && !isJunkTitle(el.textContent)) {
                     meta.title = sel;
                     break;
                 }
@@ -2245,10 +2254,18 @@ class AutoDomDiscoverer {
         }
         if (!meta.title) {
             const metaSubj = doc.querySelector('meta[name="subject"]');
-            if (metaSubj && metaSubj.getAttribute('content')) {
+            if (metaSubj && !isJunkTitle(metaSubj.getAttribute('content'))) {
                 meta.title = { selector: 'meta[name="subject"]', attr: 'content' };
-            } else if (doc.querySelector('meta[property="og:title"]')) {
+            } else if (doc.querySelector('meta[property="og:title"]') && !isJunkTitle(doc.querySelector('meta[property="og:title"]').getAttribute('content'))) {
                 meta.title = { selector: 'meta[property="og:title"]', attr: 'content' };
+            } else {
+                const h1s = Array.from(doc.querySelectorAll('h1, h2'));
+                for (const h of h1s) {
+                    if (!h.closest?.('header, nav, #hd, #header, .header, .navbar, .modal') && !isJunkTitle(h.textContent)) {
+                        meta.title = this.shortSelector(h) || 'h1';
+                        break;
+                    }
+                }
             }
         }
 
@@ -2686,6 +2703,10 @@ class BaseParser {
         if (url.startsWith('http')) return url;
         if (url.startsWith('//')) return `https:${url}`;
         if (url.startsWith('/')) return `${this.protocolDomain}${url}`;
+        try {
+            const base = (this._doc && this._doc.URL) || this.protocolDomain || (typeof window !== 'undefined' && window.location ? window.location.href : '');
+            if (base) return new URL(url, base).href;
+        } catch (e) {}
         return url;
     }
 
@@ -2786,14 +2807,16 @@ class BaseParser {
                 listPrefixTitle = getCommonPrefixFn(firstTitle, lastTitle);
             }
 
-            if (listPrefixTitle && listPrefixTitle.length > 2) {
-                formatted = `[${seriesId}] ${listPrefixTitle}`;
-            } else if (firstTitle && !/^\d+\s*(?:화|회|편|권)?$/.test(firstTitle.trim())) {
-                // Single item or distinct titles: fallback to regex or full title (단, 단순 '281화' 형태는 제외)
+            // 공통 접두사가 2글자 이상이고 단순 챕터 부제('은원 (', '제1장' 등)가 아닐 때만 채택
+            const cleanPrefix = (listPrefixTitle || '').replace(/[(\[\-_:\s]+$/, '').trim();
+            if (cleanPrefix && cleanPrefix.length >= 2 && firstTitle !== lastTitle) {
+                formatted = `[${seriesId}] ${cleanPrefix}`;
+            } else if (firstTitle && /\s+\d+\s*(?:화|회|편|권)/.test(firstTitle.trim())) {
+                // '전설급 영웅은 아카데미 우등생 111화'처럼 앞에 작품명이 있고 뒤에 N화가 붙은 경우에만 작품명 추출
                 const cleanTitle = firstTitle.replace(/\s*\d+\s*(?:화|회|편|권).*$/, '').trim();
-                formatted = `[${seriesId}] ${cleanTitle || firstTitle}`;
+                formatted = cleanTitle ? `[${seriesId}] ${cleanTitle}` : `[${seriesId}] UnknownSeries`;
             } else {
-                formatted = `[${seriesId}] Unknown Series`;
+                formatted = `[${seriesId}] UnknownSeries`;
             }
         }
 
@@ -2873,7 +2896,7 @@ class GenericParser extends BaseParser {
                 try {
                     const clone = el.cloneNode(true);
                     if (typeof clone.querySelectorAll === 'function') {
-                        clone.querySelectorAll('.count, .orangered, .wr-icon, .ep-badge-new, .ep-badge-ready, .sound_only, .sub').forEach(n => n.remove());
+                        clone.querySelectorAll('.count, .orangered, .wr-icon, .ep-badge-new, .ep-badge-ready, .sound_only, .pg_only, .sub, .item-details, .ep-row-v2-no, .ep-row-v2-date, .ep-row-v2-meta, .ep-row-v2-arrow, .ne-num, .ne-date').forEach(n => n.remove());
                     }
                     val = clone.innerText?.trim() || clone.textContent?.trim() || null;
                 } catch (e) {
@@ -3033,36 +3056,219 @@ class GenericParser extends BaseParser {
     }
 
     /**
-     * 페이지 내 표시된 총 회차 수(예: "총 1,307회차")를 기반으로 예상 최대 페이지 수 추정
+     * 페이지 내 표시된 총 회차 수(예: "총 1,307회차", "최신화 934화") 및 현재 페이지 회차 번호를 기반으로 예상 최대 페이지 수 추정
      * @private
      */
-    _estimateMaxPagesFromTotalCount(doc, perPageCount) {
+    _estimateMaxPagesFromTotalCount(doc, perPageCount, currentPageItems = []) {
         if (!doc || typeof doc.querySelector !== 'function' || !perPageCount || perPageCount < 5) return 1;
-        const countSelectors = ['.ep-section-count', '.stat-num', '.page-desc', '.view-content'];
+        let maxTotal = 0;
+        const countSelectors = ['.ep-section-count', '.stat-num', '.page-desc', '.view-content', '.view-info', 'main', 'body'];
         for (const sel of countSelectors) {
             try {
                 const el = doc.querySelector(sel);
                 const txt = el?.textContent || '';
-                const m = txt.match(/총\s*([0-9,]+)\s*(?:회차|화|편)/) || (sel === '.ep-section-count' ? txt.match(/([0-9,]+)/) : null);
+                const m = txt.match(/총\s*([0-9,]+)\s*(?:회차|화|편)/) ||
+                          txt.match(/최신화\s*:?\s*([0-9,]+)\s*(?:회차|화|편)/) ||
+                          (sel === '.ep-section-count' ? txt.match(/([0-9,]+)/) : null);
                 if (m) {
-                    const total = parseInt(m[1].replace(/,/g, ''), 10);
-                    if (total > perPageCount && total <= 20000) {
-                        return Math.ceil(total / perPageCount);
-                    }
+                    const parsed = parseInt(m[1].replace(/,/g, ''), 10);
+                    if (parsed > maxTotal && parsed <= 20000) maxTotal = parsed;
+                    if (maxTotal > perPageCount) break;
                 }
             } catch (e) {}
+        }
+
+        // 현재 페이지 첫/끝 에피소드 번호 기반 역산 (예: 1페이지가 934~834화이면 최소 ceil(934/100)=10페이지)
+        if (Array.isArray(currentPageItems) && currentPageItems.length >= 10) {
+            try {
+                const firstParsed = this.parseListItem(currentPageItems[0]);
+                const lastParsed = this.parseListItem(currentPageItems[currentPageItems.length - 1]);
+                const n1 = parseInt(firstParsed.num, 10) || 0;
+                const n2 = parseInt(lastParsed.num, 10) || 0;
+                const highestNum = Math.max(n1, n2);
+                const lowestNum = Math.min(n1, n2);
+                if (highestNum > perPageCount && lowestNum > 1 && highestNum <= 20000) {
+                    if (highestNum > maxTotal) maxTotal = highestNum;
+                }
+            } catch (e) {}
+        }
+
+        if (maxTotal > perPageCount && maxTotal <= 20000) {
+            return Math.ceil(maxTotal / perPageCount);
         }
         return 1;
     }
 
     /**
+     * 페이지네이션 컨테이너 내부의 말단(leaf) 컨트롤 요소들을 태그에 구애받지 않고 추출
+     * - button, a, strong, span, em, b, li, div 등 모든 태그 지원 (현재1페이지 strong/span 및 sbxh9의 듀얼 페이지네이션 대응)
+     * @private
+     */
+    _getLeafPaginationControls(root, listEl = null) {
+        if (!root || typeof root.querySelectorAll !== 'function') return [];
+        const rawEls = Array.from(root.querySelectorAll('button, a, [role="button"], strong, span, em, b, li, div'));
+        return rawEls.filter(el => {
+            if (listEl && (el === listEl || (typeof listEl.contains === 'function' && listEl.contains(el)) || (typeof el.contains === 'function' && el.contains(listEl)))) {
+                return false;
+            }
+            if (el.closest?.('ul.ep-list-v2, ul.novel-eps, .list-body, #toon_list, li.ep-row-v2, li.list-item')) return false;
+            if (el.closest?.('#bo_vc, #bo_v_cmt, .view-comment, #comment, #comments, [class*="comment" i], [id*="comment" i], [class*="cmt" i], [id*="cmt" i]')) return false;
+
+            const rawTxt = (el.textContent || '').trim();
+            if (!rawTxt || rawTxt.length > 24) return false;
+
+            const children = Array.from(el.children || []).filter(ch => !/pg_only|sound_only|sr-only|blind/i.test(ch.className || ''));
+            if (children.length > 0) {
+                if (children.some(ch => (ch.textContent || '').trim() === rawTxt)) return false;
+                if (children.length > 1) return false;
+            }
+            return true;
+        });
+    }
+
+    /**
+     * 회차 목록 섹션 내의 페이지네이션 바(컨테이너)를 클래스명/태그에 구애받지 않고 탐색
+     * @private
+     */
+    _findPaginationRoot(listCfg, doc = this._doc) {
+        if (!doc || typeof doc.querySelectorAll !== 'function') return null;
+
+        const containerSelectors = String(listCfg?.container || '').split(',').map(s => s.trim()).filter(Boolean);
+        let listEl = null;
+        for (const sel of containerSelectors) {
+            try {
+                const found = doc.querySelector(sel);
+                if (found) { listEl = found; break; }
+            } catch (e) {}
+        }
+
+        const hasPageControls = (el) => {
+            if (!el || typeof el.querySelectorAll !== 'function') return false;
+            if (el.closest?.('#bo_vc, #bo_v_cmt, .view-comment, #comment, #comments, [class*="comment" i], [id*="comment" i], [class*="cmt" i], [id*="cmt" i]')) return false;
+            const controls = this._getLeafPaginationControls(el, listEl);
+            const nums = new Set();
+            let hasInteractive = false;
+            for (const c of controls) {
+                const t = (c.textContent || '').replace(/현재|열린|페이지|쪽|\s+/g, '').replace(/^\[|\]$/g, '').trim();
+                if (/^\d+$/.test(t)) {
+                    const n = parseInt(t, 10);
+                    if (n >= 1 && n <= 500) {
+                        nums.add(n);
+                        const tag = (c.tagName || '').toUpperCase();
+                        if (tag === 'A' || tag === 'BUTTON' || c.getAttribute?.('role') === 'button' || typeof c.onclick === 'function' || c.style?.cursor === 'pointer' || n >= 2) {
+                            hasInteractive = true;
+                        }
+                    }
+                }
+            }
+            if (!hasInteractive || nums.size < 2) return false;
+            for (const n of nums) {
+                if (nums.has(n + 1)) return true;
+            }
+            return nums.has(1) && nums.size >= 2;
+        };
+
+        // 1. 에피소드 리스트 컨테이너로부터 최대 4단계 상위 조상까지 올라가며 가장 가까운 섹션 탐색
+        // (단, pc/mobile 듀얼 페이지네이션 바가 형제로 공존하는 경우를 모두 포괄하기 위해 조상 섹션 자체를 우선 반환)
+        let anc = listEl ? listEl.parentElement : null;
+        for (let depth = 0; depth < 4 && anc && anc !== doc.body && anc !== doc.documentElement; depth++, anc = anc.parentElement) {
+            if (hasPageControls(anc)) {
+                return anc;
+            }
+            const siblings = Array.from(anc.children || []);
+            for (const sib of siblings) {
+                if (sib === listEl || (listEl && typeof sib.contains === 'function' && sib.contains(listEl))) continue;
+                if (hasPageControls(sib)) return anc;
+            }
+        }
+
+        // 2. 문서 전체에서 알려진 페이지네이션 컨테이너 탐색 (댓글 영역 제외)
+        const candidates = Array.from(doc.querySelectorAll(
+            '.ep-pagination, .ep-page, .ep-pages, .pagination, .paging, .pg_wrap, .page-box, .list-page, .write-pages, .page-nav, [class*="pagin" i], [class*="pager" i], nav[aria-label*="page" i]'
+        ));
+        for (const cand of candidates) {
+            if (hasPageControls(cand)) return cand.parentElement && hasPageControls(cand.parentElement) ? cand.parentElement : cand;
+        }
+
+        // 3. '2페이지', '3페이지' 텍스트를 가진 앵커/버튼 역추적 (newtoki1.org 등 클래스명이 달라도 100% 포착)
+        try {
+            const allLinks = Array.from(doc.querySelectorAll('a, button, span, strong'));
+            for (const node of allLinks) {
+                if (node.closest?.('#bo_vc, #bo_v_cmt, .view-comment, #comment, #comments, [class*="comment" i], [id*="comment" i]')) continue;
+                const txt = (node.textContent || '').trim();
+                if (/^(?:현재|열린)?\s*2\s*페이지$/.test(txt) && node.parentElement) {
+                    const p = node.parentElement.parentElement && hasPageControls(node.parentElement.parentElement)
+                        ? node.parentElement.parentElement
+                        : node.parentElement;
+                    if (hasPageControls(p)) return p;
+                }
+            }
+        } catch (e) {}
+
+        return null;
+    }
+
+    /**
+     * 단일 URL 문자열에서 페이지 번호와 템플릿 유형을 추출하는 헬퍼
+     * @private
+     */
+    _extractPageNumFromUrl(u, cleanBasePath) {
+        // 1) /__q/<base64>
+        const qMatch = u.pathname.match(/^(.*)\/__q\/([A-Za-z0-9+/=_-]+)\/?$/);
+        if (qMatch) {
+            const rawB64 = qMatch[2];
+            const decoded = this._decodeBase64Query(rawB64);
+            if (decoded) {
+                const sp = new URLSearchParams(decoded);
+                for (const key of ['spage', 'ep_page', 'page', 'p', 'pg']) {
+                    const val = sp.get(key);
+                    if (val && /^\d+$/.test(val)) {
+                        return {
+                            num: parseInt(val, 10),
+                            type: 'b64_query',
+                            paramName: key,
+                            b64PrefixPath: qMatch[1].replace(/\/+$/, ''),
+                            b64TemplateQuery: decoded,
+                            b64KeepPadding: rawB64.endsWith('=')
+                        };
+                    }
+                }
+            }
+        }
+        // 2) Query parameter (?spage=2, ?ep_page=2, ?page=2, ?p=2, ?pg=2)
+        for (const paramName of ['spage', 'ep_page', 'page', 'p', 'pg']) {
+            const val = u.searchParams.get(paramName);
+            if (val && /^\d+$/.test(val)) {
+                return {
+                    num: parseInt(val, 10),
+                    type: 'query',
+                    paramName,
+                    templateUrl: u.href
+                };
+            }
+        }
+        // 3) Path segment (/page/2, /p/2, /p2)
+        const pathMatch = u.pathname.match(/^(.*)\/(page|p)\/(\d+)\/?$/i);
+        if (pathMatch) {
+            return {
+                num: parseInt(pathMatch[3], 10),
+                type: 'path',
+                pathPrefix: pathMatch[1].replace(/\/+$/, ''),
+                pathWord: pathMatch[2]
+            };
+        }
+        return null;
+    }
+
+    /**
      * 현재 문서에서 페이지네이션(1, 2, 3...) 정보를 탐지하여 페이지 번호 -> URL 생성기 반환
+     * - 페이지네이션 바 내부 <a> 태그의 실제 href(directUrlMap)를 최우선 보존
      * - ?spage=N, ?page=N, ?p=N
      * - /__q/<base64(page=N)> (newtoki1.org 방식)
      * - /page/N, /p/N
      * @private
      */
-    _detectPaginationInfo(doc, baseUrlStr, currentItemCount = 0) {
+    _detectPaginationInfo(doc, baseUrlStr, currentItemCount = 0, currentPageItems = []) {
         if (!doc || typeof doc.querySelectorAll !== 'function' || !baseUrlStr) return null;
         let baseUrl;
         try {
@@ -3072,33 +3278,51 @@ class GenericParser extends BaseParser {
         }
 
         const listCfg = this.rule.list || {};
+        const pagRoot = this._findPaginationRoot(listCfg, doc);
+
         const pagSelectors = [
             ...(listCfg.pagination ? [listCfg.pagination] : []),
+            'a.pg_page[href]',
             '.ep-section a[href]',
             '.pagination a[href]',
             '.pg_wrap a[href]',
             '.paging a[href]',
             '.page-box a[href]',
+            '.list-page a[href]',
+            '.write-pages a[href]',
             '.ep-pagination a[href]',
             '.ep-page a[href]',
             'nav[aria-label*="page" i] a[href]',
-            '[class*="pagin"] a[href]',
-            '[class*="pager"] a[href]',
+            '[class*="pagin" i] a[href]',
+            '[class*="pager" i] a[href]',
             'a[href*="__q/"]',
             'a[href*="spage="]',
+            'a[href*="ep_page="]',
             'a[href*="page="]'
         ];
 
         const anchors = [];
         const seenEl = new Set();
+
+        // 1순위: 에피소드 페이지네이션 루트 내부의 <a> 태그
+        if (pagRoot && typeof pagRoot.querySelectorAll === 'function') {
+            try {
+                for (const a of Array.from(pagRoot.querySelectorAll('a[href]'))) {
+                    if (a.closest?.('ul.ep-list-v2, ul.novel-eps, .list-body, #toon_list, li.ep-row-v2, li.list-item')) continue;
+                    if (a.closest?.('#bo_vc, #bo_v_cmt, .view-comment, #comment, #comments, [class*="comment" i], [id*="comment" i], [class*="cmt" i], [id*="cmt" i]')) continue;
+                    seenEl.add(a);
+                    anchors.push(a);
+                }
+            } catch (e) {}
+        }
+
+        // 2순위: 알려진 페이지네이션 셀렉터
         for (const sel of pagSelectors) {
             try {
                 for (const a of Array.from(doc.querySelectorAll(sel))) {
                     if (seenEl.has(a)) continue;
-                    // 댓글(Comment) 페이지네이션 영역 내부의 링크는 철저히 배제
-                    if (a.closest?.('#bo_vc, .view-comment, #comment, #comments, [class*="comment"], [id*="comment"]')) {
-                        continue;
-                    }
+                    if (a.closest?.('ul.ep-list-v2, ul.novel-eps, .list-body, #toon_list, li.ep-row-v2, li.list-item')) continue;
+                    if (a.closest?.('#bo_vc, #bo_v_cmt, .view-comment, #comment, #comments, [class*="comment" i], [id*="comment" i], [class*="cmt" i], [id*="cmt" i]')) continue;
                     seenEl.add(a);
                     anchors.push(a);
                 }
@@ -3112,318 +3336,293 @@ class GenericParser extends BaseParser {
             .replace(/\/(page|p)\/\d+\/?$/i, '')
             .replace(/\/+$/, '');
 
-        const estimatedMax = this._estimateMaxPagesFromTotalCount(doc, currentItemCount);
+        const seriesId = this.getSeriesId();
+        const isSameSeriesPath = (uPath) => {
+            const norm = uPath.replace(/\/__q\/[A-Za-z0-9+/=_-]+\/?$/, '').replace(/\/(page|p)\/\d+\/?$/i, '').replace(/\/+$/, '');
+            if (norm === cleanBasePath) return true;
+            if (seriesId && seriesId !== '0000' && new RegExp(`\\/${seriesId}(\\/|$)`).test(norm)) return true;
+            return false;
+        };
 
-        // 1. newtoki1.org 방식의 /__q/<base64> 경로 페이지네이션 탐지
-        const b64Pages = new Set();
-        let b64ParamKey = 'page';
-        let b64TemplateQuery = 'page=1';
-        let b64KeepPadding = false;
+        const estimatedMax = this._estimateMaxPagesFromTotalCount(doc, currentItemCount, currentPageItems);
+        const directUrlMap = new Map();
+        let detectedInfo = null;
 
         for (const a of anchors) {
-            const rawHref = a.getAttribute('href');
+            const rawHref = a.getAttribute?.('href');
             if (!rawHref || rawHref.startsWith('#') || rawHref.startsWith('javascript')) continue;
             try {
                 const u = new URL(rawHref, baseUrl.href);
-                const qMatch = u.pathname.match(/^(.*)\/__q\/([A-Za-z0-9+/=_-]+)\/?$/);
-                if (!qMatch) continue;
-                const linkBasePath = qMatch[1].replace(/\/+$/, '');
-                if (linkBasePath !== cleanBasePath) continue;
+                if (u.hash && /vc|comment|cmt/i.test(u.hash)) continue;
+                if (!isSameSeriesPath(u.pathname)) continue;
 
-                const rawB64 = qMatch[2];
-                const decoded = this._decodeBase64Query(rawB64);
-                if (!decoded) continue;
+                const parsed = this._extractPageNumFromUrl(u, cleanBasePath);
+                const cleanTxt = (a.textContent || '').replace(/현재|열린|페이지|쪽|\s+/g, '').replace(/^\[|\]$/g, '').trim();
+                const txtNum = /^\d+$/.test(cleanTxt) ? parseInt(cleanTxt, 10) : null;
 
-                const sp = new URLSearchParams(decoded);
-                const key = sp.has('spage') ? 'spage' : (sp.has('page') ? 'page' : (sp.has('p') ? 'p' : null));
-                if (key) {
-                    const val = sp.get(key);
-                    if (val && /^\d+$/.test(val)) {
-                        const num = parseInt(val, 10);
-                        if (num >= 1 && num <= 500) {
-                            b64Pages.add(num);
-                            b64ParamKey = key;
-                            b64TemplateQuery = decoded;
-                            b64KeepPadding = rawB64.endsWith('=');
-                        }
+                const pageNum = parsed ? parsed.num : txtNum;
+                if (pageNum && pageNum >= 1 && pageNum <= 500) {
+                    if (!directUrlMap.has(pageNum)) {
+                        directUrlMap.set(pageNum, u.href);
+                    }
+                    if (parsed && (!detectedInfo || (detectedInfo.type !== 'b64_query' && parsed.type === 'b64_query') || (parsed.paramName === 'spage'))) {
+                        detectedInfo = parsed;
                     }
                 }
             } catch (e) {}
         }
 
-        if (b64Pages.size > 0) {
-            let currentPage = 1;
-            const curQMatch = baseUrl.pathname.match(/\/__q\/([A-Za-z0-9+/=_-]+)\/?$/);
-            if (curQMatch) {
-                const curDecoded = this._decodeBase64Query(curQMatch[1]);
-                const curSp = new URLSearchParams(curDecoded || '');
-                const curVal = curSp.get(b64ParamKey);
-                if (curVal && /^\d+$/.test(curVal)) currentPage = parseInt(curVal, 10);
+        if (directUrlMap.size === 0 && !detectedInfo) return null;
+
+        let currentPage = 1;
+        const curParsed = this._extractPageNumFromUrl(baseUrl, cleanBasePath);
+        if (curParsed && curParsed.num >= 1) {
+            currentPage = curParsed.num;
+        }
+        directUrlMap.set(currentPage, baseUrl.href);
+
+        const maxDiscovered = Math.max(...Array.from(directUrlMap.keys()), currentPage);
+        const maxPage = Math.max(maxDiscovered, estimatedMax);
+        if (maxPage <= 1) return null;
+
+        const buildUrl = (pageNum) => {
+            if (directUrlMap.has(pageNum)) {
+                return directUrlMap.get(pageNum);
             }
-            b64Pages.add(currentPage);
-            const maxPage = Math.max(...Array.from(b64Pages), estimatedMax);
-            if (maxPage > 1) {
-                return {
-                    type: 'b64_query',
-                    paramName: b64ParamKey,
-                    currentPage,
-                    maxPage,
-                    buildUrl: (pageNum) => {
-                        const u = new URL(baseUrl.href);
-                        u.search = '';
-                        if (pageNum === 1) {
-                            u.pathname = cleanBasePath;
-                            return u.href;
-                        }
-                        const sp = new URLSearchParams(b64TemplateQuery);
-                        sp.set(b64ParamKey, String(pageNum));
-                        const encoded = this._encodeBase64Query(sp.toString(), b64KeepPadding);
-                        u.pathname = `${cleanBasePath}/__q/${encoded}`;
+            if (detectedInfo) {
+                if (detectedInfo.type === 'b64_query') {
+                    const u = new URL(baseUrl.href);
+                    u.search = '';
+                    const prefix = detectedInfo.b64PrefixPath || cleanBasePath;
+                    if (pageNum === 1) {
+                        u.pathname = prefix;
                         return u.href;
                     }
-                };
-            }
-        }
-
-        // 2. 일반 Query 파라미터 기반 페이지네이션 (?spage=2, ?ep_page=2, ?page=2, ?p=2) — 댓글용 cpage 제외!
-        const paramCandidates = ['spage', 'ep_page', 'page', 'p'];
-        for (const paramName of paramCandidates) {
-            const pageNumbers = new Set();
-            for (const a of anchors) {
-                const rawHref = a.getAttribute('href');
-                if (!rawHref || rawHref.startsWith('#') || rawHref.startsWith('javascript')) continue;
-                try {
-                    const u = new URL(rawHref, baseUrl.href);
-                    const uCleanPath = u.pathname.replace(/\/+$/, '');
-                    if (uCleanPath !== cleanBasePath) continue;
-                    // 댓글 앵커(#bo_vc 등)로 점프하는 링크 배제
-                    if (u.hash && /vc|comment/i.test(u.hash)) continue;
-                    const val = u.searchParams.get(paramName);
-                    if (val && /^\d+$/.test(val)) {
-                        const num = parseInt(val, 10);
-                        if (num >= 1 && num <= 500) pageNumbers.add(num);
-                    }
-                } catch (e) {}
-            }
-
-            if (pageNumbers.size > 0) {
-                const currentVal = baseUrl.searchParams.get(paramName);
-                const currentPage = (currentVal && /^\d+$/.test(currentVal)) ? parseInt(currentVal, 10) : 1;
-                pageNumbers.add(currentPage);
-                const maxPage = Math.max(...Array.from(pageNumbers), estimatedMax);
-                if (maxPage > 1) {
-                    return {
-                        type: 'query',
-                        paramName,
-                        currentPage,
-                        maxPage,
-                        buildUrl: (pageNum) => {
-                            const u = new URL(baseUrl.href);
-                            u.pathname = cleanBasePath;
-                            u.searchParams.set(paramName, String(pageNum));
-                            return u.href;
-                        }
-                    };
+                    const sp = new URLSearchParams(detectedInfo.b64TemplateQuery);
+                    sp.set(detectedInfo.paramName, String(pageNum));
+                    const encoded = this._encodeBase64Query(sp.toString(), detectedInfo.b64KeepPadding);
+                    u.pathname = `${prefix}/__q/${encoded}`;
+                    return u.href;
+                }
+                if (detectedInfo.type === 'query') {
+                    const u = new URL(detectedInfo.templateUrl || baseUrl.href);
+                    u.searchParams.set(detectedInfo.paramName, String(pageNum));
+                    return u.href;
+                }
+                if (detectedInfo.type === 'path') {
+                    const u = new URL(baseUrl.href);
+                    const prefix = detectedInfo.pathPrefix || cleanBasePath;
+                    u.pathname = pageNum === 1 ? prefix : `${prefix}/${detectedInfo.pathWord}/${pageNum}`;
+                    return u.href;
                 }
             }
-        }
-
-        // 3. 경로 기반 페이지네이션 확인 (예: /novel/20/page/2 또는 /novel/20/p/2)
-        const pathRegex = new RegExp(`^${cleanBasePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\/(page|p)\/(\d+)\/?$`, 'i');
-        let pathWord = 'page';
-        const pathPages = new Set();
-        for (const a of anchors) {
-            const rawHref = a.getAttribute('href');
-            if (!rawHref) continue;
-            try {
-                const u = new URL(rawHref, baseUrl.href);
-                const m = u.pathname.match(pathRegex);
-                if (m) {
-                    pathWord = m[1];
-                    const num = parseInt(m[2], 10);
-                    if (num >= 1 && num <= 500) pathPages.add(num);
-                }
-            } catch (e) {}
-        }
-        if (pathPages.size > 0) {
-            const curMatch = baseUrl.pathname.match(pathRegex);
-            const currentPage = curMatch ? parseInt(curMatch[2], 10) : 1;
-            pathPages.add(currentPage);
-            const maxPage = Math.max(...Array.from(pathPages), estimatedMax);
-            if (maxPage > 1) {
-                return {
-                    type: 'path',
-                    currentPage,
-                    maxPage,
-                    buildUrl: (pageNum) => {
-                        const u = new URL(baseUrl.href);
-                        u.pathname = pageNum === 1 ? cleanBasePath : `${cleanBasePath}/${pathWord}/${pageNum}`;
-                        return u.href;
-                    }
-                };
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * 회차 목록 섹션 내의 페이지네이션 바(컨테이너)를 클래스명에 구애받지 않고 탐색
-     * @private
-     */
-    _findPaginationRoot(listCfg) {
-        if (!this._doc || typeof this._doc.querySelectorAll !== 'function') return null;
-
-        // 1. 에피소드 리스트 컨테이너의 부모 섹션(.ep-section 등) 내부를 최우선 탐색
-        const containerSelectors = String(listCfg.container || '').split(',').map(s => s.trim()).filter(Boolean);
-        let listEl = null;
-        for (const sel of containerSelectors) {
-            try {
-                const found = this._doc.querySelector(sel);
-                if (found) { listEl = found; break; }
-            } catch (e) {}
-        }
-
-        const hasPageButtons = (el) => {
-            if (!el || typeof el.querySelectorAll !== 'function') return false;
-            if (el.closest?.('#bo_vc, .view-comment, #comment, #comments, [class*="comment"], [id*="comment"]')) return false;
-            const clickables = Array.from(el.querySelectorAll('button, a, span[role="button"]'));
-            let has1 = false, has2 = false;
-            for (const c of clickables) {
-                const t = (c.textContent || '').replace(/페이지|현재/g, '').trim();
-                if (t === '1') has1 = true;
-                if (t === '2') has2 = true;
-            }
-            return has1 && has2;
+            const u = new URL(baseUrl.href);
+            u.searchParams.set('page', String(pageNum));
+            return u.href;
         };
 
-        if (listEl && listEl.parentElement) {
-            const siblings = Array.from(listEl.parentElement.children || []);
-            for (const sib of siblings) {
-                if (sib === listEl) continue;
-                if (hasPageButtons(sib)) return sib;
-            }
-            if (hasPageButtons(listEl.parentElement)) return listEl.parentElement;
-        }
-
-        // 2. 문서 전체에서 알려진 페이지네이션 컨테이너 탐색 (댓글 영역 제외)
-        const candidates = Array.from(this._doc.querySelectorAll(
-            '.ep-pagination, .ep-page, .ep-pages, .pagination, .paging, .pg_wrap, .page-nav, [class*="pagin"], [class*="pager"], nav[aria-label*="page" i]'
-        ));
-        for (const cand of candidates) {
-            if (hasPageButtons(cand)) return cand;
-        }
-
-        return null;
+        return {
+            type: detectedInfo ? detectedInfo.type : 'direct',
+            paramName: detectedInfo ? detectedInfo.paramName : 'page',
+            currentPage,
+            maxPage,
+            directUrlMap,
+            buildUrl
+        };
     }
 
     /**
      * SPA 버튼 클릭형 페이지네이션(« ‹ 1 2 ... 10 … › » 등) 자동 순회 수집
+     * - 매 스텝마다 실시간 DOM에서 페이지네이션 루트를 재탐색하여 React/Next.js 리렌더링 시에도 끊김 없이 추적
+     * - sbxh9.com 등의 PC/모바일 듀얼 페이지네이션 바(«‹12345678910…›» «‹12345…›») 동시 지원
      * - 10페이지 이후(… 뒤의 11, 12, 13페이지)도 '›' (다음) 버튼을 눌러 끝까지 자동 추적
      * @private
      */
     async _collectViaButtonPagination(listCfg, currentPageItems) {
-        const pagRoot = this._findPaginationRoot(listCfg);
-        if (!pagRoot) return null;
+        const containerSelectors = String(listCfg?.container || '').split(',').map(s => s.trim()).filter(Boolean);
+        const getListEl = () => {
+            for (const sel of containerSelectors) {
+                try {
+                    const found = this._doc.querySelector(sel);
+                    if (found) return found;
+                } catch (e) {}
+            }
+            return null;
+        };
+
+        const isVisibleEl = (el) => {
+            if (!el || typeof el.getBoundingClientRect !== 'function') return true;
+            try {
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            } catch (e) {
+                return true;
+            }
+        };
 
         const getControls = () => {
-            const els = Array.from(pagRoot.querySelectorAll('button, a, span[role="button"]'))
-                .filter(el => !el.closest?.('ul.ep-list-v2, ul.novel-eps, .list-body, #toon_list'));
-            const numMap = new Map();
-            let nextBtn = null;
-            let firstBtn = null;
+            const pagRoot = this._findPaginationRoot(listCfg, this._doc);
+            if (!pagRoot) return null;
+            const listEl = getListEl();
+            const els = this._getLeafPaginationControls(pagRoot, listEl);
+
+            const numMap = new Map(); // pageNum -> Array<{ el, isDisabled, isVisible }>
+            const nextBtns = [];
+            const firstBtns = [];
 
             for (const el of els) {
                 const rawTxt = (el.textContent || '').trim();
-                const cleanNumTxt = rawTxt.replace(/현재|페이지/g, '').trim();
+                const cleanNumTxt = rawTxt.replace(/현재|열린|페이지|쪽|\s+/g, '').replace(/^\[|\]$/g, '').trim();
                 const aria = (el.getAttribute?.('aria-label') || el.getAttribute?.('title') || '').toLowerCase();
-                const isDisabled = el.disabled || el.getAttribute?.('aria-disabled') === 'true' ||
-                                   /(disabled|inactive)/i.test(el.className || '');
+                const isDisabled = Boolean(
+                    el.disabled ||
+                    el.getAttribute?.('aria-disabled') === 'true' ||
+                    /\b(disabled|inactive)\b/i.test(el.className || '') ||
+                    (el.parentElement && /\b(disabled|inactive)\b/i.test(el.parentElement.className || ''))
+                );
+                const isVisible = isVisibleEl(el);
 
                 if (/^\d+$/.test(cleanNumTxt)) {
                     const num = parseInt(cleanNumTxt, 10);
-                    if (num >= 1 && num <= 500 && !numMap.has(num)) {
-                        numMap.set(num, { el, isDisabled });
+                    if (num >= 1 && num <= 500) {
+                        if (!numMap.has(num)) numMap.set(num, []);
+                        numMap.get(num).push({ el, isDisabled, isVisible });
                     }
                 } else if (!isDisabled && (rawTxt === '›' || rawTxt === '>' || rawTxt === '다음' || /next|다음/.test(aria))) {
-                    nextBtn = el;
+                    nextBtns.push({ el, isVisible });
                 } else if (!isDisabled && (rawTxt === '«' || rawTxt === '<<' || rawTxt === '처음' || /first|처음/.test(aria))) {
-                    firstBtn = el;
+                    firstBtns.push({ el, isVisible });
                 }
             }
-            return { numMap, nextBtn, firstBtn };
+
+            // 화면에 보이는(visible) 버튼을 앞쪽으로 정렬하고, button/a 태그를 우선 배치
+            const sortCandidates = (arr) => arr.sort((a, b) => {
+                if (a.isVisible !== b.isVisible) return a.isVisible ? -1 : 1;
+                const aInteractive = /^(BUTTON|A)$/i.test(a.el.tagName || '');
+                const bInteractive = /^(BUTTON|A)$/i.test(b.el.tagName || '');
+                if (aInteractive !== bInteractive) return aInteractive ? -1 : 1;
+                return 0;
+            });
+
+            for (const arr of numMap.values()) sortCandidates(arr);
+            sortCandidates(nextBtns);
+            sortCandidates(firstBtns);
+
+            return { numMap, nextBtns, firstBtns };
         };
 
         const initCtrl = getControls();
-        if (initCtrl.numMap.size <= 1) return null;
+        if (!initCtrl || initCtrl.numMap.size <= 1) return null;
 
-        console.log(`[GenericParser] 🖱️ 페이지네이션 버튼 감지 (초기 버튼 ${initCtrl.numMap.size}개) -> 전체 페이지 순차 수집을 시작합니다.`);
+        console.log(`[GenericParser] 🖱️ 페이지네이션 버튼 감지 (초기 페이지 수: ${initCtrl.numMap.size}개) -> 전체 페이지 순차 수집을 시작합니다.`);
 
         const cloneItems = (items) => items.map(el => (typeof el.cloneNode === 'function' ? el.cloneNode(true) : el));
-        const allClonedPages = [];
-        allClonedPages.push(cloneItems(currentPageItems));
+        const allClonedPages = [cloneItems(currentPageItems)];
 
         const getListSignature = () => {
             const items = this._extractItemsFromDoc(this._doc, listCfg);
             if (items.length === 0) return '';
             const first = this.parseListItem(items[0]);
             const last = this.parseListItem(items[items.length - 1]);
-            return `${items.length}:${first.num}_${first.title}:${last.num}_${last.title}`;
+            return `${items.length}:${first.num}_${first.title}_${first.src}:${last.num}_${last.title}_${last.src}`;
         };
 
-        const seenSignatures = new Set([getListSignature()]);
-        let currentPageNum = 1;
-        const MAX_SAFETY_PAGES = 100;
-
-        for (let step = 0; step < MAX_SAFETY_PAGES; step++) {
-            const targetPageNum = currentPageNum + 1;
-            const { numMap, nextBtn } = getControls();
-            const targetEntry = numMap.get(targetPageNum);
-
-            let btnToClick = null;
-            if (targetEntry && !targetEntry.isDisabled) {
-                btnToClick = targetEntry.el;
-            } else if (nextBtn) {
-                // 1..10 다음의 11페이지처럼 번호가 '…' 뒤에 숨겨진 경우 '›'(다음) 버튼 클릭
-                btnToClick = nextBtn;
+        const triggerClick = (el) => {
+            if (!el) return false;
+            if (typeof el.click === 'function') {
+                el.click();
+                return true;
             }
-
-            if (!btnToClick || typeof btnToClick.click !== 'function') break;
-
-            const prevSig = getListSignature();
-            btnToClick.click();
-
-            let changed = false;
-            let waited = 0;
-            while (waited < 2500) {
-                await new Promise(r => setTimeout(r, 120));
-                waited += 120;
-                const newSig = getListSignature();
-                if (newSig && newSig !== prevSig) {
-                    changed = true;
-                    break;
-                }
+            if (el.parentElement && typeof el.parentElement.click === 'function') {
+                el.parentElement.click();
+                return true;
             }
+            return false;
+        };
 
-            if (!changed) break;
-
-            const newSig = getListSignature();
-            if (seenSignatures.has(newSig)) break;
-            seenSignatures.add(newSig);
-
-            const newItems = this._extractItemsFromDoc(this._doc, listCfg);
-            if (newItems.length > 0) {
-                allClonedPages.push(cloneItems(newItems));
-            }
-            currentPageNum = targetPageNum;
+        // <a> 태그 클릭 시 SPA 라우터(#__next, document)는 통과하되 브라우저 전체 페이지 새로고침만 최상단(window)에서 방어
+        const win = (this._doc && this._doc.defaultView) || (typeof window !== 'undefined' ? window : null);
+        const preventFullPageNav = (e) => {
+            try {
+                const a = e.target?.closest?.('a[href]');
+                if (a) e.preventDefault();
+            } catch (_) {}
+        };
+        if (win && typeof win.addEventListener === 'function') {
+            win.addEventListener('click', preventFullPageNav, false);
         }
 
-        // 수집 완료 후 원래 1페이지로 화면 복구
-        const finalCtrl = getControls();
-        const restoreBtn = finalCtrl.firstBtn || finalCtrl.numMap.get(1)?.el;
-        if (restoreBtn && typeof restoreBtn.click === 'function') {
-            restoreBtn.click();
-            await new Promise(r => setTimeout(r, 150));
+        try {
+            const seenSignatures = new Set([getListSignature()]);
+            let currentPageNum = 1;
+            const MAX_SAFETY_PAGES = 100;
+
+            for (let step = 0; step < MAX_SAFETY_PAGES; step++) {
+                const targetPageNum = currentPageNum + 1;
+                const ctrl = getControls();
+                if (!ctrl) break;
+
+                const { numMap, nextBtns } = ctrl;
+                const targetEntries = (numMap.get(targetPageNum) || []).filter(c => !c.isDisabled);
+
+                const candidateButtons = [];
+                for (const entry of targetEntries) candidateButtons.push(entry.el);
+                for (const nb of nextBtns) {
+                    if (!candidateButtons.includes(nb.el)) candidateButtons.push(nb.el);
+                }
+
+                if (candidateButtons.length === 0) break;
+
+                const prevSig = getListSignature();
+                triggerClick(candidateButtons[0]);
+
+                let changed = false;
+                let waited = 0;
+                let triedFallbacks = false;
+
+                while (waited < 2500) {
+                    await new Promise(r => setTimeout(r, 120));
+                    waited += 120;
+                    const newSig = getListSignature();
+                    if (newSig && newSig !== prevSig) {
+                        changed = true;
+                        break;
+                    }
+                    // PC/모바일 듀얼 페이지네이션 바 중 첫 번째가 비활성일 경우 600ms 시점에 나머지 후보 버튼도 클릭
+                    if (!triedFallbacks && waited >= 600 && candidateButtons.length > 1) {
+                        triedFallbacks = true;
+                        for (let k = 1; k < candidateButtons.length; k++) {
+                            triggerClick(candidateButtons[k]);
+                        }
+                    }
+                }
+
+                if (!changed) break;
+
+                const newSig = getListSignature();
+                if (seenSignatures.has(newSig)) break;
+                seenSignatures.add(newSig);
+
+                const newItems = this._extractItemsFromDoc(this._doc, listCfg);
+                if (newItems.length > 0) {
+                    allClonedPages.push(cloneItems(newItems));
+                }
+                currentPageNum = targetPageNum;
+            }
+
+            // 수집 완료 후 원래 1페이지로 화면 복구
+            const finalCtrl = getControls();
+            if (finalCtrl) {
+                const restoreEl = finalCtrl.firstBtns[0]?.el || finalCtrl.numMap.get(1)?.[0]?.el;
+                if (restoreEl) {
+                    triggerClick(restoreEl);
+                    await new Promise(r => setTimeout(r, 150));
+                }
+            }
+        } finally {
+            if (win && typeof win.removeEventListener === 'function') {
+                win.removeEventListener('click', preventFullPageNav, false);
+            }
         }
 
         const merged = [];
@@ -3441,22 +3640,119 @@ class GenericParser extends BaseParser {
     }
 
     /**
-     * 원격 페이지 HTML을 가져와 Document로 파싱
+     * 원격 페이지 HTML을 가져와 Document로 파싱 (fetch 우선 시도 후 GM_xmlhttpRequest 폴백)
      * @private
      */
     async _fetchPageDocument(pageUrl) {
-        if (typeof fetch !== 'function') return null;
-        try {
-            const resp = await fetch(pageUrl, { credentials: 'same-origin' });
-            if (!resp.ok) return null;
-            const html = await resp.text();
-            if (typeof DOMParser !== 'undefined') {
-                return new DOMParser().parseFromString(html, 'text/html');
+        if (typeof fetch === 'function') {
+            try {
+                const resp = await fetch(pageUrl, {
+                    credentials: 'include',
+                    headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' }
+                });
+                if (resp && resp.ok) {
+                    const html = await resp.text();
+                    if (html && typeof DOMParser !== 'undefined') {
+                        return new DOMParser().parseFromString(html, 'text/html');
+                    }
+                }
+            } catch (e) {
+                console.warn(`[GenericParser] fetch 페이지 로드 실패 (${pageUrl}):`, e);
             }
-        } catch (e) {
-            console.warn(`[GenericParser] 페이지 로드 실패 (${pageUrl}):`, e);
+        }
+        if (typeof GM_xmlhttpRequest === 'function' && typeof DOMParser !== 'undefined') {
+            try {
+                const html = await new Promise((resolve, reject) => {
+                    GM_xmlhttpRequest({
+                        method: 'GET',
+                        url: pageUrl,
+                        timeout: 15000,
+                        onload: (res) => (res.status >= 200 && res.status < 300) ? resolve(res.responseText) : reject(new Error(`HTTP ${res.status}`)),
+                        onerror: reject,
+                        ontimeout: reject
+                    });
+                });
+                if (html) {
+                    return new DOMParser().parseFromString(html, 'text/html');
+                }
+            } catch (e) {
+                console.warn(`[GenericParser] GM_xmlhttpRequest 페이지 로드 실패 (${pageUrl}):`, e);
+            }
         }
         return null;
+    }
+
+    /**
+     * Tier 3 폴백: CSR 전용 다중 페이지 URL을 숨김 iframe에서 렌더링하여 회차 추출
+     * @private
+     */
+    async _collectViaIframePagination(pagInfo, listCfg, currentPageItems) {
+        if (!this._doc || typeof this._doc.createElement !== 'function' || !this._doc.body) return null;
+        const firstContSel = String(listCfg.container || '').split(',')[0].trim();
+        if (!firstContSel) return null;
+
+        const cloneItems = (items) => items.map(el => (typeof el.cloneNode === 'function' ? el.cloneNode(true) : el));
+        const pageItemsMap = new Map([[pagInfo.currentPage, cloneItems(currentPageItems)]]);
+        let knownMaxPage = Math.min(pagInfo.maxPage, 50);
+
+        const iframe = this._doc.createElement('iframe');
+        if (iframe.style) {
+            iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:360px;height:480px;opacity:0.01;pointer-events:none;z-index:-9999;';
+        }
+        this._doc.body.appendChild(iframe);
+
+        try {
+            for (let pNum = 1; pNum <= knownMaxPage; pNum++) {
+                if (pNum === pagInfo.currentPage) continue;
+                const pageUrl = pagInfo.buildUrl(pNum);
+                const loaded = await new Promise((resolve) => {
+                    const timer = setTimeout(() => resolve(false), 6000);
+                    iframe.onload = () => { clearTimeout(timer); resolve(true); };
+                    iframe.onerror = () => { clearTimeout(timer); resolve(false); };
+                    iframe.src = pageUrl;
+                });
+                if (!loaded || !iframe.contentDocument) continue;
+
+                let waited = 0;
+                let items = [];
+                while (waited < 3500) {
+                    items = this._extractItemsFromDoc(iframe.contentDocument, listCfg);
+                    if (items.length > 0) break;
+                    await new Promise(r => setTimeout(r, 150));
+                    waited += 150;
+                }
+                if (items.length > 0) {
+                    pageItemsMap.set(pNum, cloneItems(items));
+                    const subPag = this._detectPaginationInfo(iframe.contentDocument, pageUrl, currentPageItems.length, items);
+                    if (subPag) {
+                        if (subPag.directUrlMap) {
+                            for (const [k, v] of subPag.directUrlMap.entries()) {
+                                if (!pagInfo.directUrlMap.has(k)) pagInfo.directUrlMap.set(k, v);
+                            }
+                        }
+                        if (subPag.maxPage > knownMaxPage && subPag.maxPage <= 50) {
+                            knownMaxPage = subPag.maxPage;
+                        }
+                    }
+                }
+            }
+        } finally {
+            try { iframe.remove(); } catch (_) {}
+        }
+
+        const sortedPageNums = Array.from(pageItemsMap.keys()).sort((a, b) => a - b);
+        const merged = [];
+        const seenKeys = new Set();
+        for (const pNum of sortedPageNums) {
+            for (const el of (pageItemsMap.get(pNum) || [])) {
+                const parsed = this.parseListItem(el);
+                const key = parsed.src || `${parsed.num}_${parsed.title}`;
+                if (key && seenKeys.has(key)) continue;
+                if (key) seenKeys.add(key);
+                merged.push(el);
+            }
+        }
+        return merged;
     }
 
     /**
@@ -3493,10 +3789,10 @@ class GenericParser extends BaseParser {
             return this._cachedAllPageItems;
         }
 
-        // 1. URL 기반 페이지네이션 감지 (?page=2, ?spage=2, /__q/<base64>, /page/2 등)
-        const pagInfo = this._detectPaginationInfo(this._doc, currentUrl, currentPageItems.length);
+        // Tier 1. URL 기반 페이지네이션 감지 (?page=2, ?spage=2, /__q/<base64>, /page/2, 직접 href 등)
+        const pagInfo = this._detectPaginationInfo(this._doc, currentUrl, currentPageItems.length, currentPageItems);
         if (pagInfo && pagInfo.maxPage > 1) {
-            console.log(`[GenericParser] 📄 다중 페이지 감지 (유형: ${pagInfo.type}, 현재 ${pagInfo.currentPage}p / 최대 ${pagInfo.maxPage}p) -> 전체 페이지 자동 수집을 시작합니다.`);
+            console.log(`[GenericParser] 📄 다중 페이지 감지 (유형: ${pagInfo.type}, 현재 ${pagInfo.currentPage}p / 예상 최대 ${pagInfo.maxPage}p) -> 전체 페이지 자동 수집을 시작합니다.`);
 
             const pageItemsMap = new Map();
             pageItemsMap.set(pagInfo.currentPage, currentPageItems);
@@ -3521,20 +3817,26 @@ class GenericParser extends BaseParser {
                 const results = await Promise.all(batchPages.map(async (pNum) => {
                     const pageUrl = pagInfo.buildUrl(pNum);
                     const pageDoc = await this._fetchPageDocument(pageUrl);
-                    if (!pageDoc) return { pNum, items: [], nextMax: pNum };
+                    if (!pageDoc) return { pNum, items: [], subPag: null };
 
                     const items = this._extractItemsFromDoc(pageDoc, listCfg);
-                    const subPag = this._detectPaginationInfo(pageDoc, pageUrl, currentPageItems.length);
-                    const nextMax = subPag ? subPag.maxPage : pNum;
-                    return { pNum, items, nextMax };
+                    const subPag = this._detectPaginationInfo(pageDoc, pageUrl, currentPageItems.length, items);
+                    return { pNum, items, subPag };
                 }));
 
-                for (const { pNum, items, nextMax } of results) {
+                for (const { pNum, items, subPag } of results) {
                     if (items && items.length > 0) {
                         pageItemsMap.set(pNum, items);
                     }
-                    if (nextMax > knownMaxPage && nextMax <= 100) {
-                        knownMaxPage = nextMax;
+                    if (subPag) {
+                        if (subPag.directUrlMap && pagInfo.directUrlMap) {
+                            for (const [k, v] of subPag.directUrlMap.entries()) {
+                                if (!pagInfo.directUrlMap.has(k)) pagInfo.directUrlMap.set(k, v);
+                            }
+                        }
+                        if (subPag.maxPage > knownMaxPage && subPag.maxPage <= 100) {
+                            knownMaxPage = subPag.maxPage;
+                        }
                     }
                 }
             }
@@ -3558,17 +3860,17 @@ class GenericParser extends BaseParser {
                 }
             }
 
-            // URL Fetch 방식으로 2페이지 이상의 고유 회차가 정상 병합된 경우 반환
+            // Tier 1(URL Fetch)으로 2페이지 이상의 고유 회차가 정상 병합된 경우 반환
             if (mergedItems.length > currentPageItems.length) {
                 console.log(`[GenericParser] ✅ 전체 ${sortedPageNums.length}개 페이지 병합 완료: 총 ${mergedItems.length}개 회차 추출됨.`);
                 this._cachedAllPageUrl = currentUrl;
                 this._cachedAllPageItems = mergedItems;
                 return mergedItems;
             }
-            console.warn('[GenericParser] ⚠️ URL 기반 페이지 요청에서 추가 회차가 감지되지 않아 실시간 버튼 클릭 모드로 전환합니다.');
+            console.warn('[GenericParser] ⚠️ 정적 URL 요청에서 추가 회차가 감지되지 않아 실시간 DOM 버튼 클릭 모드로 전환합니다.');
         }
 
-        // 2. SPA 버튼 클릭형 페이지네이션(« ‹ 1 2 ... 10 … › ») 폴백 수행
+        // Tier 2. SPA/실시간 버튼 클릭형 페이지네이션(« ‹ 1 2 ... 10 … › » 또는 JS 페이지네이션) 수행
         const btnMerged = await this._collectViaButtonPagination(listCfg, currentPageItems);
         if (btnMerged && btnMerged.length > currentPageItems.length) {
             console.log(`[GenericParser] ✅ 버튼 순회 페이지 병합 완료: 총 ${btnMerged.length}개 회차 추출됨.`);
@@ -3577,12 +3879,24 @@ class GenericParser extends BaseParser {
             return btnMerged;
         }
 
+        // Tier 3. URL 페이지네이션은 존재하나 CSR 렌더링이 필요한 경우 숨김 iframe 폴백 수행
+        if (pagInfo && pagInfo.maxPage > 1) {
+            console.log('[GenericParser] 🔄 CSR 다중 페이지 렌더링을 위해 숨김 iframe 수집 폴백을 가동합니다.');
+            const iframeMerged = await this._collectViaIframePagination(pagInfo, listCfg, currentPageItems);
+            if (iframeMerged && iframeMerged.length > currentPageItems.length) {
+                console.log(`[GenericParser] ✅ 숨김 iframe 페이지 병합 완료: 총 ${iframeMerged.length}개 회차 추출됨.`);
+                this._cachedAllPageUrl = currentUrl;
+                this._cachedAllPageItems = iframeMerged;
+                return iframeMerged;
+            }
+        }
+
         return currentPageItems;
     }
 
     parseListItem(el) {
         const listCfg = this.rule.list || {};
-        const numRaw = this._extractValue(el, listCfg.num, true) || "0";
+        let numRaw = this._extractValue(el, listCfg.num, true) || "";
         const subRaw = this._extractValue(el, listCfg.sub, true) || "";
         let title = this._extractValue(el, listCfg.title, true) || "Unknown";
         const src = this._extractValue(el, listCfg.link, false) || "";
@@ -3590,17 +3904,36 @@ class GenericParser extends BaseParser {
         // 앞쪽의 불필요한 UP / NEW 배지 텍스트 제거
         title = title.replace(/^(UP|NEW)\s+/i, '').trim();
 
-        let num = numRaw;
+        // 번호 셀렉터 매칭 실패 시 행 내부의 순수 숫자 배지(.wr-num, span, td 등) 자동 탐색
+        if (!numRaw && el && typeof el.querySelectorAll === 'function') {
+            try {
+                const numNodes = Array.from(el.querySelectorAll('.wr-num, .ep-row-v2-no, .ne-num, .no, .num, .td_num, span, td, div'));
+                for (const node of numNodes) {
+                    if (node.children && node.children.length > 0) continue;
+                    const t = (node.textContent || '').trim();
+                    if (/^\d{1,5}$/.test(t)) {
+                        numRaw = t;
+                        break;
+                    }
+                }
+            } catch (e) {}
+        }
+
+        let num = numRaw || "0";
         const match = numRaw.match(/(\d+)/);
         if (match) {
             num = match[1];
         } else {
-            const titleNumMatch = title.match(/(\d+)\s*(?:화|회|편|권)/) || title.match(/^(\d+)/);
+            const titleNumMatch = title.match(/(\d+)\s*(?:화|회|편|권)/) || title.match(/^(\d+)/) || title.match(/\((\d+)\)/);
             if (titleNumMatch) num = titleNumMatch[1];
         }
 
         if (subRaw) {
             num = `${num}_${subRaw}`;
+        }
+
+        if (el && el._tokiEffectiveNum) {
+            num = el._tokiEffectiveNum;
         }
 
         return {
@@ -3749,17 +4082,33 @@ class GenericParser extends BaseParser {
     }
 
     /**
-     * 문서 제목(작품명) 정제 헬퍼 — 사이트 접미사("- 북토끼 소설 - 뉴토끼", "| 뉴토끼" 등) 제거
+     * 문서 제목(작품명) 정제 헬퍼 — 사이트 접미사("- 북토끼 소설 - 뉴토끼", "| 뉴토끼"), 작가 접미사 및 카테고리 배지("웹소설", "일본만화") 완벽 필터링
      * @private
      */
     _cleanSeriesTitleText(raw) {
         if (!raw || typeof raw !== 'string') return null;
+        const hadPipe = raw.includes('|');
         let cleaned = raw
             .replace(/\s*\|\s*.*$/, '')
-            .replace(/\s+-\s+(?:북토끼|마나토끼|뉴토끼|블랙툰|웹툰|일본만화|웹소설|소설|만화).*$/i, '')
+            .replace(/\s+-\s+(?:북토끼|마나토끼|뉴토끼|블랙툰|웹툰|일본만화|웹소설|소설|만화|무료).*$/i, '')
             .replace(/^(?:북토끼|마나토끼|뉴토끼|블랙툰)\s*[-|:]\s*/i, '')
             .trim();
-        if (!cleaned || /^(뉴토끼|북토끼|마나토끼|블랙툰|홈|웹툰|만화|소설)$/i.test(cleaned)) {
+
+        // "전설급 영웅은 아카데미 우등생 - 만성이(...) | 뉴토끼" 형태에서 파이프(|) 앞의 "- 작가명" 제거
+        if (hadPipe && /\s+-\s+[^-]+$/.test(cleaned)) {
+            const strippedAuthor = cleaned.replace(/\s+-\s+[^-]+$/, '').trim();
+            if (strippedAuthor.length >= 2) {
+                cleaned = strippedAuthor;
+            }
+        }
+
+        if (!cleaned || cleaned.length < 1) return null;
+
+        // 사이트명, 반복된 사이트명("북토끼 북토끼"), 카테고리 단독 명칭("웹소설", "일본만화", "일반웹툰" 등) 배제
+        if (/^(?:뉴토끼|북토끼|마나토끼|블랙툰|홈|메인|웹툰|일반웹툰|성인웹툰|완결웹툰|BL\/GL|만화|일본만화|완결만화|소설|웹소설|완결소설|애니|업데이트|로그인|회원가입|검색|공지사항|자유게시판|소설목록|만화목록|웹툰목록|전체\s*회차|작품\s*정보|unknown\s*series|unknownseries)(?:\s+(?:뉴토끼|북토끼|마나토끼|블랙툰|웹툰|만화|소설|미리보기))*$/i.test(cleaned)) {
+            return null;
+        }
+        if (/웹툰\s*미리보기|최신\s*웹툰|무료\s*웹툰|팝업레이어|로그인\s*하러/i.test(cleaned)) {
             return null;
         }
         return cleaned;
@@ -3767,24 +4116,27 @@ class GenericParser extends BaseParser {
 
     getSeriesTitle() {
         const meta = this.rule.meta || {};
-        let val = this._cleanSeriesTitleText(this._extractValue(this._doc, meta.title));
-        if (val) return val;
-
-        // 범용 다중 폴백 체인 (v2 DOM, 그누보드 meta[name=subject], og:title, document.title)
+        const rawCandidates = Array.isArray(meta.title) ? meta.title : (meta.title ? [meta.title] : []);
         const fallbackConfigs = [
             'h1.hero-v2-title',
             'div.nd-info > h1',
+            '.nd-title',
             { selector: 'meta[name="subject"]', attr: 'content' },
+            '.view-title .view-content strong',
             '.view-title h1',
-            '.page-desc',
             { selector: 'meta[property="og:title"]', attr: 'content' }
         ];
-        val = this._cleanSeriesTitleText(this._extractValue(this._doc, fallbackConfigs));
-        if (val) return val;
+
+        for (const cfg of [...rawCandidates, ...fallbackConfigs]) {
+            if (cfg === '.page-desc') continue; // .page-desc는 카테고리명("웹소설", "일본만화")이므로 타이틀에서 배제
+            const rawVal = this._extractValue(this._doc, cfg);
+            const cleaned = this._cleanSeriesTitleText(rawVal);
+            if (cleaned) return cleaned;
+        }
 
         if (this._doc && this._doc.title) {
-            val = this._cleanSeriesTitleText(this._doc.title);
-            if (val) return val;
+            const cleanedDocTitle = this._cleanSeriesTitleText(this._doc.title);
+            if (cleanedDocTitle) return cleanedDocTitle;
         }
 
         return null;
@@ -3857,14 +4209,14 @@ class GenericParser extends BaseParser {
  */
 class RuleManager {
     static get _version() {
-        return  true ? "1.26.6" : 0;
+        return  true ? "1.26.7" : 0;
     }
 
     static #builtInRules = [
         {
                 "id": "blacktoon_webtoon",
                 "name": "통합 웹툰 규칙 (신형 v2 & 뉴토끼/마나토끼 호환)",
-                "_version": "1.26.6",
+                "_version": "1.26.7",
                 "urlPattern": ".*/(webtoon|toon)/.*",
                 "idExtraction": {
                         "source": "url",
@@ -3873,6 +4225,7 @@ class RuleManager {
                 "category": "Webtoon",
                 "meta": {
                         "title": [
+                                ".view-title .view-content strong",
                                 "h1.hero-v2-title",
                                 "div.nd-info > h1",
                                 {
@@ -3880,7 +4233,6 @@ class RuleManager {
                                         "attr": "content"
                                 },
                                 ".view-title h1",
-                                ".page-desc",
                                 {
                                         "selector": "meta[property=\"og:title\"]",
                                         "attr": "content"
@@ -3909,10 +4261,13 @@ class RuleManager {
                                 "span.ep-row-v2-no",
                                 ".wr-num",
                                 "span.no",
-                                "p"
+                                "p",
+                                ".num",
+                                ".td_num"
                         ],
                         "title": [
                                 ".ep-row-v2-title strong",
+                                ".ep-row-v2-title",
                                 ".wr-subject a",
                                 "a.item-subject",
                                 "a",
@@ -3953,7 +4308,7 @@ class RuleManager {
         {
                 "id": "blacktoon_manhwa",
                 "name": "통합 만화 규칙 (신형 v2 & 마나토끼/뉴토끼 호환)",
-                "_version": "1.26.6",
+                "_version": "1.26.7",
                 "urlPattern": ".*/(manhwa|manga|comic)/.*",
                 "idExtraction": {
                         "source": "url",
@@ -3962,6 +4317,7 @@ class RuleManager {
                 "category": "Manga",
                 "meta": {
                         "title": [
+                                ".view-title .view-content strong",
                                 "h1.hero-v2-title",
                                 "div.nd-info > h1",
                                 {
@@ -3969,7 +4325,6 @@ class RuleManager {
                                         "attr": "content"
                                 },
                                 ".view-title h1",
-                                ".page-desc",
                                 {
                                         "selector": "meta[property=\"og:title\"]",
                                         "attr": "content"
@@ -3998,10 +4353,13 @@ class RuleManager {
                                 "span.ep-row-v2-no",
                                 ".wr-num",
                                 "span.no",
-                                "p"
+                                "p",
+                                ".num",
+                                ".td_num"
                         ],
                         "title": [
                                 ".ep-row-v2-title strong",
+                                ".ep-row-v2-title",
                                 ".wr-subject a",
                                 "a.item-subject",
                                 "a",
@@ -4042,7 +4400,7 @@ class RuleManager {
         {
                 "id": "blacktoon_novel",
                 "name": "통합 소설 규칙 (신형 v2 & 북토끼/뉴토끼 호환)",
-                "_version": "1.26.6",
+                "_version": "1.26.7",
                 "urlPattern": ".*/(novel|book)/.*",
                 "idExtraction": {
                         "source": "url",
@@ -4051,6 +4409,7 @@ class RuleManager {
                 "category": "Novel",
                 "meta": {
                         "title": [
+                                ".view-title .view-content strong",
                                 "div.nd-info > h1",
                                 "h1.hero-v2-title",
                                 {
@@ -4058,7 +4417,6 @@ class RuleManager {
                                         "attr": "content"
                                 },
                                 ".view-title h1",
-                                ".page-desc",
                                 {
                                         "selector": "meta[property=\"og:title\"]",
                                         "attr": "content"
@@ -4086,11 +4444,14 @@ class RuleManager {
                                 "span.ne-num",
                                 "span.ep-row-v2-no",
                                 ".wr-num",
-                                "span.no"
+                                "span.no",
+                                ".num",
+                                ".td_num"
                         ],
                         "title": [
                                 "span.ne-title",
                                 ".ep-row-v2-title strong",
+                                ".ep-row-v2-title",
                                 ".wr-subject a",
                                 "a.item-subject",
                                 "a"
@@ -4124,11 +4485,12 @@ class RuleManager {
         {
                 "id": "toki_common",
                 "name": "구형 토끼 계열 (그누보드 뉴토끼/마나토끼/북토끼) 통합 규칙",
-                "_version": "1.26.6",
+                "_version": "1.26.7",
                 "urlPattern": "^(?!.*(newtoki[0-9]*\\.org|sbxh[0-9]*\\.|ntk[0-9]*\\.)).*(newtoki|manatoki|comic|booktoki).*",
                 "category": "Webtoon",
                 "meta": {
                         "title": [
+                                ".view-title .view-content strong",
                                 {
                                         "selector": "meta[name=\"subject\"]",
                                         "attr": "content"
@@ -4154,12 +4516,15 @@ class RuleManager {
                                 ".wr-num",
                                 "span.no",
                                 "span.ep-row-v2-no",
-                                "span.ne-num"
+                                "span.ne-num",
+                                ".num",
+                                ".td_num"
                         ],
                         "title": [
                                 ".wr-subject a",
                                 "a.item-subject",
                                 ".ep-row-v2-title strong",
+                                ".ep-row-v2-title",
                                 "span.ne-title",
                                 "a"
                         ],
@@ -4232,11 +4597,11 @@ class RuleManager {
                 modified = true;
             }
 
-            // 2. 기존 내장 규칙(blacktoon_*, toki_common)을 최신 v1.26.6 통합 스펙으로 자동 업그레이드
+            // 2. 기존 내장 규칙(blacktoon_*, toki_common)을 최신 v1.26.7 통합 스펙으로 자동 업그레이드
             parserRules = parserRules.map(r => {
-                if (builtInMap.has(r.id) && r._version !== '1.26.6') {
+                if (builtInMap.has(r.id) && r._version !== '1.26.7') {
                     modified = true;
-                    return { ...builtInMap.get(r.id), _version: '1.26.6' };
+                    return { ...builtInMap.get(r.id), _version: '1.26.7' };
                 }
                 return r;
             });
@@ -4250,7 +4615,7 @@ class RuleManager {
             }
 
             if (modified) {
-                console.log("[RuleManager] 🔄 v1.26.6 통합 파서 규칙(newtoki1.org & sbxh9.com 겸용) 자동 업그레이드 완료.");
+                console.log("[RuleManager] 🔄 v1.26.7 통합 파서 규칙(newtoki1.org & sbxh9.com 겸용) 자동 업그레이드 완료.");
                 this.saveParserRules(parserRules);
             }
         }
@@ -4478,9 +4843,13 @@ class SubscriptionManager {
         const version = _RuleManager_js__WEBPACK_IMPORTED_MODULE_0__/* .RuleManager._version */ .k._version;
         let added = 0, updated = 0, skipped = 0;
 
+        const builtInIds = new Set(['blacktoon_webtoon', 'blacktoon_manhwa', 'blacktoon_novel', 'toki_common']);
         remoteRules.forEach(remote => {
             if (!remote.id) { skipped++; return; }
-            // Ensure _version on incoming rules
+            if (builtInIds.has(remote.id) && remote._version !== version) {
+                skipped++;
+                return;
+            }
             if (!remote._version) remote._version = version;
             remote._subscribed = sourceUrl;
 
@@ -4528,6 +4897,7 @@ class SubscriptionManager {
 /***/ (function(__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) {
 
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "$5": function() { return /* binding */ TAB_ID; },
 /* harmony export */   "B5": function() { return /* binding */ clearQueue; },
 /* harmony export */   "Dm": function() { return /* binding */ removeCompletedAndFailedItems; },
 /* harmony export */   "FH": function() { return /* binding */ getQueueStats; },
@@ -4567,6 +4937,7 @@ const WORKER_STAGE = {
 };
 
 const STORAGE_KEY = 'TOKI_DOWNLOAD_QUEUE';
+const TAB_ID = 'tab_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
 const MAX_CONCURRENCY = 2; // 최대 동시 다운로드 수
 
 // 임시 팝업 창 참조 보관용 맵 (Liveness check 및 재활용 루프 대비)
@@ -4634,7 +5005,7 @@ const getQueue = () => {
 /**
  * 에피소드 대기열 다중 추가
  */
-const addEpisodesToQueue = (episodes, novelTitle) => {
+const addEpisodesToQueue = (episodes, novelTitle, options = {}) => {
   const queue = getRawQueue();
   let addedCount = 0;
 
@@ -4642,31 +5013,37 @@ const addEpisodesToQueue = (episodes, novelTitle) => {
     // FNV 해시를 적용하여 작품명 한글 유실을 차단하고 100% 안전한 고유 아스키 식별자 생성
     const hashPart = tokiHash(`${novelTitle}_${ep.episodeNum}`);
     const id = `toki_${hashPart}`;
-    
-    // 이미 존재하는지 중복성 검사
-    const exists = queue.some(item => item.id === id);
-    if (!exists) {
-      queue.push({
-        id,
-        title: novelTitle,
-        episodeTitle: ep.title,
-        episodeUrl: ep.url,
-        episodeNum: ep.episodeNum || '',
-        folderId: ep.folderId || '',             // 구글 드라이브 스캔 위치 폴더 ID 보존
-        category: ep.category || 'Manga',       // 파서 룰 카테고리 (워커 targetType 판별용)
-        viewerCfg: ep.viewerCfg || {},           // 파서 룰 viewer 설정 (워커 이미지 셀렉터용)
-        rootFolder: ep.rootFolder || '',
-        destination: ep.destination || 'local',
-        novelFormat: ep.novelFormat || 'epub',
-        matchedRule: ep.matchedRule || {},
-        protocolDomain: ep.protocolDomain || '',
-        seriesMetadata: ep.seriesMetadata || {},
-        status: 'pending',
-        progressPercent: 0,
-        stage: WORKER_STAGE.INIT,
-        retryCount: 0,
-        addedAt: Date.now()
-      });
+    const newItem = {
+      id,
+      title: novelTitle,
+      episodeTitle: ep.title,
+      episodeUrl: ep.url,
+      episodeNum: ep.episodeNum || '',
+      folderId: ep.folderId || '',             // 구글 드라이브 스캔 위치 폴더 ID 보존
+      category: ep.category || 'Manga',       // 파서 룰 카테고리 (워커 targetType 판별용)
+      viewerCfg: ep.viewerCfg || {},           // 파서 룰 viewer 설정 (워커 이미지 셀렉터용)
+      rootFolder: ep.rootFolder || '',
+      destination: ep.destination || 'local',
+      novelFormat: ep.novelFormat || 'epub',
+      matchedRule: ep.matchedRule || {},
+      protocolDomain: ep.protocolDomain || '',
+      seriesMetadata: ep.seriesMetadata || {},
+      ownerTabId: ep.ownerTabId || options.ownerTabId || TAB_ID,
+      isSingleVolume: Boolean(ep.isSingleVolume ?? options.isSingleVolume),
+      status: 'pending',
+      progressPercent: 0,
+      stage: WORKER_STAGE.INIT,
+      retryCount: 0,
+      addedAt: Date.now()
+    };
+
+    // 이미 존재하는지 중복성 검사 (완료/실패 상태인 구 항목이 남아있으면 새 작업으로 갱신)
+    const existingIdx = queue.findIndex(item => item.id === id);
+    if (existingIdx === -1) {
+      queue.push(newItem);
+      addedCount++;
+    } else if (queue[existingIdx].status === 'completed' || queue[existingIdx].status === 'failed') {
+      queue[existingIdx] = newItem;
       addedCount++;
     }
   });
@@ -4965,15 +5342,18 @@ const runSchedulerOnce = async () => {
       return;
     }
 
-    // 2. 전체 진행 중(수집 + 업로드)인 세션이 최대 허용 한계(3개) 이상이면 리소스 가드를 위해 차단
-    const currentProcessing = queue.filter(item => item.status === 'processing');
+    // 현재 탭이 담당하는 배치 아이템 판별 (단행본 합본 루프 아이템 및 타 탭 전용 아이템은 침범하지 않음)
+    const isMyBatchItem = (item) => !item.isSingleVolume && (!item.ownerTabId || item.ownerTabId === TAB_ID);
+
+    // 2. 현재 탭에서 진행 중인 배치 세션이 최대 허용 한계(3개) 이상이면 리소스 가드를 위해 차단
+    const currentProcessing = queue.filter(item => item.status === 'processing' && isMyBatchItem(item));
     if (currentProcessing.length >= 3) {
       isSchedulerRunning = false;
       return;
     }
 
-    // 3. pending(대기 중) 상태인 첫 번째 에피소드 추출
-    const nextItem = queue.find(item => item.status === 'pending');
+    // 3. 현재 탭 소속의 pending(대기 중) 상태인 첫 번째 배치 에피소드 추출
+    const nextItem = queue.find(item => item.status === 'pending' && isMyBatchItem(item));
     if (!nextItem) {
       // 대기 중인 작업도 없고 현재 진행 중인 활성 작업도 없다면 안티 슬립 오디오를 정지시킵니다.
       if (currentProcessing.length === 0) {
@@ -5795,7 +6175,7 @@ class FormRuleEditor {
     }
 
     render() {
-        const scriptVer =  true ? "1.26.6" : 0;
+        const scriptVer =  true ? "1.26.7" : 0;
         this.overlay.innerHTML = `
             <div class="toki-modal toki-form-editor-modal">
                 <div class="toki-modal-header">
@@ -7779,7 +8159,7 @@ class LogBox_LogBox {
         try {
             this.popupWindow = window.open(
                 "", 
-                "TokiSync_Dashboard", 
+                `TokiSync_Dashboard_${core_queue/* TAB_ID */.$5}`, 
                 `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
             );
         } catch (e) {
@@ -8075,7 +8455,7 @@ class LogBox_LogBox {
         if (dlActions && inlineProgress) {
             const hasActiveTasks = queue.some(item => item.status === 'processing' || item.status === 'pending');
             if (hasActiveTasks) {
-                dlActions.style.display = 'none';
+                dlActions.style.display = 'block';
                 inlineProgress.style.display = 'block';
                 
                 const inlineText = doc.getElementById('toki-inline-text');
@@ -9486,8 +9866,9 @@ function initBatchWorkerController() {
         const queue = (0,_queue_js__WEBPACK_IMPORTED_MODULE_1__/* .getQueue */ .wo)();
         const now = Date.now();
 
-        // 1. 60초(업로드 중인 경우 5분) 이상 무반응인 워커 강제 타임아웃 회수
+        // 1. 60초(업로드 중인 경우 5분) 이상 무반응인 현재 탭 배치 워커 강제 타임아웃 회수
         queue.forEach(item => {
+            if (item.isSingleVolume || (item.ownerTabId && item.ownerTabId !== _queue_js__WEBPACK_IMPORTED_MODULE_1__/* .TAB_ID */ .$5)) return;
             const lastActive = item.lastActivity || item.startedAt;
             if (item.status === 'processing' && lastActive) {
                 const isUploading = (item.stage === _queue_js__WEBPACK_IMPORTED_MODULE_1__/* .WORKER_STAGE.UPLOADING */ .fx.UPLOADING);
@@ -9712,9 +10093,10 @@ function initBatchWorkerController() {
             } else {
                 // local / native: 사용자 설정 localNameTemplate 동적 파싱 적용 + 작품명(문서 이름) 자동 포함 보장
                 const template = (0,_config_js__WEBPACK_IMPORTED_MODULE_3__/* .getConfig */ .iE)().localNameTemplate || "{number:4} - {title}";
-                const cleanSeries = (title || rootFolder || '').replace(/^\[[^\]]+\]\s*/, '').trim();
+                const rawSeriesCandidate = item.seriesMetadata?.originalSeriesTitle || title || rootFolder || '';
+                const cleanSeries = rawSeriesCandidate.replace(/^\[[^\]]+\]\s*/, '').replace(/^Unknown\s*Series$/i, '').trim();
                 const rawEpTitle = (episodeTitle || '').trim();
-                const hasSeriesInTitle = !cleanSeries || cleanSeries === 'UnknownSeries' || rawEpTitle.includes(cleanSeries);
+                const hasSeriesInTitle = !cleanSeries || rawEpTitle.includes(cleanSeries);
                 const effectiveEpTitle = (!template.includes('{series}') && !hasSeriesInTitle)
                     ? `${cleanSeries} ${rawEpTitle}`.trim()
                     : rawEpTitle;
@@ -9725,6 +10107,10 @@ function initBatchWorkerController() {
                     .replace(/\{rawNumber\}/g, (episodeNum || '').toString())
                     .replace(/\{series\}/g, cleanSeries)
                     .replace(/\{title\}/g, effectiveEpTitle);
+
+                if (cleanSeries && !fullFilename.includes(cleanSeries)) {
+                    fullFilename = `${cleanSeries} - ${fullFilename}`.trim();
+                }
             }
 
             console.log(`[WorkerController] [배치 저장] 파일 조립 완료 (정책: ${destination}). 전송 시작: ${fullFilename}.${extension}`);
@@ -9809,15 +10195,19 @@ function initBatchWorkerController() {
 
         _EventBus_js__WEBPACK_IMPORTED_MODULE_2__/* .EventBus.emit */ .N.emit(_EventBus_js__WEBPACK_IMPORTED_MODULE_2__/* .EVT.UPDATE_PROGRESS */ .I.UPDATE_PROGRESS);
 
-        // 드라이브 캐시 최종 갱신
+        // 작품 단위 완료 시 드라이브 캐시 최종 갱신 및 대기열 자동 청소
         const currentQueue = (0,_queue_js__WEBPACK_IMPORTED_MODULE_1__/* .getQueue */ .wo)();
-        const hasActive = currentQueue.some(i => i.status === 'pending' || i.status === 'processing');
-        if (!hasActive) {
-            const completedItem = currentQueue.find(i => i.id === matchedId);
-            if (completedItem && (completedItem.destination === 'drive' || completedItem.destination === 'drive_kavita')) {
-                const cleanFolder = completedItem.rootFolder.replace(/^\[[^\]]+\]\s*/, '');
+        const completedItem = currentQueue.find(i => i.id === matchedId) || item;
+        const seriesName = completedItem?.title;
+        const hasSeriesActive = seriesName
+            ? currentQueue.some(i => i.title === seriesName && (i.status === 'pending' || i.status === 'processing'))
+            : currentQueue.some(i => i.status === 'pending' || i.status === 'processing');
+
+        if (!hasSeriesActive && completedItem) {
+            if (completedItem.destination === 'drive' || completedItem.destination === 'drive_kavita') {
+                const cleanFolder = (completedItem.rootFolder || '').replace(/^\[[^\]]+\]\s*/, '');
                 const targetFolder = completedItem.destination === 'drive_kavita' ? cleanFolder : completedItem.rootFolder;
-                console.log(`[WorkerController] ☁️ 전 대기열 수집 완료 -> 드라이브 캐시 갱신 시작: ${targetFolder}`);
+                console.log(`[WorkerController] ☁️ [${seriesName}] 수집 완료 -> 드라이브 캐시 갱신 시작: ${targetFolder}`);
                 (0,_gas_js__WEBPACK_IMPORTED_MODULE_4__/* .refreshCacheAfterUpload */ .eo)(
                     targetFolder,
                     completedItem.category,
@@ -9825,6 +10215,11 @@ function initBatchWorkerController() {
                 ).catch(e =>
                     console.warn(`[WorkerController] 캐시 갱신 실패: ${e.message}`)
                 );
+            }
+            const hasSeriesFailed = currentQueue.some(i => i.title === seriesName && i.status === 'failed');
+            if (seriesName && !hasSeriesFailed) {
+                (0,_queue_js__WEBPACK_IMPORTED_MODULE_1__/* .removeSeriesFromQueue */ .OT)(seriesName);
+                _EventBus_js__WEBPACK_IMPORTED_MODULE_2__/* .EventBus.emit */ .N.emit(_EventBus_js__WEBPACK_IMPORTED_MODULE_2__/* .EVT.UPDATE_PROGRESS */ .I.UPDATE_PROGRESS);
             }
         }
 
@@ -10739,26 +11134,54 @@ async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwrite = fa
             extension = EXTENSION_MAP[category] ?? 'cbz';
         }
 
-        // Get List
-        let list = await parser.getListItems();
+        // Get List (다중 페이지 전체 회차 강제 최신 스캔)
+        logger.logger.info('📄 전체 페이지 회차 목록을 스캔 중입니다...', 'Downloader');
+        let list = await parser.getListItems({ allPages: true, forceRefresh: true });
+
+        // [v1.26.7] 회차 번호가 모두 0이거나 누락된 경우 역순(최신순->1화순) 인덱스 기반 고유 번호 부여
+        const rawMapped = list.map((li, idx) => {
+            const rawEl = li.element || li;
+            const item = parser.parseListItem(rawEl);
+            const parsedNum = parseInt(item.num, 10);
+            return { li: rawEl, item, parsedNum: isNaN(parsedNum) ? 0 : parsedNum, idx };
+        });
+        const nonZeroCount = rawMapped.filter(x => x.parsedNum > 0).length;
+        if (nonZeroCount === 0 && rawMapped.length > 0) {
+            rawMapped.forEach((x, idx) => {
+                const fallbackNum = rawMapped.length - idx;
+                x.parsedNum = fallbackNum;
+                if (x.li && typeof x.li === 'object') x.li._tokiEffectiveNum = String(fallbackNum);
+            });
+        }
 
         // [v1.9.1] 정렬 로직 통합: 범위 필터 여부와 상관없이 항상 오름차순(1화~N화)으로 정렬
         const rangeSet = parseRangeSpec(rangeSpec);
-        const mappedList = list.map(li => {
-            const item = parser.parseListItem(li.element || li);
-            return { li, num: parseInt(item.num) || 0 }; // 숫자가 아니면 0으로 처리하여 상단 배치
-        });
-
         if (rangeSet) {
-            list = mappedList.filter(item => rangeSet.has(item.num))
-                             .sort((a, b) => a.num - b.num)
-                             .map(item => item.li);
+            list = rawMapped.filter(x => rangeSet.has(x.parsedNum))
+                            .sort((a, b) => (a.parsedNum - b.parsedNum) || (b.idx - a.idx))
+                            .map(x => x.li);
             logger.logger.log(`범위 필터 적용 및 오름차순 정렬 완료: ${rangeSpec} → ${list.length}개 항목`);
         } else {
-            list = mappedList.sort((a, b) => a.num - b.num)
-                             .map(item => item.li);
+            list = rawMapped.sort((a, b) => (a.parsedNum - b.parsedNum) || (b.idx - a.idx))
+                            .map(x => x.li);
             logger.logger.log(`전체 항목 오름차순 정렬 완료: ${list.length}개 항목`);
         }
+
+        // 정렬 후 동일 번호(예: 분할 회차 225화 1~4부 또는 0번 공지/외전) 충돌 방지를 위해 고유 _tokiEffectiveNum 보장
+        const usedNums = new Map();
+        list.forEach((li, idx) => {
+            if (!li || typeof li !== 'object') return;
+            const parsed = parser.parseListItem(li);
+            let baseNum = (parsed.num && parsed.num !== '0') ? String(parsed.num) : String(idx + 1);
+            if (!usedNums.has(baseNum)) {
+                usedNums.set(baseNum, 1);
+                li._tokiEffectiveNum = baseNum;
+            } else {
+                const count = usedNums.get(baseNum) + 1;
+                usedNums.set(baseNum, count);
+                li._tokiEffectiveNum = `${baseNum}_${count}`;
+            }
+        });
         
         // Log episode range
         if (list.length > 0) {
@@ -10783,8 +11206,11 @@ async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwrite = fa
         const seriesId = parser.getSeriesId();
 
         // Determine Root Folder Name & Series Title
+        const explicitSeriesTitle = (parser.getSeriesTitle() || '').trim();
         const rootFolder = parser.getFormattedTitle(seriesId, first.title, last.title, utils/* getCommonPrefix */.iV);
-        const seriesTitle = rootFolder.replace(/^\[[a-zA-Z0-9_\-]+\]\s*/, '');
+        const seriesTitle = (explicitSeriesTitle || rootFolder.replace(/^\[[a-zA-Z0-9_\-]+\]\s*/, ''))
+            .replace(/^Unknown\s*Series$/i, '')
+            .trim() || 'UnknownSeries';
         const listPrefixTitle = (list.length > 1) ? (0,utils/* getCommonPrefix */.iV)(first.title, last.title) : "";
 
         // [v1.24.0] 수집 시점의 각 챕터별 원본 상세 제목 매핑 객체 구축
@@ -11022,7 +11448,7 @@ async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwrite = fa
                 folderId: activeFolderId || ''
             }));
 
-            const injected = (0,core_queue/* addEpisodesToQueue */.T3)(mappedEpisodes, seriesTitle);
+            const injected = (0,core_queue/* addEpisodesToQueue */.T3)(mappedEpisodes, seriesTitle, { ownerTabId: core_queue/* TAB_ID */.$5, isSingleVolume: currentIsSingleVolume });
             logger.logger.log(`🗂️ [공통 큐] 수집 대상 ${injected}개 에피소드를 대기열에 선등록 완료.`, 'Queue');
         }
 
@@ -11219,17 +11645,21 @@ async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwrite = fa
                     });
 
                     // 2. Legacy {number} & {rawNumber} fallback + 작품명(문서 이름) 자동 포함 보장
+                    const cleanValidSeries = cleanSeries.replace(/^Unknown\s*Series$/i, '').trim();
                     const legacyPaddedNum = (item.num || '').toString().padStart(4, '0');
                     const rawChapTitle = (chapterTitle || '').trim();
-                    const hasSeries = !cleanSeries || cleanSeries === 'UnknownSeries' || rawChapTitle.includes(cleanSeries);
+                    const hasSeries = !cleanValidSeries || rawChapTitle.includes(cleanValidSeries);
                     const effectiveChapTitle = (!template.includes('{series}') && !hasSeries)
-                        ? `${cleanSeries} ${rawChapTitle}`.trim()
+                        ? `${cleanValidSeries} ${rawChapTitle}`.trim()
                         : rawChapTitle;
                     fullFilename = fullFilename
                         .replace(/\{number\}/g, legacyPaddedNum)
                         .replace(/\{rawNumber\}/g, (item.num || '').toString())
-                        .replace(/\{series\}/g, cleanSeries)
+                        .replace(/\{series\}/g, cleanValidSeries)
                         .replace(/\{title\}/g, effectiveChapTitle);
+                    if (cleanValidSeries && !fullFilename.includes(cleanValidSeries)) {
+                        fullFilename = `${cleanValidSeries} - ${fullFilename}`.trim();
+                    }
                 } else {
                     // drive (레거시): 기존 명명법인 `[ID] 작품명 0001화` 강제 적용
                     const paddedNum = (item.num || '').toString().padStart(4, '0');
@@ -11393,7 +11823,8 @@ async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwrite = fa
                     } else {
                         rangeLabel = (startNum === endNum) ? `${startNum}화` : `${Math.min(startNum, endNum)}-${Math.max(startNum, endNum)}화`;
                     }
-                    const finalFilename = `${seriesTitle || rootFolder} (${rangeLabel})`;
+                    const cleanSingleTitle = (explicitSeriesTitle || seriesTitle || rootFolder || '').replace(/^\[[^\]]+\]\s*/, '').replace(/^Unknown\s*Series$/i, '').trim() || rootFolder;
+                    const finalFilename = `${cleanSingleTitle} (${rangeLabel})`;
                     
                     logger.logger.info(`📚 단행본 조립 및 저장 중... (${finalFilename})`);
                     
@@ -11749,7 +12180,7 @@ async function main() {
         try {
             const parser = await ParserFactory.getParser();
             if (!parser) return;
-            const list = await parser.getListItems();
+            const list = await parser.getListItems({ allPages: false });
             console.log(`[TokiSync] Found ${list.length} list items`);
             if (list.length === 0) {
                 console.warn('[TokiSync] No list items found, skipping history sync');
@@ -12755,8 +13186,8 @@ EventBus/* EventBus.on */.N.on(EventBus/* EVT.RULE_CACHE_CLEAR */.I.RULE_CACHE_C
     // 3. window.fetch, sendBeacon, XHR Proxy 가로채기 전면 비활성화 (스텔스 유지)
     // 4. window.name 및 sessionStorage 워커 각인 흔적 배제
 
-    // window.opener가 존재할 경우 워커로 판별하여 Extractor 기동 (스텔스 모드)
-    if (window.opener) {
+    // window.opener가 존재하고 워커 전용 창 이름(tokisync_*)일 때만 워커로 판별하여 기동 (새 탭 열기 시 오작동 차단)
+    if (window.opener && /^tokisync_/i.test(window.name || '')) {
         const startWorker = () => {
             try {
                 initWorkerExtractor();

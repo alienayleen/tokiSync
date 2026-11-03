@@ -220,7 +220,7 @@ export async function main() {
         try {
             const parser = await ParserFactory.getParser();
             if (!parser) return;
-            const list = await parser.getListItems();
+            const list = await parser.getListItems({ allPages: false });
             console.log(`[TokiSync] Found ${list.length} list items`);
             if (list.length === 0) {
                 console.warn('[TokiSync] No list items found, skipping history sync');

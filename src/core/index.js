@@ -89,8 +89,8 @@ import './listeners.js';
     // 3. window.fetch, sendBeacon, XHR Proxy 가로채기 전면 비활성화 (스텔스 유지)
     // 4. window.name 및 sessionStorage 워커 각인 흔적 배제
 
-    // window.opener가 존재할 경우 워커로 판별하여 Extractor 기동 (스텔스 모드)
-    if (window.opener) {
+    // window.opener가 존재하고 워커 전용 창 이름(tokisync_*)일 때만 워커로 판별하여 기동 (새 탭 열기 시 오작동 차단)
+    if (window.opener && /^tokisync_/i.test(window.name || '')) {
         const startWorker = () => {
             try {
                 initWorkerExtractor();

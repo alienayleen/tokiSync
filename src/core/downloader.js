@@ -13,7 +13,7 @@ import { startSilentAudio, stopSilentAudio } from './anti_sleep.js';
 import { fetchHistory, refreshCacheAfterUpload, getBooksByCacheId, initUpdateUploadViaGASRelay, getMergeIndexFragment } from './gas.js';
 import { fetchHistoryDirect, checkSingleHistoryDirect, getOAuthToken, getOrCreateFolder } from './network.js';
 import { fetchNovelText, fetchComicImages, closeActiveWorker, initBatchWorkerController } from './worker-controller.js';
-import { addEpisodesToQueue, initQueueScheduler, activeWorkers, WORKER_STAGE, updateQueueItem, getQueue, removeQueueItem, getQueueItemId, clearQueue, stopAllWorkers, removeSeriesFromQueue, removeCompletedAndFailedItems } from './queue.js';
+import { addEpisodesToQueue, initQueueScheduler, activeWorkers, WORKER_STAGE, updateQueueItem, getQueue, removeQueueItem, getQueueItemId, clearQueue, stopAllWorkers, removeSeriesFromQueue, removeCompletedAndFailedItems, TAB_ID } from './queue.js';
 
 async function shouldSkipEpisode({
     numStr,
@@ -299,26 +299,54 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
             extension = EXTENSION_MAP[category] ?? 'cbz';
         }
 
-        // Get List
-        let list = await parser.getListItems();
+        // Get List (다중 페이지 전체 회차 강제 최신 스캔)
+        logger.info('📄 전체 페이지 회차 목록을 스캔 중입니다...', 'Downloader');
+        let list = await parser.getListItems({ allPages: true, forceRefresh: true });
+
+        // [v1.26.7] 회차 번호가 모두 0이거나 누락된 경우 역순(최신순->1화순) 인덱스 기반 고유 번호 부여
+        const rawMapped = list.map((li, idx) => {
+            const rawEl = li.element || li;
+            const item = parser.parseListItem(rawEl);
+            const parsedNum = parseInt(item.num, 10);
+            return { li: rawEl, item, parsedNum: isNaN(parsedNum) ? 0 : parsedNum, idx };
+        });
+        const nonZeroCount = rawMapped.filter(x => x.parsedNum > 0).length;
+        if (nonZeroCount === 0 && rawMapped.length > 0) {
+            rawMapped.forEach((x, idx) => {
+                const fallbackNum = rawMapped.length - idx;
+                x.parsedNum = fallbackNum;
+                if (x.li && typeof x.li === 'object') x.li._tokiEffectiveNum = String(fallbackNum);
+            });
+        }
 
         // [v1.9.1] 정렬 로직 통합: 범위 필터 여부와 상관없이 항상 오름차순(1화~N화)으로 정렬
         const rangeSet = parseRangeSpec(rangeSpec);
-        const mappedList = list.map(li => {
-            const item = parser.parseListItem(li.element || li);
-            return { li, num: parseInt(item.num) || 0 }; // 숫자가 아니면 0으로 처리하여 상단 배치
-        });
-
         if (rangeSet) {
-            list = mappedList.filter(item => rangeSet.has(item.num))
-                             .sort((a, b) => a.num - b.num)
-                             .map(item => item.li);
+            list = rawMapped.filter(x => rangeSet.has(x.parsedNum))
+                            .sort((a, b) => (a.parsedNum - b.parsedNum) || (b.idx - a.idx))
+                            .map(x => x.li);
             logger.log(`범위 필터 적용 및 오름차순 정렬 완료: ${rangeSpec} → ${list.length}개 항목`);
         } else {
-            list = mappedList.sort((a, b) => a.num - b.num)
-                             .map(item => item.li);
+            list = rawMapped.sort((a, b) => (a.parsedNum - b.parsedNum) || (b.idx - a.idx))
+                            .map(x => x.li);
             logger.log(`전체 항목 오름차순 정렬 완료: ${list.length}개 항목`);
         }
+
+        // 정렬 후 동일 번호(예: 분할 회차 225화 1~4부 또는 0번 공지/외전) 충돌 방지를 위해 고유 _tokiEffectiveNum 보장
+        const usedNums = new Map();
+        list.forEach((li, idx) => {
+            if (!li || typeof li !== 'object') return;
+            const parsed = parser.parseListItem(li);
+            let baseNum = (parsed.num && parsed.num !== '0') ? String(parsed.num) : String(idx + 1);
+            if (!usedNums.has(baseNum)) {
+                usedNums.set(baseNum, 1);
+                li._tokiEffectiveNum = baseNum;
+            } else {
+                const count = usedNums.get(baseNum) + 1;
+                usedNums.set(baseNum, count);
+                li._tokiEffectiveNum = `${baseNum}_${count}`;
+            }
+        });
         
         // Log episode range
         if (list.length > 0) {
@@ -343,8 +371,11 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
         const seriesId = parser.getSeriesId();
 
         // Determine Root Folder Name & Series Title
+        const explicitSeriesTitle = (parser.getSeriesTitle() || '').trim();
         const rootFolder = parser.getFormattedTitle(seriesId, first.title, last.title, getCommonPrefix);
-        const seriesTitle = rootFolder.replace(/^\[[a-zA-Z0-9_\-]+\]\s*/, '');
+        const seriesTitle = (explicitSeriesTitle || rootFolder.replace(/^\[[a-zA-Z0-9_\-]+\]\s*/, ''))
+            .replace(/^Unknown\s*Series$/i, '')
+            .trim() || 'UnknownSeries';
         const listPrefixTitle = (list.length > 1) ? getCommonPrefix(first.title, last.title) : "";
 
         // [v1.24.0] 수집 시점의 각 챕터별 원본 상세 제목 매핑 객체 구축
@@ -582,7 +613,7 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
                 folderId: activeFolderId || ''
             }));
 
-            const injected = addEpisodesToQueue(mappedEpisodes, seriesTitle);
+            const injected = addEpisodesToQueue(mappedEpisodes, seriesTitle, { ownerTabId: TAB_ID, isSingleVolume: currentIsSingleVolume });
             logger.log(`🗂️ [공통 큐] 수집 대상 ${injected}개 에피소드를 대기열에 선등록 완료.`, 'Queue');
         }
 
@@ -779,17 +810,21 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
                     });
 
                     // 2. Legacy {number} & {rawNumber} fallback + 작품명(문서 이름) 자동 포함 보장
+                    const cleanValidSeries = cleanSeries.replace(/^Unknown\s*Series$/i, '').trim();
                     const legacyPaddedNum = (item.num || '').toString().padStart(4, '0');
                     const rawChapTitle = (chapterTitle || '').trim();
-                    const hasSeries = !cleanSeries || cleanSeries === 'UnknownSeries' || rawChapTitle.includes(cleanSeries);
+                    const hasSeries = !cleanValidSeries || rawChapTitle.includes(cleanValidSeries);
                     const effectiveChapTitle = (!template.includes('{series}') && !hasSeries)
-                        ? `${cleanSeries} ${rawChapTitle}`.trim()
+                        ? `${cleanValidSeries} ${rawChapTitle}`.trim()
                         : rawChapTitle;
                     fullFilename = fullFilename
                         .replace(/\{number\}/g, legacyPaddedNum)
                         .replace(/\{rawNumber\}/g, (item.num || '').toString())
-                        .replace(/\{series\}/g, cleanSeries)
+                        .replace(/\{series\}/g, cleanValidSeries)
                         .replace(/\{title\}/g, effectiveChapTitle);
+                    if (cleanValidSeries && !fullFilename.includes(cleanValidSeries)) {
+                        fullFilename = `${cleanValidSeries} - ${fullFilename}`.trim();
+                    }
                 } else {
                     // drive (레거시): 기존 명명법인 `[ID] 작품명 0001화` 강제 적용
                     const paddedNum = (item.num || '').toString().padStart(4, '0');
@@ -953,7 +988,8 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
                     } else {
                         rangeLabel = (startNum === endNum) ? `${startNum}화` : `${Math.min(startNum, endNum)}-${Math.max(startNum, endNum)}화`;
                     }
-                    const finalFilename = `${seriesTitle || rootFolder} (${rangeLabel})`;
+                    const cleanSingleTitle = (explicitSeriesTitle || seriesTitle || rootFolder || '').replace(/^\[[^\]]+\]\s*/, '').replace(/^Unknown\s*Series$/i, '').trim() || rootFolder;
+                    const finalFilename = `${cleanSingleTitle} (${rangeLabel})`;
                     
                     logger.info(`📚 단행본 조립 및 저장 중... (${finalFilename})`);
                     

@@ -38,6 +38,10 @@ export class BaseParser {
         if (url.startsWith('http')) return url;
         if (url.startsWith('//')) return `https:${url}`;
         if (url.startsWith('/')) return `${this.protocolDomain}${url}`;
+        try {
+            const base = (this._doc && this._doc.URL) || this.protocolDomain || (typeof window !== 'undefined' && window.location ? window.location.href : '');
+            if (base) return new URL(url, base).href;
+        } catch (e) {}
         return url;
     }
 
@@ -138,14 +142,16 @@ export class BaseParser {
                 listPrefixTitle = getCommonPrefixFn(firstTitle, lastTitle);
             }
 
-            if (listPrefixTitle && listPrefixTitle.length > 2) {
-                formatted = `[${seriesId}] ${listPrefixTitle}`;
-            } else if (firstTitle && !/^\d+\s*(?:화|회|편|권)?$/.test(firstTitle.trim())) {
-                // Single item or distinct titles: fallback to regex or full title (단, 단순 '281화' 형태는 제외)
+            // 공통 접두사가 2글자 이상이고 단순 챕터 부제('은원 (', '제1장' 등)가 아닐 때만 채택
+            const cleanPrefix = (listPrefixTitle || '').replace(/[(\[\-_:\s]+$/, '').trim();
+            if (cleanPrefix && cleanPrefix.length >= 2 && firstTitle !== lastTitle) {
+                formatted = `[${seriesId}] ${cleanPrefix}`;
+            } else if (firstTitle && /\s+\d+\s*(?:화|회|편|권)/.test(firstTitle.trim())) {
+                // '전설급 영웅은 아카데미 우등생 111화'처럼 앞에 작품명이 있고 뒤에 N화가 붙은 경우에만 작품명 추출
                 const cleanTitle = firstTitle.replace(/\s*\d+\s*(?:화|회|편|권).*$/, '').trim();
-                formatted = `[${seriesId}] ${cleanTitle || firstTitle}`;
+                formatted = cleanTitle ? `[${seriesId}] ${cleanTitle}` : `[${seriesId}] UnknownSeries`;
             } else {
-                formatted = `[${seriesId}] Unknown Series`;
+                formatted = `[${seriesId}] UnknownSeries`;
             }
         }
 

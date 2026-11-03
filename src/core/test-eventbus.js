@@ -1550,5 +1550,136 @@ test('newtoki1.org의 /__q/<base64> 페이지네이션과 문서 제목(작품�
     }
 });
 
+
+// ── 테스트 32: 카테고리 배지(.page-desc = "웹소설") 및 헤더 로고("북토끼 북토끼") 배제 후 정확한 작품명 추출 검증 ──
+test('GenericParser.getSeriesTitle()은 .page-desc("웹소설")나 헤더 로고("북토끼 북토끼")를 건너뛰고 실제 작품명을 반환해야 합니다.', async () => {
+    const { GenericParser } = await import('./parsers/GenericParser.js');
+    const mockDoc = {
+        URL: 'https://newtoki1.org/novel/20',
+        title: '게임 속 바바리안으로 살아남기 - 북토끼 소설 - 뉴토끼',
+        querySelector(sel) {
+            if (sel === '.page-desc') return { textContent: '웹소설' };
+            if (sel === '.view-title h1') return { textContent: '북토끼 북토끼' };
+            if (sel === 'meta[property="og:title"]') return { getAttribute: (a) => a === 'content' ? '게임 속 바바리안으로 살아남기 - 북토끼 소설' : null };
+            return null;
+        }
+    };
+    const parser = new GenericParser('https://newtoki1.org', {
+        id: 'blacktoon_novel',
+        category: 'Novel',
+        meta: {
+            title: ['div.nd-info > h1', '.view-title h1', '.page-desc', { selector: 'meta[property="og:title"]', attr: 'content' }]
+        }
+    }, mockDoc);
+
+    const seriesTitle = parser.getSeriesTitle();
+    console.assert(seriesTitle === '게임 속 바바리안으로 살아남기', `추출된 작품명 불일치: ${seriesTitle}`);
+    if (seriesTitle !== '게임 속 바바리안으로 살아남기') {
+        throw new Error(`작품명 정제 실패: ${seriesTitle}`);
+    }
+});
+
+// ── 테스트 33: 현재1페이지가 <strong> 태그이고 PC/모바일 듀얼 페이지네이션 바가 공존할 때도 전체 페이지 순회 수집 검증 ──
+test('GenericParser.getListItems()는 1페이지가 <strong>이고 PC/모바일 이중 페이지네이션이 있을 때도 모든 페이지를 수집해야 합니다.', async () => {
+    const { GenericParser } = await import('./parsers/GenericParser.js');
+    let curPage = 1;
+    const makeEpItem = (num) => ({
+        tagName: 'LI',
+        textContent: `${num} 전당 (${num})`,
+        cloneNode() { return makeEpItem(num); },
+        querySelector(sel) {
+            if (sel.includes('ne-num') || sel.includes('wr-num')) return { textContent: String(num), innerText: String(num), cloneNode() { return this; } };
+            if (sel.includes('ne-title') || sel.includes('wr-subject')) return { textContent: `전당 (${num})`, innerText: `전당 (${num})`, cloneNode() { return this; } };
+            if (sel.includes('a')) return { getAttribute: (a) => a === 'href' ? `/novel/20/${1000 + num}` : null };
+            return null;
+        },
+        querySelectorAll() { return []; }
+    });
+
+    const pagesData = {
+        1: [makeEpItem(6), makeEpItem(5)],
+        2: [makeEpItem(4), makeEpItem(3)],
+        3: [makeEpItem(2), makeEpItem(1)]
+    };
+
+    const makeStrong = (txt) => ({ tagName: 'STRONG', textContent: txt, children: [], closest: () => null });
+    const makeBtn = (num, isHidden = false) => ({
+        tagName: 'SPAN',
+        textContent: `${num}페이지`,
+        children: [],
+        disabled: false,
+        className: 'pg_page',
+        getBoundingClientRect: () => isHidden ? { width: 0, height: 0 } : { width: 30, height: 30 },
+        getAttribute: () => '',
+        closest: () => null,
+        click() { if (!isHidden) curPage = num; }
+    });
+
+    const pagWrap = {
+        tagName: 'DIV',
+        className: 'pg_wrap',
+        closest: () => null,
+        querySelectorAll() {
+            return [
+                makeStrong('현재1페이지'),
+                makeBtn(2, true), makeBtn(2, false),
+                makeBtn(3, true), makeBtn(3, false)
+            ];
+        }
+    };
+
+    const listContainer = {
+        tagName: 'UL',
+        className: 'novel-eps',
+        contains: () => false,
+        querySelectorAll(sel) {
+            if (sel.includes('li')) return pagesData[curPage] || [];
+            return [];
+        }
+    };
+    const epSection = {
+        tagName: 'SECTION',
+        className: 'ep-section',
+        children: [listContainer, pagWrap],
+        closest: () => null,
+        querySelectorAll(sel) {
+            return pagWrap.querySelectorAll(sel);
+        }
+    };
+    listContainer.parentElement = epSection;
+    pagWrap.parentElement = epSection;
+
+    const mockDoc = {
+        URL: 'https://newtoki1.org/novel/20',
+        querySelector(sel) {
+            if (sel.includes('novel-eps')) return listContainer;
+            return null;
+        },
+        querySelectorAll(sel) {
+            if (sel.includes('novel-eps')) return [listContainer];
+            if (sel.includes('pg_wrap')) return [pagWrap];
+            return [];
+        }
+    };
+
+    const parser = new GenericParser('https://newtoki1.org', {
+        id: 'blacktoon_novel',
+        category: 'Novel',
+        list: {
+            container: 'ul.novel-eps',
+            item: 'li',
+            num: 'span.ne-num',
+            title: 'span.ne-title',
+            link: { selector: 'a', attr: 'href' }
+        }
+    }, mockDoc);
+
+    const allItems = await parser.getListItems({ allPages: true, forceRefresh: true });
+    console.assert(allItems.length === 6, `strong 1페이지 + 듀얼 버튼 병합 실패: 기대 6개, 실제 ${allItems.length}개`);
+    if (allItems.length !== 6) {
+        throw new Error(`strong 1페이지 + 듀얼 버튼 병합 실패 (${allItems.length}개)`);
+    }
+});
+
 // 테스트 기동
 runTests();

@@ -93,21 +93,30 @@ export class AutoDomDiscoverer {
         const meta = {};
         if (!doc || typeof doc.querySelector !== 'function') return meta;
 
+        const isJunkTitle = (txt) => {
+            if (!txt) return true;
+            const c = txt.replace(/\s*\|\s*.*$/, '').replace(/\s+-\s+(?:북토끼|마나토끼|뉴토끼|블랙툰|웹툰|일본만화|웹소설|소설|만화).*$/i, '').trim();
+            if (!c || c.length < 2) return true;
+            if (/^(?:뉴토끼|북토끼|마나토끼|블랙툰|홈|메인|웹툰|일반웹툰|성인웹툰|완결웹툰|만화|일본만화|완결만화|소설|웹소설|완결소설|로그인|회원가입|검색|공지사항)(\s+.*)?$/i.test(c)) return true;
+            if (/미리보기|팝업레이어|로그인/.test(c)) return true;
+            return false;
+        };
+
         const titleCandidates = [
             'h1.hero-v2-title',
             'div.nd-info > h1',
             '.nd-title',
             'h1.title',
             'h1.series-title',
+            '.view-title .view-content strong',
             '.view-title h1',
             '.hero h1',
-            'main h1',
-            'h1'
+            'main h1'
         ];
         for (const sel of titleCandidates) {
             try {
                 const el = doc.querySelector(sel);
-                if (el && el.textContent && el.textContent.trim().length > 1) {
+                if (el && !el.closest?.('header, nav, #hd, #header, .header, .navbar, .modal') && !isJunkTitle(el.textContent)) {
                     meta.title = sel;
                     break;
                 }
@@ -115,10 +124,18 @@ export class AutoDomDiscoverer {
         }
         if (!meta.title) {
             const metaSubj = doc.querySelector('meta[name="subject"]');
-            if (metaSubj && metaSubj.getAttribute('content')) {
+            if (metaSubj && !isJunkTitle(metaSubj.getAttribute('content'))) {
                 meta.title = { selector: 'meta[name="subject"]', attr: 'content' };
-            } else if (doc.querySelector('meta[property="og:title"]')) {
+            } else if (doc.querySelector('meta[property="og:title"]') && !isJunkTitle(doc.querySelector('meta[property="og:title"]').getAttribute('content'))) {
                 meta.title = { selector: 'meta[property="og:title"]', attr: 'content' };
+            } else {
+                const h1s = Array.from(doc.querySelectorAll('h1, h2'));
+                for (const h of h1s) {
+                    if (!h.closest?.('header, nav, #hd, #header, .header, .navbar, .modal') && !isJunkTitle(h.textContent)) {
+                        meta.title = this.shortSelector(h) || 'h1';
+                        break;
+                    }
+                }
             }
         }
 

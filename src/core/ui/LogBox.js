@@ -6,7 +6,7 @@
 import { startSilentAudio, stopSilentAudio, isAudioRunning } from '../anti_sleep.js';
 import { getConfig, setConfig } from '../config.js';
 import { EventBus, EVT } from '../EventBus.js';
-import { getQueue, getQueueStats, getQueuePaused } from '../queue.js';
+import { getQueue, getQueueStats, getQueuePaused, TAB_ID } from '../queue.js';
 import { MenuModal } from './MenuModal.js';
 import styles from './ui.css';
 
@@ -111,7 +111,7 @@ export class LogBox {
         try {
             this.popupWindow = window.open(
                 "", 
-                "TokiSync_Dashboard", 
+                `TokiSync_Dashboard_${TAB_ID}`, 
                 `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
             );
         } catch (e) {
@@ -407,7 +407,7 @@ export class LogBox {
         if (dlActions && inlineProgress) {
             const hasActiveTasks = queue.some(item => item.status === 'processing' || item.status === 'pending');
             if (hasActiveTasks) {
-                dlActions.style.display = 'none';
+                dlActions.style.display = 'block';
                 inlineProgress.style.display = 'block';
                 
                 const inlineText = doc.getElementById('toki-inline-text');
