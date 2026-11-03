@@ -1,11 +1,15 @@
 {
-  "version": "1.0",
+  "version": "1.26.5",
   "rules": [
     {
       "id": "blacktoon_webtoon",
-      "name": "블랙툰 웹툰 전용 룰",
-      "_version": "1.26.4",
+      "name": "신형 토끼/블랙툰/SBXH 웹툰 전용 룰",
+      "_version": "1.26.5",
       "urlPattern": ".*/webtoon/.*",
+      "idExtraction": {
+        "source": "url",
+        "regex": "\\/webtoon\\/([a-zA-Z0-9_\\-]+)"
+      },
       "category": "Webtoon",
       "meta": {
         "title": "h1.hero-v2-title",
@@ -34,21 +38,26 @@
       },
       "viewer": {
         "fetchMethod": "iframe",
-        "imageRegex": "https?:\\\\/\\\\/[a-zA-Z0-9_.\\\\/-]+\\\\.(?:jpg|png|webp|gif)",
         "imageContainer": "div.vw-imgs, main.vw-main",
         "imageItem": "img",
         "lazyAttrOptions": [
           "data-src",
           "data-lazy",
+          "data-original",
+          "o-src",
           "src"
         ]
       }
     },
     {
       "id": "blacktoon_manhwa",
-      "name": "블랙툰 만화 전용 룰",
-      "_version": "1.26.4",
+      "name": "신형 토끼/블랙툰/SBXH 만화 전용 룰",
+      "_version": "1.26.5",
       "urlPattern": ".*/manhwa/.*",
+      "idExtraction": {
+        "source": "url",
+        "regex": "\\/manhwa\\/([a-zA-Z0-9_\\-]+)"
+      },
       "category": "Manga",
       "meta": {
         "title": "h1.hero-v2-title",
@@ -77,36 +86,44 @@
       },
       "viewer": {
         "fetchMethod": "iframe",
-       "imageRegex": "https?://[a-zA-Z0-9_./-]+\\.(?:jpg|png|webp|gif)",
         "imageContainer": "div.vw-imgs, main.vw-main",
         "imageItem": "img",
         "lazyAttrOptions": [
           "data-src",
           "data-lazy",
+          "data-original",
+          "o-src",
           "src"
         ]
       }
     },
     {
       "id": "blacktoon_novel",
-      "name": "블랙툰 소설 전용 룰",
-      "_version": "1.26.4",
+      "name": "신형 토끼/블랙툰/SBXH 소설 전용 룰",
+      "_version": "1.26.5",
       "urlPattern": ".*/novel/.*",
+      "idExtraction": {
+        "source": "url",
+        "regex": "\\/novel\\/([a-zA-Z0-9_\\-]+)"
+      },
       "category": "Novel",
       "meta": {
-        "title": "div.nd-info > h1",
-        "author": "div.nd-meta span:first-child",
+        "title": "div.nd-info > h1, h1.hero-v2-title",
+        "author": "div.nd-meta span:first-child, div.hero-v2-author",
         "thumb": {
-          "selector": "div.nd-thumb img",
+          "selector": "div.nd-thumb img, div.hero-v2-thumb > img",
           "attr": "src"
         },
         "tags": "div.hero-v2-tags"
       },
       "list": {
-        "container": "ul.novel-eps",
+        "container": "ul.novel-eps, ul.ep-list-v2",
         "item": "li",
-        "num": "span.ne-num",
-        "title": "span.ne-title",
+        "num": [
+          "span.ne-num",
+          "span.ep-row-v2-no"
+        ],
+        "title": "span.ne-title, .ep-row-v2-title strong",
         "sub": {
           "selector": "span.sub",
           "regex": "\\[(.*?)\\]"
@@ -115,7 +132,7 @@
           "selector": "a",
           "attr": "href"
         },
-        "date": "span.ne-date"
+        "date": "span.ne-date, span.ep-row-v2-date"
       },
       "viewer": {
         "fetchMethod": "api",
@@ -131,6 +148,54 @@
         "imageContainer": "article.novel-viewer",
         "imageItem": "p",
         "lazyAttrOptions": []
+      }
+    },
+    {
+      "id": "toki_common",
+      "name": "구형 토끼 계열 (그누보드 뉴토끼/마나토끼/북토끼) 통합 규칙",
+      "_version": "1.26.5",
+      "urlPattern": "^(?!.*(newtoki[0-9]*\\.org|sbxh[0-9]*\\.|ntk[0-9]*\\.)).*(newtoki|manatoki|comic|booktoki).*",
+      "category": "Webtoon",
+      "meta": {
+        "title": {
+          "selector": "meta[name=\"subject\"]",
+          "attr": "content"
+        },
+        "author": ".view-content",
+        "thumb": {
+          "selector": "img[itemprop=\"image\"]",
+          "attr": "src"
+        }
+      },
+      "list": {
+        "container": ".list-body",
+        "item": "li",
+        "num": [
+          ".wr-num",
+          "span.no"
+        ],
+        "title": "a",
+        "link": {
+          "selector": "a",
+          "attr": "href"
+        }
+      },
+      "viewer": {
+        "fetchMethod": "iframe",
+        "keyDiscovery": {
+          "regex": "data_attribute\\s*:\\s*['\"]([^'\"]+)['\"]",
+          "prefix": "data-"
+        },
+        "imageContainer": "div.view-padding, div.viewer",
+        "imageItem": "img",
+        "lazyAttrOptions": [
+          "data-src",
+          "data-original",
+          "data-lazy",
+          "data-url",
+          "data-img",
+          "src"
+        ]
       }
     }
   ]
