@@ -30,19 +30,19 @@ EventBus.on(EVT.PARSE_VERIFY, async ({ _requestId, targetId, rule, domain }) => 
             else throw new Error('썸네일 이미지 URL을 추출하지 못했습니다.');
         }
         else if (targetId === 'rule-list-container' || targetId === 'rule-list-item') {
-            const items = await parser.getListItems();
+            const items = await parser.getListItems({ allPages: false });
             if (items && items.length > 0) msg = `✓ 검증 성공: 총 ${items.length}개의 회차 아이템 감지됨.`;
             else throw new Error('회차 아이템을 전혀 찾지 못했습니다. 목록 컨테이너나 아이템 셀렉터를 다시 확인하세요.');
         }
         else if (targetId === 'rule-list-num') {
-            const items = await parser.getListItems();
+            const items = await parser.getListItems({ allPages: false });
             if (!items || items.length === 0) throw new Error('회차 목록(container/item)을 먼저 찾을 수 있어야 세부 필드를 검증할 수 있습니다.');
             const firstItem = parser.parseListItem(items[0].element || items[0]);
             if (firstItem.num !== undefined && firstItem.num !== null) msg = `✓ 첫 항목 회차 번호 파싱 성공: "${firstItem.num}"`;
             else throw new Error('회차 번호(num) 추출 실패.');
         }
         else if (targetId === 'rule-list-link-selector' || targetId === 'rule-list-title') {
-            const items = await parser.getListItems();
+            const items = await parser.getListItems({ allPages: false });
             if (!items || items.length === 0) throw new Error('회차 목록(container/item)을 먼저 찾을 수 있어야 세부 필드를 검증할 수 있습니다.');
             const firstItem = parser.parseListItem(items[0].element || items[0]);
             if (targetId === 'rule-list-link-selector') {

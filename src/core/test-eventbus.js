@@ -1352,5 +1352,92 @@ test('newtoki1.org 및 sbxh9.com URL이 구형 toki_common에 가로채이지 �
     }
 });
 
+
+// ── 다중 페이지(1, 2, 3...) 페이지네이션 전체 회차 자동 병합 검증 ──
+test('GenericParser.getListItems()는 페이지가 1, 2, 3 등으로 나뉘어 있을 때 모든 페이지의 회차를 자동 순회하여 병합해야 합니다.', async () => {
+    const { GenericParser } = await import('./parsers/GenericParser.js');
+    const origFetch = globalThis.fetch;
+    const origDOMParser = globalThis.DOMParser;
+
+    try {
+        const makeMockListDoc = (url, epNumbers, maxPage = 3) => {
+            const items = epNumbers.map(n => ({
+                querySelector(sel) {
+                    if (sel === 'span.ep-row-v2-no') return { innerText: String(n), textContent: String(n) };
+                    if (sel === '.ep-row-v2-title strong') return { innerText: `${n}화`, textContent: `${n}화` };
+                    if (sel === 'a.ep-row-v2-link') return { getAttribute: (a) => a === 'href' ? `/novel/20/ep-${n}` : null };
+                    return null;
+                },
+                matches: () => false
+            }));
+            const pagAnchors = [];
+            for (let p = 1; p <= maxPage; p++) {
+                pagAnchors.push({
+                    getAttribute: (a) => a === 'href' ? `/novel/20?page=${p}` : null
+                });
+            }
+            const container = {
+                querySelectorAll(sel) {
+                    return sel === 'li.ep-row-v2' ? items : [];
+                }
+            };
+            return {
+                URL: url,
+                querySelector(sel) {
+                    if (sel === 'ul.ep-list-v2') return container;
+                    return null;
+                },
+                querySelectorAll(sel) {
+                    if (sel === 'ul.ep-list-v2') return [container];
+                    if (sel.includes('pagination') || sel.includes('page=')) return pagAnchors;
+                    return [];
+                }
+            };
+        };
+
+        const page1Doc = makeMockListDoc('https://newtoki1.org/novel/20?page=1', [6, 5]);
+        const page2Doc = makeMockListDoc('https://newtoki1.org/novel/20?page=2', [4, 3]);
+        const page3Doc = makeMockListDoc('https://newtoki1.org/novel/20?page=3', [2, 1]);
+
+        globalThis.fetch = async (url) => ({
+            ok: true,
+            text: async () => url
+        });
+        globalThis.DOMParser = class {
+            parseFromString(htmlUrl) {
+                if (htmlUrl.includes('page=2')) return page2Doc;
+                if (htmlUrl.includes('page=3')) return page3Doc;
+                return page1Doc;
+            }
+        };
+
+        const rule = {
+            id: 'blacktoon_novel',
+            category: 'Novel',
+            list: {
+                container: 'ul.ep-list-v2',
+                item: 'li.ep-row-v2',
+                num: 'span.ep-row-v2-no',
+                title: '.ep-row-v2-title strong',
+                link: { selector: 'a.ep-row-v2-link', attr: 'href' }
+            }
+        };
+
+        const parser = new GenericParser('https://newtoki1.org', rule, page1Doc);
+        const allItems = await parser.getListItems({ allPages: true });
+        const parsedNums = allItems.map(el => parser.parseListItem(el).num);
+
+        console.assert(allItems.length === 6, `전체 페이지 회차 수 불일치: ${allItems.length} (기대치: 6)`);
+        console.assert(parsedNums.join(',') === '6,5,4,3,2,1', `회차 번호 순서 불일치: ${parsedNums.join(',')}`);
+
+        if (allItems.length !== 6) {
+            throw new Error(`다중 페이지 병합 실패: ${allItems.length}개 추출됨`);
+        }
+    } finally {
+        globalThis.fetch = origFetch;
+        globalThis.DOMParser = origDOMParser;
+    }
+});
+
 // 테스트 기동
 runTests();
