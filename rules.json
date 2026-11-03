@@ -1,138 +1,249 @@
 {
-  "version": "1.26.5",
+  "version": "1.26.6",
   "rules": [
     {
       "id": "blacktoon_webtoon",
-      "name": "신형 토끼/블랙툰/SBXH 웹툰 전용 룰",
-      "_version": "1.26.5",
-      "urlPattern": ".*/webtoon/.*",
+      "name": "통합 웹툰 규칙 (신형 v2 & 뉴토끼/마나토끼 호환)",
+      "_version": "1.26.6",
+      "urlPattern": ".*/(webtoon|toon)/.*",
       "idExtraction": {
         "source": "url",
-        "regex": "\\/webtoon\\/([a-zA-Z0-9_\\-]+)"
+        "regex": "\\/(?:webtoon|toon)\\/([a-zA-Z0-9_\\-]+)"
       },
       "category": "Webtoon",
       "meta": {
-        "title": "h1.hero-v2-title",
-        "author": "div.hero-v2-author",
+        "title": [
+          "h1.hero-v2-title",
+          "div.nd-info > h1",
+          {
+            "selector": "meta[name=\"subject\"]",
+            "attr": "content"
+          },
+          ".view-title h1",
+          ".page-desc",
+          {
+            "selector": "meta[property=\"og:title\"]",
+            "attr": "content"
+          }
+        ],
+        "author": [
+          "div.hero-v2-author",
+          "div.nd-meta span:first-child",
+          {
+            "selector": ".view-content",
+            "regex": "(?:작가|저자|글작가|글)\\s*:\\s*([^ \\n\\r,·/]+)"
+          },
+          ".view-content"
+        ],
         "thumb": {
-          "selector": "div.hero-v2-thumb > img",
+          "selector": "div.hero-v2-thumb > img, div.nd-thumb img, img[itemprop=\"image\"]",
           "attr": "src"
         },
         "status": "span.pill-status",
         "tags": "div.hero-v2-tags"
       },
       "list": {
-        "container": "ul.ep-list-v2",
-        "item": "li.ep-row-v2",
-        "num": "span.ep-row-v2-no",
-        "title": ".ep-row-v2-title strong",
+        "container": "ul.ep-list-v2, .list-body, #toon_list",
+        "item": "li.ep-row-v2, li.list-item, li, #toon_list > div.card",
+        "num": [
+          "span.ep-row-v2-no",
+          ".wr-num",
+          "span.no",
+          "p"
+        ],
+        "title": [
+          ".ep-row-v2-title strong",
+          ".wr-subject a",
+          "a.item-subject",
+          "a",
+          "p"
+        ],
         "sub": {
           "selector": "span.sub",
           "regex": "\\[(.*?)\\]"
         },
         "link": {
-          "selector": "a.ep-row-v2-link",
+          "selector": "a.ep-row-v2-link, .wr-subject a, a.item-subject, a",
           "attr": "href"
         },
-        "date": "span.ep-row-v2-date"
+        "date": "span.ep-row-v2-date, .wr-date"
       },
       "viewer": {
         "fetchMethod": "iframe",
-        "imageContainer": "div.vw-imgs, main.vw-main",
+        "keyDiscovery": {
+          "regex": "data_attribute\\s*:\\s*['\"]([^'\"]+)['\"]",
+          "prefix": "data-"
+        },
+        "imageContainer": "div.vw-imgs, div.view-padding, div#toon_content_imgs, div.viewer, main.vw-main",
         "imageItem": "img",
         "lazyAttrOptions": [
           "data-src",
           "data-lazy",
           "data-original",
           "o-src",
+          "data-url",
+          "data-img",
           "src"
-        ]
+        ],
+        "seriesTitle": "div.crumb a:last-of-type, meta[property=\"og:title\"]",
+        "episodeTitle": "h1, .view-title, .vw-head-title",
+        "episodeNum": "div.crumb strong"
       }
     },
     {
       "id": "blacktoon_manhwa",
-      "name": "신형 토끼/블랙툰/SBXH 만화 전용 룰",
-      "_version": "1.26.5",
-      "urlPattern": ".*/manhwa/.*",
+      "name": "통합 만화 규칙 (신형 v2 & 마나토끼/뉴토끼 호환)",
+      "_version": "1.26.6",
+      "urlPattern": ".*/(manhwa|manga|comic)/.*",
       "idExtraction": {
         "source": "url",
-        "regex": "\\/manhwa\\/([a-zA-Z0-9_\\-]+)"
+        "regex": "\\/(?:manhwa|manga|comic)\\/([a-zA-Z0-9_\\-]+)"
       },
       "category": "Manga",
       "meta": {
-        "title": "h1.hero-v2-title",
-        "author": "div.hero-v2-author",
+        "title": [
+          "h1.hero-v2-title",
+          "div.nd-info > h1",
+          {
+            "selector": "meta[name=\"subject\"]",
+            "attr": "content"
+          },
+          ".view-title h1",
+          ".page-desc",
+          {
+            "selector": "meta[property=\"og:title\"]",
+            "attr": "content"
+          }
+        ],
+        "author": [
+          "div.hero-v2-author",
+          "div.nd-meta span:first-child",
+          {
+            "selector": ".view-content",
+            "regex": "(?:작가|저자|글작가|글)\\s*:\\s*([^ \\n\\r,·/]+)"
+          },
+          ".view-content"
+        ],
         "thumb": {
-          "selector": "div.hero-v2-thumb > img",
+          "selector": "div.hero-v2-thumb > img, div.nd-thumb img, img[itemprop=\"image\"]",
           "attr": "src"
         },
         "status": "span.pill-status",
         "tags": "div.hero-v2-tags"
       },
       "list": {
-        "container": "ul.ep-list-v2",
-        "item": "li.ep-row-v2",
-        "num": "span.ep-row-v2-no",
-        "title": ".ep-row-v2-title strong",
+        "container": "ul.ep-list-v2, .list-body, #toon_list",
+        "item": "li.ep-row-v2, li.list-item, li, #toon_list > div.card",
+        "num": [
+          "span.ep-row-v2-no",
+          ".wr-num",
+          "span.no",
+          "p"
+        ],
+        "title": [
+          ".ep-row-v2-title strong",
+          ".wr-subject a",
+          "a.item-subject",
+          "a",
+          "p"
+        ],
         "sub": {
           "selector": "span.sub",
           "regex": "\\[(.*?)\\]"
         },
         "link": {
-          "selector": "a.ep-row-v2-link",
+          "selector": "a.ep-row-v2-link, .wr-subject a, a.item-subject, a",
           "attr": "href"
         },
-        "date": "span.ep-row-v2-date"
+        "date": "span.ep-row-v2-date, .wr-date"
       },
       "viewer": {
         "fetchMethod": "iframe",
-        "imageContainer": "div.vw-imgs, main.vw-main",
+        "keyDiscovery": {
+          "regex": "data_attribute\\s*:\\s*['\"]([^'\"]+)['\"]",
+          "prefix": "data-"
+        },
+        "imageContainer": "div.vw-imgs, div.view-padding, div#toon_content_imgs, div.viewer, main.vw-main",
         "imageItem": "img",
         "lazyAttrOptions": [
           "data-src",
           "data-lazy",
           "data-original",
           "o-src",
+          "data-url",
+          "data-img",
           "src"
-        ]
+        ],
+        "seriesTitle": "div.crumb a:last-of-type, meta[property=\"og:title\"]",
+        "episodeTitle": "h1, .view-title, .vw-head-title",
+        "episodeNum": "div.crumb strong"
       }
     },
     {
       "id": "blacktoon_novel",
-      "name": "신형 토끼/블랙툰/SBXH 소설 전용 룰",
-      "_version": "1.26.5",
-      "urlPattern": ".*/novel/.*",
+      "name": "통합 소설 규칙 (신형 v2 & 북토끼/뉴토끼 호환)",
+      "_version": "1.26.6",
+      "urlPattern": ".*/(novel|book)/.*",
       "idExtraction": {
         "source": "url",
-        "regex": "\\/novel\\/([a-zA-Z0-9_\\-]+)"
+        "regex": "\\/(?:novel|book)\\/([a-zA-Z0-9_\\-]+)"
       },
       "category": "Novel",
       "meta": {
-        "title": "div.nd-info > h1, h1.hero-v2-title",
-        "author": "div.nd-meta span:first-child, div.hero-v2-author",
+        "title": [
+          "div.nd-info > h1",
+          "h1.hero-v2-title",
+          {
+            "selector": "meta[name=\"subject\"]",
+            "attr": "content"
+          },
+          ".view-title h1",
+          ".page-desc",
+          {
+            "selector": "meta[property=\"og:title\"]",
+            "attr": "content"
+          }
+        ],
+        "author": [
+          "div.nd-meta span:first-child",
+          "div.hero-v2-author",
+          {
+            "selector": ".view-content",
+            "regex": "(?:작가|저자|글작가|글)\\s*:\\s*([^ \\n\\r,·/]+)"
+          },
+          ".view-content"
+        ],
         "thumb": {
-          "selector": "div.nd-thumb img, div.hero-v2-thumb > img",
+          "selector": "div.nd-thumb img, div.hero-v2-thumb > img, img[itemprop=\"image\"]",
           "attr": "src"
         },
         "tags": "div.hero-v2-tags"
       },
       "list": {
-        "container": "ul.novel-eps, ul.ep-list-v2",
-        "item": "li",
+        "container": "ul.novel-eps, ul.ep-list-v2, .list-body",
+        "item": "li.ep-row-v2, li.list-item, li",
         "num": [
           "span.ne-num",
-          "span.ep-row-v2-no"
+          "span.ep-row-v2-no",
+          ".wr-num",
+          "span.no"
         ],
-        "title": "span.ne-title, .ep-row-v2-title strong",
+        "title": [
+          "span.ne-title",
+          ".ep-row-v2-title strong",
+          ".wr-subject a",
+          "a.item-subject",
+          "a"
+        ],
         "sub": {
           "selector": "span.sub",
           "regex": "\\[(.*?)\\]"
         },
         "link": {
-          "selector": "a",
+          "selector": "a.ep-row-v2-link, .wr-subject a, a.item-subject, a",
           "attr": "href"
         },
-        "date": "span.ne-date, span.ep-row-v2-date"
+        "date": "span.ne-date, span.ep-row-v2-date, .wr-date"
       },
       "viewer": {
         "fetchMethod": "api",
@@ -141,11 +252,11 @@
           "cookieName": "nv",
           "clientHeader": "shadow-v2"
         },
-        "seriesTitle": "div.crumb a:last-of-type",
-        "episodeTitle": "h1.ne-h1",
+        "seriesTitle": "div.crumb a:last-of-type, meta[property=\"og:title\"]",
+        "episodeTitle": "h1.ne-h1, .view-title, h1",
         "episodeNum": "div.crumb strong",
-        "novelContent": "article.novel-viewer",
-        "imageContainer": "article.novel-viewer",
+        "novelContent": "article.novel-viewer, #novel_content, .novel-epub-rendered, .theme-novel-content",
+        "imageContainer": "article.novel-viewer, #novel_content",
         "imageItem": "p",
         "lazyAttrOptions": []
       }
@@ -153,14 +264,23 @@
     {
       "id": "toki_common",
       "name": "구형 토끼 계열 (그누보드 뉴토끼/마나토끼/북토끼) 통합 규칙",
-      "_version": "1.26.5",
+      "_version": "1.26.6",
       "urlPattern": "^(?!.*(newtoki[0-9]*\\.org|sbxh[0-9]*\\.|ntk[0-9]*\\.)).*(newtoki|manatoki|comic|booktoki).*",
       "category": "Webtoon",
       "meta": {
-        "title": {
-          "selector": "meta[name=\"subject\"]",
-          "attr": "content"
-        },
+        "title": [
+          {
+            "selector": "meta[name=\"subject\"]",
+            "attr": "content"
+          },
+          "h1.hero-v2-title",
+          "div.nd-info > h1",
+          ".view-title h1",
+          {
+            "selector": "meta[property=\"og:title\"]",
+            "attr": "content"
+          }
+        ],
         "author": ".view-content",
         "thumb": {
           "selector": "img[itemprop=\"image\"]",
@@ -168,15 +288,23 @@
         }
       },
       "list": {
-        "container": ".list-body",
-        "item": "li",
+        "container": ".list-body, ul.ep-list-v2, ul.novel-eps",
+        "item": "li.list-item, li.ep-row-v2, li",
         "num": [
           ".wr-num",
-          "span.no"
+          "span.no",
+          "span.ep-row-v2-no",
+          "span.ne-num"
         ],
-        "title": "a",
+        "title": [
+          ".wr-subject a",
+          "a.item-subject",
+          ".ep-row-v2-title strong",
+          "span.ne-title",
+          "a"
+        ],
         "link": {
-          "selector": "a",
+          "selector": ".wr-subject a, a.item-subject, a.ep-row-v2-link, a",
           "attr": "href"
         }
       },
@@ -186,8 +314,9 @@
           "regex": "data_attribute\\s*:\\s*['\"]([^'\"]+)['\"]",
           "prefix": "data-"
         },
-        "imageContainer": "div.view-padding, div.viewer",
+        "imageContainer": "div.view-padding, div.vw-imgs, div.viewer",
         "imageItem": "img",
+        "novelContent": "#novel_content, article.novel-viewer",
         "lazyAttrOptions": [
           "data-src",
           "data-original",
