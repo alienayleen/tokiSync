@@ -755,22 +755,31 @@ export function initBatchWorkerController() {
             }
 
             if (!matchedId && targetUrl) {
+                const normalizeUrl = (u) => {
+                    try { return decodeURIComponent(u || '').replace(/\/+$/, ''); } catch (_) { return (u || '').replace(/\/+$/, ''); }
+                };
+                const normTarget = normalizeUrl(targetUrl);
                 const queue = getQueue();
-                const matchedItem = queue.find(item => 
+                let matchedItem = queue.find(item => 
                     (item.status === 'pending' || item.status === 'processing') && 
-                    item.episodeUrl === targetUrl
+                    normalizeUrl(item.episodeUrl) === normTarget
                 );
-                if (matchedItem && batchWorkerNonces.has(matchedItem.id)) {
+                if (!matchedItem && activeWorkers.size === 1) {
+                    const [onlyActiveId] = activeWorkers.keys();
+                    matchedItem = queue.find(item => item.id === onlyActiveId && item.status === 'processing');
+                }
+                if (matchedItem) {
                     matchedId = matchedItem.id;
                     activeWorkers.set(matchedId, sourceEvent.source);
-                    // Security: Register worker origin and generate session nonce for batch
-                    const batchNonce = registerWorkerOrigin(matchedId, 'null');
-                    batchWorkerNonces.set(matchedId, batchNonce);
-                    console.log(`[WorkerController] ♻️ URL 매칭 성공 ➡️ Window 참조 복원 갱신 (ID: ${matchedId}), 보안 논스 생성`);
+                    console.log(`[WorkerController] ♻️ URL 매칭 성공 ➡️ Window 참조 복원 갱신 (ID: ${matchedId})`);
                 }
             }
 
             if (matchedId) {
+                if (!batchWorkerNonces.has(matchedId)) {
+                    const batchNonce = registerWorkerOrigin(matchedId, 'null');
+                    batchWorkerNonces.set(matchedId, batchNonce);
+                }
                 const queue = getQueue();
                 const item = queue.find(i => i.id === matchedId);
                 

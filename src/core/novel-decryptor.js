@@ -59,7 +59,7 @@ async function resetNvCookie(cookieName) {
 }
 
 function getIdsFromUrl(url) {
-    const match = url.match(/\/novel\/(\d+)\/(\d+)/);
+    const match = url.match(/\/novel\/([^/?#]+)\/([^/?#]+)/);
     if (!match) return null;
     return { novelId: match[1], episodeId: match[2] };
 }

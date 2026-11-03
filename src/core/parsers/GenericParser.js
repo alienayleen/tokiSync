@@ -277,10 +277,21 @@ export class GenericParser extends BaseParser {
             }
         }
 
-        // 2. DOM 기반 추출 (기본)
+        // 2. DOM 기반 추출 (기본) — 쉼표 구분 컨테이너의 경우 선언 우선순위대로 탐색
         let container = iframeDocument;
         if (viewerCfg.imageContainer) {
-            container = iframeDocument.querySelector(viewerCfg.imageContainer);
+            const candidateSelectors = viewerCfg.imageContainer.split(',').map(s => s.trim()).filter(Boolean);
+            container = null;
+            for (const sel of candidateSelectors) {
+                const found = iframeDocument.querySelector(sel);
+                if (found && found.querySelectorAll(viewerCfg.imageItem || 'img').length > 0) {
+                    container = found;
+                    break;
+                }
+            }
+            if (!container) {
+                container = iframeDocument.querySelector(viewerCfg.imageContainer);
+            }
             if (!container) {
                 console.warn(`[GenericParser] 지정된 imageContainer(${viewerCfg.imageContainer})를 DOM에서 찾지 못했습니다.`);
                 return [];

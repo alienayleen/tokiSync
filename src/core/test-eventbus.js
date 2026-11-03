@@ -1306,5 +1306,51 @@ test('EVT에 NOTIFY_CONFIRM, DOWNLOAD_DONE, VERIFY_RESULT, TEST_RESULT dead cons
     }
 });
 
+
+// ── newtoki1.org / sbxh9.com 및 자율 DOM 추론(AutoDomDiscoverer) 검증 ──
+test('newtoki1.org 및 sbxh9.com URL이 구형 toki_common에 가로채이지 않고 올바른 v2 규칙 및 자율 DOM 추론으로 매칭되어야 합니다.', async () => {
+    const { RuleManager } = await import('./parsers/RuleManager.js');
+    const { AutoDomDiscoverer } = await import('./parsers/AutoDomDiscoverer.js');
+
+    const m1 = await RuleManager.matchRule('https://newtoki1.org/webtoon/11267');
+    const m2 = await RuleManager.matchRule('https://newtoki1.org/manhwa/25273/u-mr85rzc3-jsxe');
+    const m3 = await RuleManager.matchRule('https://sbxh9.com/novel/20');
+    const m4 = await RuleManager.matchRule('https://manatoki468.net/comic/12345');
+
+    console.assert(m1 && m1.id === 'blacktoon_webtoon', `newtoki1.org/webtoon 매칭 오류: ${m1?.id}`);
+    console.assert(m2 && m2.id === 'blacktoon_manhwa', `newtoki1.org/manhwa 매칭 오류: ${m2?.id}`);
+    console.assert(m3 && m3.id === 'blacktoon_novel', `sbxh9.com/novel 매칭 오류: ${m3?.id}`);
+    console.assert(m4 && m4.id === 'toki_common', `manatoki468.net/comic 매칭 오류: ${m4?.id}`);
+
+    if (!m1 || m1.id !== 'blacktoon_webtoon' || !m2 || m2.id !== 'blacktoon_manhwa' || !m3 || m3.id !== 'blacktoon_novel') {
+        throw new Error('newtoki1.org / sbxh9.com 규칙 매칭 실패');
+    }
+
+    // 미등록 신규 도메인에 대한 AutoDomDiscoverer 휴리스틱 추론 검증
+    const mockDoc = {
+        URL: 'https://unknown-toon-site99.org/webtoon/9988',
+        querySelector(sel) {
+            if (sel === 'h1.hero-v2-title') return { textContent: '테스트 웹툰' };
+            if (sel === 'ul.ep-list-v2') {
+                return {
+                    querySelectorAll(itemSel) {
+                        return itemSel === 'li.ep-row-v2' ? [{}, {}, {}] : [];
+                    }
+                };
+            }
+            return null;
+        },
+        querySelectorAll() { return []; }
+    };
+
+    const discovered = AutoDomDiscoverer.discover(mockDoc, mockDoc.URL);
+    console.assert(discovered !== null && discovered._autoDiscovered === true, 'AutoDomDiscoverer가 신규 도메인 구조를 추론하지 못함');
+    console.assert(discovered.list.container === 'ul.ep-list-v2', `추론된 컨테이너 불일치: ${discovered?.list?.container}`);
+
+    if (!discovered || discovered.list.container !== 'ul.ep-list-v2') {
+        throw new Error('AutoDomDiscoverer 휴리스틱 추론 실패');
+    }
+});
+
 // 테스트 기동
 runTests();

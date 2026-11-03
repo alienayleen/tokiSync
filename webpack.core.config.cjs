@@ -20,6 +20,8 @@ const METADATA_MAIN = `// ==UserScript==
 // @match        *://*/*toon/*
 // @include      *://*toki*/*
 // @include      *://*toon*/*
+// @include      *://*sbxh*/*
+// @include      *://*ntk*/*
 // @match        https://script.google.com/*
 // @match        https://*.github.io/tokiSync/*
 // @match        https://alienayleen.github.io/tokiSync/*

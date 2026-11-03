@@ -1,3 +1,4 @@
+import { AutoDomDiscoverer } from '../parsers/AutoDomDiscoverer.js';
 /**
  * FormRuleEditor Module for TokiSync
  * Specialist UI for managing parsing rules with a sleek Form-Tree Hybrid interface.
@@ -77,6 +78,7 @@ export class FormRuleEditor {
                 <div class="toki-modal-header">
                     <div class="toki-modal-title">📝 간편 규칙 편집기 (Form Editor) <span class="toki-text-xs">v${scriptVer}</span></div>
                     <div class="toki-flex-row-8">
+                        <button class="toki-btn-rule" id="form-btn-autodiscover" title="정규식/스크립트 없이 현재 페이지 DOM 구조를 자동 분석하여 규칙 생성">🤖 자동 구조 추론</button>
                         <button class="toki-btn-rule" id="form-btn-export">📤 내보내기</button>
                         <button class="toki-btn-rule" id="form-btn-import">📥 가져오기</button>
                         <button class="toki-btn-rule toki-btn-inspector" id="form-btn-inspector">🧬 DOM Inspector</button>
@@ -986,6 +988,38 @@ export class FormRuleEditor {
         this.overlay.querySelector('#form-btn-save').onclick = () => this._saveRules();
 
         // Export & Import
+        const autoBtn = this.overlay.querySelector('#form-btn-autodiscover');
+        if (autoBtn) {
+            autoBtn.onclick = () => {
+                const targetDoc = (typeof window !== 'undefined' && window.opener && !window.opener.closed) ? window.opener.document : document;
+                const targetUrl = (typeof window !== 'undefined' && window.opener && !window.opener.closed) ? window.opener.location.href : window.location.href;
+                const autoRule = AutoDomDiscoverer.discover(targetDoc, targetUrl);
+                if (!autoRule) {
+                    const win = doc.defaultView || window;
+                    win.alert('현재 페이지에서 웹툰/만화/소설 목록 또는 뷰어 구조를 찾을 수 없습니다. 작품 목록이나 뷰어 페이지에서 실행해 주세요.');
+                    return;
+                }
+                const existingIdx = this.rules.findIndex(r => r.id === autoRule.id);
+                if (existingIdx !== -1) {
+                    this.rules[existingIdx] = autoRule;
+                    this.currentRuleIndex = existingIdx;
+                } else {
+                    this.rules.unshift(autoRule);
+                    this.currentRuleIndex = 0;
+                }
+                const selector = this.overlay.querySelector('#form-rule-selector');
+                if (selector) {
+                    selector.innerHTML = `
+                        ${this.rules.map((r, i) => `<option value="${i}">${r.name} (${r.id})</option>`).join('')}
+                        <option value="new">+ 신규 규칙 추가</option>
+                    `;
+                    selector.value = String(this.currentRuleIndex);
+                }
+                this.loadRuleIntoForm();
+                this._saveRules();
+            };
+        }
+
         this.overlay.querySelector('#form-btn-export').onclick = () => {
             const blob = new Blob([JSON.stringify(this.rules, null, 2)], {type: 'application/json'});
             const url = URL.createObjectURL(blob);

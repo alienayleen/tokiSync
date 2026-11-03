@@ -35,7 +35,7 @@ export class EpubBuilder {
             const zip = new JSZip();
             const title = escapeXml(metadata.title || "Unknown Title");
             const author = escapeXml(metadata.author || "Unknown Author");
-            const uid = "urn:uuid:" + (crypto.randomUUID ? crypto.randomUUID() : Date.now());
+            const uid = "urn:uuid:" + ((typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : Date.now());
 
             // 1. mimetype (must be first, uncompressed)
             zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
