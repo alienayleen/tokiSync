@@ -295,6 +295,10 @@ export class LogBox {
                 `;
             }
             if (queueSection) queueSection.style.display = 'none';
+            const dlActions = doc.getElementById('toki-download-actions');
+            const inlineProgress = doc.getElementById('toki-inline-progress');
+            if (dlActions) dlActions.style.display = 'block';
+            if (inlineProgress) inlineProgress.style.display = 'none';
             return;
         }
 

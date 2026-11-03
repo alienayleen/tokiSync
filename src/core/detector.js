@@ -19,22 +19,27 @@ export async function detectSite(doc = (typeof document !== 'undefined' ? docume
         }
     }
 
+    // URL 및 DOM 기반 실제 카테고리 추론 (웹툰/만화 = 이미지 CBZ, 소설 = 텍스트 EPUB/TXT 자동 판별 보장)
+    const inferredCategory = AutoDomDiscoverer.inferCategory(doc, url);
+
     // 1. Dynamic Rule Matching
     const matchedRule = await RuleManager.matchRule(url);
     if (matchedRule) {
-        // 매칭된 규칙이 현재 페이지의 실제 DOM 구조와 호환되는지 검증
         if (!doc || AutoDomDiscoverer.isRuleCompatibleWithDom(matchedRule, doc)) {
+            const effectiveCategory = /\/(novel|book|webtoon|toon|manhwa|manga|comic)(\/|\?|$)/i.test(url)
+                ? inferredCategory
+                : (matchedRule.category || inferredCategory || 'Webtoon');
             return { 
                 site: 'generic', 
                 protocolDomain, 
-                matchedRule,
-                category: matchedRule.category || 'Webtoon'
+                matchedRule: { ...matchedRule, category: effectiveCategory },
+                category: effectiveCategory
             };
         }
         console.warn(`[TokiSync Detector] ⚠️ 규칙(${matchedRule.id})이 URL과 매칭되었으나 실제 DOM 구조와 불일치합니다. 자율 DOM 구조 추론 엔진을 가동합니다.`);
     }
 
-    // 2. Heuristic DOM Auto-Discovery Fallback (정규식/수동 규칙 없이도 사이트 구조 자동 해석)
+    // 2. Heuristic DOM Auto-Discovery Fallback
     if (doc) {
         const autoRule = AutoDomDiscoverer.discover(doc, url);
         if (autoRule) {
@@ -43,7 +48,7 @@ export async function detectSite(doc = (typeof document !== 'undefined' ? docume
                 site: 'generic',
                 protocolDomain,
                 matchedRule: autoRule,
-                category: autoRule.category || 'Webtoon'
+                category: autoRule.category || inferredCategory || 'Webtoon'
             };
         }
     }

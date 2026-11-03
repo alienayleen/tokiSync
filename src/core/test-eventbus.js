@@ -1320,7 +1320,7 @@ test('newtoki1.org 및 sbxh9.com URL이 구형 toki_common에 가로채이지 �
     console.assert(m1 && m1.id === 'blacktoon_webtoon', `newtoki1.org/webtoon 매칭 오류: ${m1?.id}`);
     console.assert(m2 && m2.id === 'blacktoon_manhwa', `newtoki1.org/manhwa 매칭 오류: ${m2?.id}`);
     console.assert(m3 && m3.id === 'blacktoon_novel', `sbxh9.com/novel 매칭 오류: ${m3?.id}`);
-    console.assert(m4 && m4.id === 'toki_common', `manatoki468.net/comic 매칭 오류: ${m4?.id}`);
+    console.assert(m4 && m4.id === 'blacktoon_manhwa', `manatoki468.net/comic 매칭 오류: ${m4?.id}`);
 
     if (!m1 || m1.id !== 'blacktoon_webtoon' || !m2 || m2.id !== 'blacktoon_manhwa' || !m3 || m3.id !== 'blacktoon_novel') {
         throw new Error('newtoki1.org / sbxh9.com 규칙 매칭 실패');
@@ -1358,6 +1358,11 @@ test('GenericParser.getListItems()는 페이지가 1, 2, 3 등으로 나뉘어 �
     const { GenericParser } = await import('./parsers/GenericParser.js');
     const origFetch = globalThis.fetch;
     const origDOMParser = globalThis.DOMParser;
+    const origGMGet = globalThis.GM_getValue;
+    const origGMSet = globalThis.GM_setValue;
+    const qStore = new Map();
+    globalThis.GM_getValue = (k, d) => qStore.has(k) ? qStore.get(k) : d;
+    globalThis.GM_setValue = (k, v) => qStore.set(k, v);
 
     try {
         const makeMockListDoc = (url, epNumbers, maxPage = 3) => {
@@ -1436,6 +1441,112 @@ test('GenericParser.getListItems()는 페이지가 1, 2, 3 등으로 나뉘어 �
     } finally {
         globalThis.fetch = origFetch;
         globalThis.DOMParser = origDOMParser;
+        globalThis.GM_getValue = origGMGet;
+        globalThis.GM_setValue = origGMSet;
+    }
+});
+
+
+// ── newtoki1.org /__q/<base64> 페이지네이션, 작품명 정제 및 합본 큐 자동 초기화 검증 ──
+test('newtoki1.org의 /__q/<base64> 페이지네이션과 문서 제목(작품명) 정제, 그리고 합본 완료 후 대기열 자동 초기화가 정상 동작해야 합니다.', async () => {
+    const { GenericParser } = await import('./parsers/GenericParser.js');
+    const { addEpisodesToQueue, getQueue, removeSeriesFromQueue } = await import('./queue.js');
+    const { EventBus, EVT } = await import('./EventBus.js');
+
+    const origFetch = globalThis.fetch;
+    const origDOMParser = globalThis.DOMParser;
+    const origGMGet = globalThis.GM_getValue;
+    const origGMSet = globalThis.GM_setValue;
+    const qStore = new Map();
+    globalThis.GM_getValue = (k, d) => qStore.has(k) ? qStore.get(k) : d;
+    globalThis.GM_setValue = (k, v) => qStore.set(k, v);
+
+    try {
+        // 1. 문서 제목(작품명) 정제 및 /__q/<base64> 페이지네이션 검증
+        const makeGnuboardDoc = (url, epNums) => {
+            const items = epNums.map(n => ({
+                querySelector(sel) {
+                    if (sel === '.wr-num') return { innerText: String(n), textContent: String(n) };
+                    if (sel === '.wr-subject a' || sel === 'a') {
+                        return {
+                            innerText: `전당 (${n})`,
+                            textContent: `전당 (${n})`,
+                            getAttribute: (a) => a === 'href' ? `https://newtoki1.org/novel/20/${n}` : null
+                        };
+                    }
+                    return null;
+                },
+                matches: () => false
+            }));
+            const container = {
+                querySelectorAll(sel) {
+                    return (sel === 'li.list-item' || sel === 'li') ? items : [];
+                }
+            };
+            // cGFnZT0y == base64("page=2")
+            const epPagAnchor = {
+                getAttribute: (a) => a === 'href' ? '/novel/20/__q/cGFnZT0y' : null,
+                closest: () => null
+            };
+            // 댓글 페이지네이션 (?cpage=2) - 무시되어야 함
+            const commentPagAnchor = {
+                getAttribute: (a) => a === 'href' ? '/novel/20?cpage=2#bo_vc' : null,
+                closest: (sel) => sel.includes('bo_vc') ? {} : null
+            };
+            return {
+                URL: url,
+                title: '게임 속 바바리안으로 살아남기 - 북토끼 소설 - 뉴토끼',
+                querySelector(sel) {
+                    if (sel === '.list-body') return container;
+                    return null;
+                },
+                querySelectorAll(sel) {
+                    if (sel === '.list-body') return [container];
+                    if (sel.includes('__q/') || sel.includes('pagination')) return [epPagAnchor, commentPagAnchor];
+                    return [];
+                }
+            };
+        };
+
+        const docP1 = makeGnuboardDoc('https://newtoki1.org/novel/20', [4, 3]);
+        const docP2 = makeGnuboardDoc('https://newtoki1.org/novel/20/__q/cGFnZT0y', [2, 1]);
+
+        globalThis.fetch = async (url) => ({ ok: true, text: async () => url });
+        globalThis.DOMParser = class {
+            parseFromString(htmlUrl) {
+                return htmlUrl.includes('cGFnZT0y') ? docP2 : docP1;
+            }
+        };
+
+        const { RuleManager } = await import('./parsers/RuleManager.js');
+        const rule = await RuleManager.matchRule('https://newtoki1.org/novel/20');
+        const parser = new GenericParser('https://newtoki1.org', rule, docP1);
+
+        const seriesTitle = parser.getSeriesTitle();
+        console.assert(seriesTitle === '게임 속 바바리안으로 살아남기', `작품명 정제 오류: "${seriesTitle}"`);
+        if (seriesTitle !== '게임 속 바바리안으로 살아남기') {
+            throw new Error(`작품명 추출 실패: ${seriesTitle}`);
+        }
+
+        const allItems = await parser.getListItems({ allPages: true });
+        console.assert(allItems.length === 4, `/__q/ 다중 페이지 병합 실패: ${allItems.length}개 (기대치: 4)`);
+        if (allItems.length !== 4) {
+            throw new Error(`/__q/ 다중 페이지 병합 실패: ${allItems.length}`);
+        }
+
+        // 2. 합본 완료 후 removeSeriesFromQueue 호출 시 대기열이 깔끔히 비워지는지 검증
+        addEpisodesToQueue([{ title: '1화', url: 'https://newtoki1.org/novel/20/1', episodeNum: '1' }], seriesTitle);
+        console.assert(getQueue().length > 0, '큐에 항목이 추가되지 않음');
+        removeSeriesFromQueue(seriesTitle);
+        console.assert(getQueue().length === 0, '합본 완료 후 큐가 비워지지 않음');
+        if (getQueue().length !== 0) {
+            throw new Error('removeSeriesFromQueue가 대기열을 정리하지 못함');
+        }
+    } finally {
+        globalThis.fetch = origFetch;
+        globalThis.DOMParser = origDOMParser;
+        globalThis.GM_getValue = origGMGet;
+        globalThis.GM_setValue = origGMSet;
     }
 });
 

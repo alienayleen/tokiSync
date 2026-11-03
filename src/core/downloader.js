@@ -13,7 +13,7 @@ import { startSilentAudio, stopSilentAudio } from './anti_sleep.js';
 import { fetchHistory, refreshCacheAfterUpload, getBooksByCacheId, initUpdateUploadViaGASRelay, getMergeIndexFragment } from './gas.js';
 import { fetchHistoryDirect, checkSingleHistoryDirect, getOAuthToken, getOrCreateFolder } from './network.js';
 import { fetchNovelText, fetchComicImages, closeActiveWorker, initBatchWorkerController } from './worker-controller.js';
-import { addEpisodesToQueue, initQueueScheduler, activeWorkers, WORKER_STAGE, updateQueueItem, getQueue, removeQueueItem, getQueueItemId, clearQueue, stopAllWorkers } from './queue.js';
+import { addEpisodesToQueue, initQueueScheduler, activeWorkers, WORKER_STAGE, updateQueueItem, getQueue, removeQueueItem, getQueueItemId, clearQueue, stopAllWorkers, removeSeriesFromQueue, removeCompletedAndFailedItems } from './queue.js';
 
 async function shouldSkipEpisode({
     numStr,
@@ -192,32 +192,18 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
     const config = getConfig();
     let isAsyncDelegate = false;
     
-    // --- 🚨 대기열 프리체크 스마트 필터 및 UI 위임 ---
+    // --- 🚨 대기열 스마트 자동 정리 및 동시 작업(Multi-Series Queue) 지원 ---
     const currentQueue = getQueue();
     if (currentQueue.length > 0) {
-        const hasFailed = currentQueue.some(item => item.status === 'failed');
         const hasPendingOrProcessing = currentQueue.some(item => item.status === 'pending' || item.status === 'processing');
-
-        if (hasFailed || hasPendingOrProcessing) {
-            const confirmNew = confirm(
-                "⚠️ 대기열에 완료되지 않았거나 실패한 수집 항목이 남아있습니다.\n\n" +
-                "[확인] 기존 대기열 초기화 후 새로 다운로드 시작\n" +
-                "[취소] 다운로드 요청 취소 및 대기열 수동 관리 창 열기"
-            );
-            
-            if (confirmNew) {
-                console.log('[TokiSync] 사용자의 승인으로 기존 대기열을 초기화합니다.');
-                stopAllWorkers();
-                clearQueue();
-            } else {
-                console.log('[TokiSync] 다운로드 요청을 취소하고 대기열 관리 창을 엽니다.');
-                showProgressModal();
-                return;
-            }
-        } else {
-            // 온전히 완료된 큐만 있다면 묻지 않고 자동 초기화
-            console.log('[TokiSync] 이전 수집이 정상 완료되었으므로 대기열을 자동 초기화합니다.');
+        if (!hasPendingOrProcessing) {
+            // 진행 중인 작업이 없으면 이전 완료/실패 기록을 묻지 않고 자동 초기화
+            console.log('[TokiSync] 활성 작업이 없으므로 이전 대기열 내역을 자동 초기화합니다.');
             clearQueue();
+        } else {
+            // 다른 탭/작품이 수집 중인 경우: 완료·실패된 잔여 항목만 정리하고 새 작품을 대기열에 병합 추가 (동시 작업 허용)
+            removeCompletedAndFailedItems();
+            console.log('[TokiSync] ➕ 진행 중인 작업 감지 -> 기존 작업을 중단하지 않고 대기열에 새 작업을 추가합니다.');
         }
     }
     // ------------------------------------------------
@@ -606,7 +592,7 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
 
             // 팝업 차단 회피용 동기적 자식 창 사전 오픈 (Pre-open)
             const MAX_CONCURRENCY = 1;
-            const openCount = Math.min(MAX_CONCURRENCY, pendingEpisodes.length);
+            const openCount = activeWorkers.size > 0 ? 0 : Math.min(MAX_CONCURRENCY, pendingEpisodes.length);
             logger.log(`🛡️ 팝업 차단 필터 우회를 위한 자식 창 ${openCount}개 선제 확보(Pre-open) 중...`, 'Queue');
 
             const width = 400;
@@ -638,7 +624,7 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
                 }
             }
 
-            if (freshlyOpened.length > 0) {
+            if (freshlyOpened.length > 0 || activeWorkers.size > 0) {
                 logger.success(`🚦 멀티큐 스케줄러 기동 완료. 릴레이 루프 활성화.`, 'Queue');
                 initBatchWorkerController();
                 initQueueScheduler();
@@ -732,6 +718,10 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
                 const errorMsg = err.message || "알 수 없는 오류";
                 logger.error(`항목 처리 실패 (${item.title}): ${errorMsg}`, 'Downloader');
                 
+                // 실패 시 큐 아이템 상태도 failed로 즉시 동기화하여 pending/processing 고착 방지
+                const failedId = getQueueItemId(seriesTitle, item.num ? item.num.toString() : '');
+                EventBus.emit(EVT.QUEUE_ITEM_UPDATE, { id: failedId, updates: { status: 'failed', stage: WORKER_STAGE.FAILED, errorMsg } });
+
                 // [v1.8.1] 실패 내역 저장
                 failedEpisodes.push({
                     num: item.num,
@@ -788,13 +778,18 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
                             : (item.num || '').toString();
                     });
 
-                    // 2. Legacy {number} & {rawNumber} fallback
+                    // 2. Legacy {number} & {rawNumber} fallback + 작품명(문서 이름) 자동 포함 보장
                     const legacyPaddedNum = (item.num || '').toString().padStart(4, '0');
+                    const rawChapTitle = (chapterTitle || '').trim();
+                    const hasSeries = !cleanSeries || cleanSeries === 'UnknownSeries' || rawChapTitle.includes(cleanSeries);
+                    const effectiveChapTitle = (!template.includes('{series}') && !hasSeries)
+                        ? `${cleanSeries} ${rawChapTitle}`.trim()
+                        : rawChapTitle;
                     fullFilename = fullFilename
                         .replace(/\{number\}/g, legacyPaddedNum)
                         .replace(/\{rawNumber\}/g, (item.num || '').toString())
                         .replace(/\{series\}/g, cleanSeries)
-                        .replace(/\{title\}/g, chapterTitle || '');
+                        .replace(/\{title\}/g, effectiveChapTitle);
                 } else {
                     // drive (레거시): 기존 명명법인 `[ID] 작품명 0001화` 강제 적용
                     const paddedNum = (item.num || '').toString().padStart(4, '0');
@@ -975,6 +970,8 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
                     });
                     
                     logger.success(`✅ 단행본 합본 저장 완료: ${finalFilename}`);
+                    removeSeriesFromQueue(seriesTitle);
+                    EventBus.emit(EVT.UPDATE_PROGRESS);
                 } catch (epubErr) {
                     logger.error(`단행본 빌드 실패: ${epubErr.message}`);
                 }
@@ -1007,6 +1004,12 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
         alert(`다운로드 중 오류 발생:\n${error.message}`);
     } finally {
         if (!isAsyncDelegate) {
+            // 동기 루프(단행본 합본 등)가 종료되면 잔여 pending/processing 상태를 자동 정리하고 다운로드 버튼 UI를 즉시 복원
+            const remQueue = getQueue();
+            if (remQueue.length > 0 && !remQueue.some(i => i.status === 'processing')) {
+                clearQueue();
+            }
+            EventBus.emit(EVT.UPDATE_PROGRESS);
             // Auto-stop Anti-Sleep mode
             stopSilentAudio();
             logger.log('[Anti-Sleep] 백그라운드 모드 자동 종료');

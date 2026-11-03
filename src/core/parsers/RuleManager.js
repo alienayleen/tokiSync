@@ -5,144 +5,254 @@ import { CFG_PARSER_RULES } from '../config.js';
  * Manages parsing rules from built-in templates and user definitions.
  */
 export class RuleManager {
-    // Built-in sample rules as fallback/templates (Offline Seeding)
     static get _version() {
-        return typeof __SCRIPT_VERSION__ !== 'undefined' ? __SCRIPT_VERSION__ : '1.26.5';
+        return typeof __SCRIPT_VERSION__ !== 'undefined' ? __SCRIPT_VERSION__ : '1.26.6';
     }
 
     static #builtInRules = [
         {
                 "id": "blacktoon_webtoon",
-                "name": "신형 토끼/블랙툰/SBXH 웹툰 전용 룰",
-                "_version": "1.26.5",
-                "urlPattern": ".*/webtoon/.*",
+                "name": "통합 웹툰 규칙 (신형 v2 & 뉴토끼/마나토끼 호환)",
+                "_version": "1.26.6",
+                "urlPattern": ".*/(webtoon|toon)/.*",
                 "idExtraction": {
                         "source": "url",
-                        "regex": "\\/webtoon\\/([a-zA-Z0-9_\\-]+)"
+                        "regex": "\\/(?:webtoon|toon)\\/([a-zA-Z0-9_\\-]+)"
                 },
                 "category": "Webtoon",
                 "meta": {
-                        "title": "h1.hero-v2-title",
-                        "author": "div.hero-v2-author",
+                        "title": [
+                                "h1.hero-v2-title",
+                                "div.nd-info > h1",
+                                {
+                                        "selector": "meta[name=\"subject\"]",
+                                        "attr": "content"
+                                },
+                                ".view-title h1",
+                                ".page-desc",
+                                {
+                                        "selector": "meta[property=\"og:title\"]",
+                                        "attr": "content"
+                                }
+                        ],
+                        "author": [
+                                "div.hero-v2-author",
+                                "div.nd-meta span:first-child",
+                                {
+                                        "selector": ".view-content",
+                                        "regex": "(?:작가|저자|글작가|글)\\s*:\\s*([^ \\n\\r,·/]+)"
+                                },
+                                ".view-content"
+                        ],
                         "thumb": {
-                                "selector": "div.hero-v2-thumb > img",
+                                "selector": "div.hero-v2-thumb > img, div.nd-thumb img, img[itemprop=\"image\"]",
                                 "attr": "src"
                         },
                         "status": "span.pill-status",
                         "tags": "div.hero-v2-tags"
                 },
                 "list": {
-                        "container": "ul.ep-list-v2",
-                        "item": "li.ep-row-v2",
-                        "num": "span.ep-row-v2-no",
-                        "title": ".ep-row-v2-title strong",
+                        "container": "ul.ep-list-v2, .list-body, #toon_list",
+                        "item": "li.ep-row-v2, li.list-item, li, #toon_list > div.card",
+                        "num": [
+                                "span.ep-row-v2-no",
+                                ".wr-num",
+                                "span.no",
+                                "p"
+                        ],
+                        "title": [
+                                ".ep-row-v2-title strong",
+                                ".wr-subject a",
+                                "a.item-subject",
+                                "a",
+                                "p"
+                        ],
                         "sub": {
                                 "selector": "span.sub",
                                 "regex": "\\[(.*?)\\]"
                         },
                         "link": {
-                                "selector": "a.ep-row-v2-link",
+                                "selector": "a.ep-row-v2-link, .wr-subject a, a.item-subject, a",
                                 "attr": "href"
                         },
-                        "date": "span.ep-row-v2-date"
+                        "date": "span.ep-row-v2-date, .wr-date"
                 },
                 "viewer": {
                         "fetchMethod": "iframe",
-                        "imageContainer": "div.vw-imgs, main.vw-main",
+                        "keyDiscovery": {
+                                "regex": "data_attribute\\s*:\\s*['\"]([^'\"]+)['\"]",
+                                "prefix": "data-"
+                        },
+                        "imageContainer": "div.vw-imgs, div.view-padding, div#toon_content_imgs, div.viewer, main.vw-main",
                         "imageItem": "img",
                         "lazyAttrOptions": [
                                 "data-src",
                                 "data-lazy",
                                 "data-original",
                                 "o-src",
+                                "data-url",
+                                "data-img",
                                 "src"
-                        ]
+                        ],
+                        "seriesTitle": "div.crumb a:last-of-type, meta[property=\"og:title\"]",
+                        "episodeTitle": "h1, .view-title, .vw-head-title",
+                        "episodeNum": "div.crumb strong"
                 }
         },
         {
                 "id": "blacktoon_manhwa",
-                "name": "신형 토끼/블랙툰/SBXH 만화 전용 룰",
-                "_version": "1.26.5",
-                "urlPattern": ".*/manhwa/.*",
+                "name": "통합 만화 규칙 (신형 v2 & 마나토끼/뉴토끼 호환)",
+                "_version": "1.26.6",
+                "urlPattern": ".*/(manhwa|manga|comic)/.*",
                 "idExtraction": {
                         "source": "url",
-                        "regex": "\\/manhwa\\/([a-zA-Z0-9_\\-]+)"
+                        "regex": "\\/(?:manhwa|manga|comic)\\/([a-zA-Z0-9_\\-]+)"
                 },
                 "category": "Manga",
                 "meta": {
-                        "title": "h1.hero-v2-title",
-                        "author": "div.hero-v2-author",
+                        "title": [
+                                "h1.hero-v2-title",
+                                "div.nd-info > h1",
+                                {
+                                        "selector": "meta[name=\"subject\"]",
+                                        "attr": "content"
+                                },
+                                ".view-title h1",
+                                ".page-desc",
+                                {
+                                        "selector": "meta[property=\"og:title\"]",
+                                        "attr": "content"
+                                }
+                        ],
+                        "author": [
+                                "div.hero-v2-author",
+                                "div.nd-meta span:first-child",
+                                {
+                                        "selector": ".view-content",
+                                        "regex": "(?:작가|저자|글작가|글)\\s*:\\s*([^ \\n\\r,·/]+)"
+                                },
+                                ".view-content"
+                        ],
                         "thumb": {
-                                "selector": "div.hero-v2-thumb > img",
+                                "selector": "div.hero-v2-thumb > img, div.nd-thumb img, img[itemprop=\"image\"]",
                                 "attr": "src"
                         },
                         "status": "span.pill-status",
                         "tags": "div.hero-v2-tags"
                 },
                 "list": {
-                        "container": "ul.ep-list-v2",
-                        "item": "li.ep-row-v2",
-                        "num": "span.ep-row-v2-no",
-                        "title": ".ep-row-v2-title strong",
+                        "container": "ul.ep-list-v2, .list-body, #toon_list",
+                        "item": "li.ep-row-v2, li.list-item, li, #toon_list > div.card",
+                        "num": [
+                                "span.ep-row-v2-no",
+                                ".wr-num",
+                                "span.no",
+                                "p"
+                        ],
+                        "title": [
+                                ".ep-row-v2-title strong",
+                                ".wr-subject a",
+                                "a.item-subject",
+                                "a",
+                                "p"
+                        ],
                         "sub": {
                                 "selector": "span.sub",
                                 "regex": "\\[(.*?)\\]"
                         },
                         "link": {
-                                "selector": "a.ep-row-v2-link",
+                                "selector": "a.ep-row-v2-link, .wr-subject a, a.item-subject, a",
                                 "attr": "href"
                         },
-                        "date": "span.ep-row-v2-date"
+                        "date": "span.ep-row-v2-date, .wr-date"
                 },
                 "viewer": {
                         "fetchMethod": "iframe",
-                        "imageContainer": "div.vw-imgs, main.vw-main",
+                        "keyDiscovery": {
+                                "regex": "data_attribute\\s*:\\s*['\"]([^'\"]+)['\"]",
+                                "prefix": "data-"
+                        },
+                        "imageContainer": "div.vw-imgs, div.view-padding, div#toon_content_imgs, div.viewer, main.vw-main",
                         "imageItem": "img",
                         "lazyAttrOptions": [
                                 "data-src",
                                 "data-lazy",
                                 "data-original",
                                 "o-src",
+                                "data-url",
+                                "data-img",
                                 "src"
-                        ]
+                        ],
+                        "seriesTitle": "div.crumb a:last-of-type, meta[property=\"og:title\"]",
+                        "episodeTitle": "h1, .view-title, .vw-head-title",
+                        "episodeNum": "div.crumb strong"
                 }
         },
         {
                 "id": "blacktoon_novel",
-                "name": "신형 토끼/블랙툰/SBXH 소설 전용 룰",
-                "_version": "1.26.5",
-                "urlPattern": ".*/novel/.*",
+                "name": "통합 소설 규칙 (신형 v2 & 북토끼/뉴토끼 호환)",
+                "_version": "1.26.6",
+                "urlPattern": ".*/(novel|book)/.*",
                 "idExtraction": {
                         "source": "url",
-                        "regex": "\\/novel\\/([a-zA-Z0-9_\\-]+)"
+                        "regex": "\\/(?:novel|book)\\/([a-zA-Z0-9_\\-]+)"
                 },
                 "category": "Novel",
                 "meta": {
-                        "title": "div.nd-info > h1, h1.hero-v2-title",
-                        "author": "div.nd-meta span:first-child, div.hero-v2-author",
+                        "title": [
+                                "div.nd-info > h1",
+                                "h1.hero-v2-title",
+                                {
+                                        "selector": "meta[name=\"subject\"]",
+                                        "attr": "content"
+                                },
+                                ".view-title h1",
+                                ".page-desc",
+                                {
+                                        "selector": "meta[property=\"og:title\"]",
+                                        "attr": "content"
+                                }
+                        ],
+                        "author": [
+                                "div.nd-meta span:first-child",
+                                "div.hero-v2-author",
+                                {
+                                        "selector": ".view-content",
+                                        "regex": "(?:작가|저자|글작가|글)\\s*:\\s*([^ \\n\\r,·/]+)"
+                                },
+                                ".view-content"
+                        ],
                         "thumb": {
-                                "selector": "div.nd-thumb img, div.hero-v2-thumb > img",
+                                "selector": "div.nd-thumb img, div.hero-v2-thumb > img, img[itemprop=\"image\"]",
                                 "attr": "src"
                         },
                         "tags": "div.hero-v2-tags"
                 },
                 "list": {
-                        "container": "ul.novel-eps, ul.ep-list-v2",
-                        "item": "li",
+                        "container": "ul.novel-eps, ul.ep-list-v2, .list-body",
+                        "item": "li.ep-row-v2, li.list-item, li",
                         "num": [
                                 "span.ne-num",
-                                "span.ep-row-v2-no"
+                                "span.ep-row-v2-no",
+                                ".wr-num",
+                                "span.no"
                         ],
-                        "title": "span.ne-title, .ep-row-v2-title strong",
+                        "title": [
+                                "span.ne-title",
+                                ".ep-row-v2-title strong",
+                                ".wr-subject a",
+                                "a.item-subject",
+                                "a"
+                        ],
                         "sub": {
                                 "selector": "span.sub",
                                 "regex": "\\[(.*?)\\]"
                         },
                         "link": {
-                                "selector": "a",
+                                "selector": "a.ep-row-v2-link, .wr-subject a, a.item-subject, a",
                                 "attr": "href"
                         },
-                        "date": "span.ne-date, span.ep-row-v2-date"
+                        "date": "span.ne-date, span.ep-row-v2-date, .wr-date"
                 },
                 "viewer": {
                         "fetchMethod": "api",
@@ -151,11 +261,11 @@ export class RuleManager {
                                 "cookieName": "nv",
                                 "clientHeader": "shadow-v2"
                         },
-                        "seriesTitle": "div.crumb a:last-of-type",
-                        "episodeTitle": "h1.ne-h1",
+                        "seriesTitle": "div.crumb a:last-of-type, meta[property=\"og:title\"]",
+                        "episodeTitle": "h1.ne-h1, .view-title, h1",
                         "episodeNum": "div.crumb strong",
-                        "novelContent": "article.novel-viewer",
-                        "imageContainer": "article.novel-viewer",
+                        "novelContent": "article.novel-viewer, #novel_content, .novel-epub-rendered, .theme-novel-content",
+                        "imageContainer": "article.novel-viewer, #novel_content",
                         "imageItem": "p",
                         "lazyAttrOptions": []
                 }
@@ -163,14 +273,23 @@ export class RuleManager {
         {
                 "id": "toki_common",
                 "name": "구형 토끼 계열 (그누보드 뉴토끼/마나토끼/북토끼) 통합 규칙",
-                "_version": "1.26.5",
+                "_version": "1.26.6",
                 "urlPattern": "^(?!.*(newtoki[0-9]*\\.org|sbxh[0-9]*\\.|ntk[0-9]*\\.)).*(newtoki|manatoki|comic|booktoki).*",
                 "category": "Webtoon",
                 "meta": {
-                        "title": {
-                                "selector": "meta[name=\"subject\"]",
-                                "attr": "content"
-                        },
+                        "title": [
+                                {
+                                        "selector": "meta[name=\"subject\"]",
+                                        "attr": "content"
+                                },
+                                "h1.hero-v2-title",
+                                "div.nd-info > h1",
+                                ".view-title h1",
+                                {
+                                        "selector": "meta[property=\"og:title\"]",
+                                        "attr": "content"
+                                }
+                        ],
                         "author": ".view-content",
                         "thumb": {
                                 "selector": "img[itemprop=\"image\"]",
@@ -178,15 +297,23 @@ export class RuleManager {
                         }
                 },
                 "list": {
-                        "container": ".list-body",
-                        "item": "li",
+                        "container": ".list-body, ul.ep-list-v2, ul.novel-eps",
+                        "item": "li.list-item, li.ep-row-v2, li",
                         "num": [
                                 ".wr-num",
-                                "span.no"
+                                "span.no",
+                                "span.ep-row-v2-no",
+                                "span.ne-num"
                         ],
-                        "title": "a",
+                        "title": [
+                                ".wr-subject a",
+                                "a.item-subject",
+                                ".ep-row-v2-title strong",
+                                "span.ne-title",
+                                "a"
+                        ],
                         "link": {
-                                "selector": "a",
+                                "selector": ".wr-subject a, a.item-subject, a.ep-row-v2-link, a",
                                 "attr": "href"
                         }
                 },
@@ -196,8 +323,9 @@ export class RuleManager {
                                 "regex": "data_attribute\\s*:\\s*['\"]([^'\"]+)['\"]",
                                 "prefix": "data-"
                         },
-                        "imageContainer": "div.view-padding, div.viewer",
+                        "imageContainer": "div.view-padding, div.vw-imgs, div.viewer",
                         "imageItem": "img",
+                        "novelContent": "#novel_content, article.novel-viewer",
                         "lazyAttrOptions": [
                                 "data-src",
                                 "data-original",
@@ -210,12 +338,7 @@ export class RuleManager {
         }
 ];
 
-    /**
-     * Get all merged rules: Custom > Built-in
-     * @returns {Promise<Array>}
-     */
     static async getRules() {
-        // [v1.25.1] 레거시 커스텀 규칙(TOKI_CUSTOM_RULES) 자동 마이그레이션 감지
         if (typeof GM_getValue !== 'undefined' && typeof GM_deleteValue !== 'undefined') {
             const legacyRulesStr = GM_getValue('TOKI_CUSTOM_RULES');
             if (legacyRulesStr) {
@@ -224,21 +347,17 @@ export class RuleManager {
                     if (Array.isArray(legacyRules) && legacyRules.length > 0) {
                         console.log("[RuleManager] 🚚 레거시 커스텀 규칙(TOKI_CUSTOM_RULES) 감지 -> TOKI_PARSER_RULES로 마이그레이션을 수행합니다.");
                         let currentRules = this.getParserRules();
-                        
-                        // 중복되지 않은 아이템들만 병합
                         legacyRules.forEach(legacyRule => {
                             if (!currentRules.some(r => r.id === legacyRule.id)) {
                                 currentRules.push(legacyRule);
                             }
                         });
-                        
                         this.saveParserRules(currentRules);
                         console.log("[RuleManager] ✅ 커스텀 규칙 병합 완료.");
                     }
                 } catch (e) {
                     console.error("[RuleManager] ❌ 레거시 규칙 파싱 실패:", e);
                 } finally {
-                    // 중복 실행 방지를 위한 안전 소거
                     GM_deleteValue('TOKI_CUSTOM_RULES');
                 }
             }
@@ -246,40 +365,41 @@ export class RuleManager {
 
         let parserRules = this.getParserRules();
 
-        // 최초 구동 시 (파서 규칙이 완전히 비어있는 경우) 내장 샘플 규칙을 자동으로 스토리지에 주입(Seed)
         if (parserRules.length === 0) {
             console.log("[RuleManager] 🚀 초기 구동 감지 -> 정적 기본 샘플 규칙을 TOKI_PARSER_RULES에 이식(Seed)합니다.");
             parserRules = [...this.#builtInRules];
             this.saveParserRules(parserRules);
         } else {
-            // [v1.26.5] 기존 스토리지에 구형 toki_common만 시드되어 있거나 v2 기본 규칙이 누락된 경우 자동 보강 및 우선순위 정렬
             let modified = false;
+            const builtInMap = new Map(this.#builtInRules.map(b => [b.id, b]));
             const builtInIds = ['blacktoon_webtoon', 'blacktoon_manhwa', 'blacktoon_novel'];
+
+            // 1. 누락된 기본 규칙 추가
             const missingBuiltIns = this.#builtInRules.filter(b => builtInIds.includes(b.id) && !parserRules.some(r => r.id === b.id));
             if (missingBuiltIns.length > 0) {
                 parserRules = [...missingBuiltIns, ...parserRules];
                 modified = true;
             }
-            // 구형 toki_common의 urlPattern이 newtoki1.org를 가로채지 않도록 자동 패치 및 imageRegex 오작동 제거
+
+            // 2. 기존 내장 규칙(blacktoon_*, toki_common)을 최신 v1.26.6 통합 스펙으로 자동 업그레이드
+            parserRules = parserRules.map(r => {
+                if (builtInMap.has(r.id) && r._version !== '1.26.6') {
+                    modified = true;
+                    return { ...builtInMap.get(r.id), _version: '1.26.6' };
+                }
+                return r;
+            });
+
+            // 3. toki_common이 v2/통합 규칙보다 앞에 있다면 맨 뒤로 이동
             const tokiIdx = parserRules.findIndex(r => r.id === 'toki_common');
-            if (tokiIdx !== -1 && parserRules[tokiIdx].urlPattern === '.*(newtoki|manatoki|comic|booktoki).*') {
-                parserRules[tokiIdx] = {
-                    ...this.#builtInRules.find(b => b.id === 'toki_common'),
-                    _version: this._version
-                };
-                // toki_common이 v2 전용 규칙보다 앞에 있다면 뒤로 재배치
+            if (tokiIdx !== -1 && tokiIdx < parserRules.length - 1) {
                 const [tokiRule] = parserRules.splice(tokiIdx, 1);
                 parserRules.push(tokiRule);
                 modified = true;
             }
-            for (const r of parserRules) {
-                if ((r.id === 'blacktoon_webtoon' || r.id === 'blacktoon_manhwa') && r.viewer && r.viewer.imageRegex) {
-                    delete r.viewer.imageRegex;
-                    modified = true;
-                }
-            }
+
             if (modified) {
-                console.log("[RuleManager] 🔄 신형 도메인(newtoki1.org / sbxh9.com) 호환 파서 규칙 자동 마이그레이션 완료.");
+                console.log("[RuleManager] 🔄 v1.26.6 통합 파서 규칙(newtoki1.org & sbxh9.com 겸용) 자동 업그레이드 완료.");
                 this.saveParserRules(parserRules);
             }
         }
@@ -287,9 +407,6 @@ export class RuleManager {
         return parserRules;
     }
 
-    /**
-     * Get only custom/parser rules from GM storage
-     */
     static getParserRules() {
         if (typeof GM_getValue === 'undefined') return [];
         const str = GM_getValue(CFG_PARSER_RULES, '[]');
@@ -300,9 +417,6 @@ export class RuleManager {
         }
     }
 
-    /**
-     * Save parser rules to GM storage
-     */
     static saveParserRules(rules) {
         if (typeof GM_setValue === 'undefined') return;
         const version = this._version;
@@ -310,9 +424,6 @@ export class RuleManager {
         GM_setValue(CFG_PARSER_RULES, JSON.stringify(rules, null, 2));
     }
 
-    /**
-     * Add a new rule
-     */
     static addRule(rule) {
         const rules = this.getParserRules();
         if (rules.find(r => r.id === rule.id)) return false;
@@ -321,9 +432,6 @@ export class RuleManager {
         return true;
     }
 
-    /**
-     * Update an existing rule
-     */
     static updateRule(id, updatedRule) {
         const rules = this.getParserRules();
         const idx = rules.findIndex(r => r.id === id);
@@ -333,9 +441,6 @@ export class RuleManager {
         return true;
     }
 
-    /**
-     * Delete a rule
-     */
     static deleteRule(id) {
         const rules = this.getParserRules();
         const filtered = rules.filter(r => r.id !== id);
@@ -343,9 +448,6 @@ export class RuleManager {
         return true;
     }
 
-    /**
-     * Bulk import rules
-     */
     static bulkImport(newRules, mode = 'merge') {
         const current = this.getParserRules();
         const version = this._version;
@@ -370,11 +472,6 @@ export class RuleManager {
         return { imported, updated, skipped };
     }
 
-    /**
-     * Find a matching rule for the current URL
-     * @param {string} url 
-     * @returns {Promise<Object|null>}
-     */
     static async matchRule(url) {
         const rules = await this.getRules();
         for (const rule of rules) {

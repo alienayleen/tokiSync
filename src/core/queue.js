@@ -175,6 +175,22 @@ export const clearQueue = () => {
 };
 
 /**
+ * 특정 작품(seriesTitle)에 속한 완료/대기 항목들을 큐에서 정리하고,
+ * 만약 남은 진행 중(pending/processing) 작업이 하나도 없다면 큐를 깔끔히 비워 UI 잔상을 제거합니다.
+ */
+export const removeSeriesFromQueue = (seriesTitle) => {
+  const queue = getRawQueue();
+  const remaining = queue.filter(item => item.title !== seriesTitle && (item.status === 'pending' || item.status === 'processing'));
+  saveRawQueue(remaining);
+};
+
+// [Top-level H1] 단일 합본(Single Volume) 모드에서도 진행 상태가 즉시 반영되도록 모듈 로드 시점에 리스너 상시 등록
+EventBus.on(EVT.QUEUE_ITEM_UPDATE, ({ id, updates }) => {
+  updateQueueItem(id, updates);
+});
+
+
+/**
  * 특정 큐 아이템을 대기열에서 개별 제거
  * 만약 진행 중인(processing) 아이템이라면 활성 자식 팝업을 강제 폐쇄 처리
  */
@@ -575,8 +591,5 @@ export const initQueueScheduler = () => {
   runSchedulerOnce();
 
 
-  // [H1] Queue Write Monopoly: 외부 모듈(downloader.js 등)의 큐 상태 변경 요청을 전담 처리
-  EventBus.on(EVT.QUEUE_ITEM_UPDATE, ({ id, updates }) => {
-    updateQueueItem(id, updates);
-  });
+
 };

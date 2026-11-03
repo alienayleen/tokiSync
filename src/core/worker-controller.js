@@ -269,9 +269,10 @@ async function fetchMediaViaWorkerSingleAttempt(episodeUrl, targetType = 'novel'
         try {
             closeActiveWorker();
             console.log('[WorkerController] 신규 단일 워커 팝업 기동:', episodeUrl);
+            const singleWorkerName = `tokisync_single_${queueId}`.replace(/[^a-zA-Z0-9_]/g, '');
             activeWorkerRef = window.open(
                 episodeUrl,
-                'tokisync-novel-worker',
+                singleWorkerName,
                 'width=400,height=600,left=0,top=0,noopener=false,scrollbars=yes,resizable=yes'
             );
             if (!activeWorkerRef) {
@@ -612,15 +613,21 @@ export function initBatchWorkerController() {
                 const legacyPaddedNum = (episodeNum || '').toString().padStart(4, '0');
                 fullFilename = `${rootFolder} ${legacyPaddedNum}화`;
             } else {
-                // local / native: 사용자 설정 localNameTemplate 동적 파싱 적용
+                // local / native: 사용자 설정 localNameTemplate 동적 파싱 적용 + 작품명(문서 이름) 자동 포함 보장
                 const template = getConfig().localNameTemplate || "{number:4} - {title}";
-                const cleanSeries = rootFolder.replace(/^\[[^\]]+\]\s*/, '');
+                const cleanSeries = (title || rootFolder || '').replace(/^\[[^\]]+\]\s*/, '').trim();
+                const rawEpTitle = (episodeTitle || '').trim();
+                const hasSeriesInTitle = !cleanSeries || cleanSeries === 'UnknownSeries' || rawEpTitle.includes(cleanSeries);
+                const effectiveEpTitle = (!template.includes('{series}') && !hasSeriesInTitle)
+                    ? `${cleanSeries} ${rawEpTitle}`.trim()
+                    : rawEpTitle;
+
                 fullFilename = template
                     .replace(/\{number:(\d)\}/g, (_, p) => (episodeNum || '').toString().padStart(parseInt(p, 10), '0'))
                     .replace(/\{number\}/g, (episodeNum || '').toString().padStart(4, '0'))
                     .replace(/\{rawNumber\}/g, (episodeNum || '').toString())
                     .replace(/\{series\}/g, cleanSeries)
-                    .replace(/\{title\}/g, episodeTitle || '');
+                    .replace(/\{title\}/g, effectiveEpTitle);
             }
 
             console.log(`[WorkerController] [배치 저장] 파일 조립 완료 (정책: ${destination}). 전송 시작: ${fullFilename}.${extension}`);

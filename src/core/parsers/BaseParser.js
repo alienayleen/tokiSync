@@ -140,9 +140,9 @@ export class BaseParser {
 
             if (listPrefixTitle && listPrefixTitle.length > 2) {
                 formatted = `[${seriesId}] ${listPrefixTitle}`;
-            } else if (firstTitle) {
-                // Single item or distinct titles: fallback to regex or full title
-                const cleanTitle = firstTitle.replace(/\s+\d+화$/, '').trim();
+            } else if (firstTitle && !/^\d+\s*(?:화|회|편|권)?$/.test(firstTitle.trim())) {
+                // Single item or distinct titles: fallback to regex or full title (단, 단순 '281화' 형태는 제외)
+                const cleanTitle = firstTitle.replace(/\s*\d+\s*(?:화|회|편|권).*$/, '').trim();
                 formatted = `[${seriesId}] ${cleanTitle || firstTitle}`;
             } else {
                 formatted = `[${seriesId}] Unknown Series`;

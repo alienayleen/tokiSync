@@ -397,7 +397,10 @@ export async function main() {
                 });
                 
                 const blob = await zip.generateAsync({ type: "blob" });
-                const filename = `${tempItem.num} - ${title}`;
+                const cleanSeries = (seriesTitle && seriesTitle !== 'Unknown_Series' && seriesTitle !== 'UnknownSeries') ? seriesTitle.trim() : '';
+                const effectiveTitle = (cleanSeries && !title.includes(cleanSeries)) ? `${cleanSeries} ${title}`.trim() : title;
+                const paddedNum = String(tempItem.num || '0000').padStart(4, '0');
+                const filename = `${paddedNum} - ${effectiveTitle}`;
 
                 await saveFile(blob, filename, 'local', extension, { category: siteInfo.category });
                 logger.success('✅ 다운로드 완료!', 'System');
