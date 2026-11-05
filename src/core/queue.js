@@ -440,6 +440,14 @@ export const runSchedulerOnce = async () => {
         try {
           stopSilentAudio();
         } catch (e) {}
+        // [배치 완료 자동 정리] completed/failed 항목이 대기열에 무한정 누적되어
+        // 진행상황 목록이 지저분해지고, 사용자가 이를 실패로 오인하는 문제를 방지하기 위해
+        // 세션이 완전히 종료된 시점에 한해 결과가 확정된 항목을 자동 청소한다.
+        // (saveRawQueue가 내부적으로 EVT.UPDATE_PROGRESS를 이미 발생시키므로 별도 emit 불필요.
+        //  변경사항이 없을 때는 굳이 다시 쓰지 않아 리스너 재발화를 방지한다.)
+        if (queue.some(item => item.status === 'completed' || item.status === 'failed')) {
+          removeCompletedAndFailedItems();
+        }
       }
       isSchedulerRunning = false;
       return;

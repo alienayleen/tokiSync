@@ -1167,7 +1167,28 @@ export class GenericParser extends BaseParser {
 
         // 1. 헤드리스(Headless) 정규식 추출 지원
         if (viewerCfg.imageRegex) {
-            const html = iframeDocument.documentElement.innerHTML || iframeDocument.body.innerHTML;
+            // imageContainer가 DOM에 실존하면 그 범위로만 정규식을 스캔해 배너/광고 등
+            // 본문 밖 이미지가 섞여 들어오는 것을 막는다. 컨테이너가 아직 렌더링되지 않은
+            // 경우(예: Next.js 페이로드처럼 DOM 미렌더링 대응이 필요한 사이트)에는 기존처럼
+            // 문서 전체를 스캔하는 폴백을 유지한다.
+            let scopeEl = null;
+            if (viewerCfg.imageContainer) {
+                scopeEl = iframeDocument.querySelector(viewerCfg.imageContainer);
+                if (scopeEl) {
+                    const excludeRule = viewerCfg.exclude || viewerCfg.remove;
+                    if (excludeRule) {
+                        const excludeSelectors = Array.isArray(excludeRule) ? excludeRule : [excludeRule];
+                        for (const selector of excludeSelectors) {
+                            try {
+                                scopeEl.querySelectorAll(selector).forEach(el => el.remove());
+                            } catch (e) {
+                                console.warn(`[GenericParser] Regex 스캔 범위 내 요소 제거 실패 (셀렉터: ${selector}):`, e);
+                            }
+                        }
+                    }
+                }
+            }
+            const html = (scopeEl || iframeDocument.documentElement || iframeDocument.body).innerHTML;
             const regex = new RegExp(viewerCfg.imageRegex, 'g');
             const urls = [];
             let match;
