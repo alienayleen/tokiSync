@@ -1,4 +1,5 @@
 import { BaseParser } from './BaseParser.js';
+import { extractDeepNovelText } from '../utils.js';
 
 /**
  * GenericParser
@@ -286,13 +287,29 @@ export class GenericParser extends BaseParser {
             if (el.closest?.('ul.ep-list-v2, ul.novel-eps, .list-body, #toon_list, li.ep-row-v2, li.list-item')) return false;
             if (el.closest?.('#bo_vc, #bo_v_cmt, .view-comment, #comment, #comments, [class*="comment" i], [id*="comment" i], [class*="cmt" i], [id*="cmt" i]')) return false;
 
+            const tag = (el.tagName || '').toUpperCase();
+            // <button>이나 <a> 내부의 자식 <span>/<strong> 등은 부모 <button>/<a>가 컨트롤이므로 건너뜀
+            const parentBtnOrLink = el.closest?.('button, a');
+            if (parentBtnOrLink && parentBtnOrLink !== el) return false;
+
             const rawTxt = (el.textContent || '').trim();
             if (!rawTxt || rawTxt.length > 24) return false;
 
+            // <button> 또는 <a> 태그는 내부에 다른 <button>/<a>만 없으면 자식 <span> 개수와 무관하게 단일 컨트롤로 인정
+            if (tag === 'BUTTON' || tag === 'A' || el.getAttribute?.('role') === 'button') {
+                if (typeof el.querySelector === 'function' && el.querySelector('button, a')) return false;
+                return true;
+            }
+
+            const cleanTxt = rawTxt.replace(/현재|열린|페이지|쪽|\s+/g, '').replace(/^\[|\]$/g, '').trim();
+            const isPageToken = /^\d{1,3}$/.test(cleanTxt) || /^(?:›|>|다음|«|<<|처음|»|>>|맨끝|끝)$/.test(cleanTxt);
+
             const children = Array.from(el.children || []).filter(ch => !/pg_only|sound_only|sr-only|blind/i.test(ch.className || ''));
             if (children.length > 0) {
+                if (typeof el.querySelector === 'function' && el.querySelector('button, a')) return false;
                 if (children.some(ch => (ch.textContent || '').trim() === rawTxt)) return false;
-                if (children.length > 1) return false;
+                // <strong class="pg_current"><span>현재</span>1<span>페이지</span></strong> 형태 허용
+                if (!isPageToken || children.length > 3) return false;
             }
             return true;
         });
@@ -376,6 +393,11 @@ export class GenericParser extends BaseParser {
                 }
             }
         } catch (e) {}
+
+        // 4. DOM 순서 기반 폴백: 에피소드 리스트 이후 ~ 댓글 영역 이전에 페이지 컨트롤이 존재하면 상위 컨테이너 반환
+        if (listEl && doc.body && hasPageControls(doc.body)) {
+            return doc.body;
+        }
 
         return null;
     }
@@ -701,15 +723,30 @@ export class GenericParser extends BaseParser {
 
         const triggerClick = (el) => {
             if (!el) return false;
+            let clicked = false;
+            try {
+                // 1) 페이지 Main World 컨텍스트에서 직접 클릭 실행 (Tampermonkey 샌드박스 우회로 React/Next.js 합성 이벤트 100% 작동 보장)
+                if (this._doc && typeof this._doc.createElement === 'function' && (this._doc.head || this._doc.documentElement) && typeof el.setAttribute === 'function') {
+                    const token = 'toki_clk_' + Math.random().toString(36).slice(2, 9);
+                    el.setAttribute('data-toki-click-id', token);
+                    try {
+                        const s = this._doc.createElement('script');
+                        s.textContent = `(function(){var e=document.querySelector('[data-toki-click-id="${token}"]');if(e){['pointerdown','mousedown','mouseup'].forEach(function(t){e.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window}));});if(typeof e.click==='function')e.click();}})();`;
+                        (this._doc.head || this._doc.documentElement).appendChild(s);
+                        s.remove();
+                        clicked = true;
+                    } catch (_) {}
+                    try { el.removeAttribute('data-toki-click-id'); } catch (_) {}
+                }
+            } catch (_) {}
+
+            // 2) 샌드박스 직접 클릭 병행 (단위 테스트 및 CSP 환경 호환)
             if (typeof el.click === 'function') {
-                el.click();
-                return true;
+                try { el.click(); clicked = true; } catch (_) {}
+            } else if (el.parentElement && typeof el.parentElement.click === 'function') {
+                try { el.parentElement.click(); clicked = true; } catch (_) {}
             }
-            if (el.parentElement && typeof el.parentElement.click === 'function') {
-                el.parentElement.click();
-                return true;
-            }
-            return false;
+            return clicked;
         };
 
         // <a> 태그 클릭 시 SPA 라우터(#__next, document)는 통과하되 브라우저 전체 페이지 새로고침만 최상단(window)에서 방어
@@ -933,8 +970,22 @@ export class GenericParser extends BaseParser {
      * @param {boolean} [options.allPages=true] 모든 페이지네이션을 순회하여 전체 회차를 가져올지 여부
      * @param {boolean} [options.forceRefresh=false] 캐시 무시 여부
      */
+    /**
+     * [v1.27.0] 최근 전체 회차 스캔 결과가 현재 URL 기준으로 유효한지 확인
+     * @param {number} maxAgeMs
+     */
+    hasFreshAllPageCache(maxAgeMs = 10 * 60 * 1000) {
+        const currentUrl = this._doc?.URL || (typeof window !== 'undefined' && window.location ? window.location.href : '');
+        return !!(this._cachedAllPageItems && this._cachedAllPageUrl === currentUrl && this._cachedAllPageAt && (Date.now() - this._cachedAllPageAt) < maxAgeMs);
+    }
+
     async getListItems(options = {}) {
-        const { allPages = true, forceRefresh = false } = options;
+        const { allPages = true, forceRefresh = false, onProgress = null } = options;
+        const report = (info) => {
+            if (typeof onProgress === 'function') {
+                try { onProgress(info); } catch (e) {}
+            }
+        };
         const listCfg = this.rule.list || {};
 
         let currentPageItems = this._extractItemsFromDoc(this._doc, listCfg);
@@ -971,7 +1022,10 @@ export class GenericParser extends BaseParser {
 
             const fetchedPages = new Set([pagInfo.currentPage]);
             let knownMaxPage = Math.min(pagInfo.maxPage, 100);
-            const BATCH_CONCURRENCY = 4;
+            // [v1.27.0] 사이트 차단(WAF) 위험을 줄이기 위해 동시 요청 4 → 2, 배치 사이 간격 추가
+            const BATCH_CONCURRENCY = 2;
+            const BATCH_GAP_MS = 350;
+            report({ phase: 'pages', fetched: 1, total: knownMaxPage });
 
             let nextPageToFetch = 1;
             while (nextPageToFetch <= knownMaxPage) {
@@ -985,6 +1039,9 @@ export class GenericParser extends BaseParser {
                 }
 
                 if (batchPages.length === 0) break;
+                if (fetchedPages.size > batchPages.length + 1) {
+                    await new Promise(r => setTimeout(r, BATCH_GAP_MS));
+                }
 
                 const results = await Promise.all(batchPages.map(async (pNum) => {
                     const pageUrl = pagInfo.buildUrl(pNum);
@@ -1011,6 +1068,8 @@ export class GenericParser extends BaseParser {
                         }
                     }
                 }
+                const itemCount = Array.from(pageItemsMap.values()).reduce((acc, arr) => acc + arr.length, 0);
+                report({ phase: 'pages', fetched: Math.min(fetchedPages.size, knownMaxPage), total: knownMaxPage, items: itemCount });
             }
 
             const sortedPageNums = Array.from(pageItemsMap.keys()).sort((a, b) => a - b);
@@ -1037,17 +1096,20 @@ export class GenericParser extends BaseParser {
                 console.log(`[GenericParser] ✅ 전체 ${sortedPageNums.length}개 페이지 병합 완료: 총 ${mergedItems.length}개 회차 추출됨.`);
                 this._cachedAllPageUrl = currentUrl;
                 this._cachedAllPageItems = mergedItems;
+                this._cachedAllPageAt = Date.now();
                 return mergedItems;
             }
             console.warn('[GenericParser] ⚠️ 정적 URL 요청에서 추가 회차가 감지되지 않아 실시간 DOM 버튼 클릭 모드로 전환합니다.');
         }
 
+        report({ phase: 'buttons' });
         // Tier 2. SPA/실시간 버튼 클릭형 페이지네이션(« ‹ 1 2 ... 10 … › » 또는 JS 페이지네이션) 수행
         const btnMerged = await this._collectViaButtonPagination(listCfg, currentPageItems);
         if (btnMerged && btnMerged.length > currentPageItems.length) {
             console.log(`[GenericParser] ✅ 버튼 순회 페이지 병합 완료: 총 ${btnMerged.length}개 회차 추출됨.`);
             this._cachedAllPageUrl = currentUrl;
             this._cachedAllPageItems = btnMerged;
+            this._cachedAllPageAt = Date.now();
             return btnMerged;
         }
 
@@ -1059,11 +1121,84 @@ export class GenericParser extends BaseParser {
                 console.log(`[GenericParser] ✅ 숨김 iframe 페이지 병합 완료: 총 ${iframeMerged.length}개 회차 추출됨.`);
                 this._cachedAllPageUrl = currentUrl;
                 this._cachedAllPageItems = iframeMerged;
+                this._cachedAllPageAt = Date.now();
                 return iframeMerged;
             }
         }
 
+        // Tier 4. 뷰어 내부 <select> 전체 회차 드롭다운 폴백
+        const dropdownMerged = await this._collectViaViewerDropdown(currentPageItems);
+        if (dropdownMerged && dropdownMerged.length > currentPageItems.length) {
+            this._cachedAllPageUrl = currentUrl;
+            this._cachedAllPageItems = dropdownMerged;
+            this._cachedAllPageAt = Date.now();
+            return dropdownMerged;
+        }
+
         return currentPageItems;
+    }
+
+    /**
+     * Tier 4 폴백: 현재 페이지의 최소 회차 번호가 1보다 큰데(예: 1페이지가 934~834화) 목록 페이지네이션이 실패한 경우,
+     * 첫 번째 회차의 뷰어 페이지 HTML 내부에 있는 전체 회차 이동 <select> 드롭다운에서 전 회차 목록을 일괄 추출
+     * @private
+     */
+    async _collectViaViewerDropdown(currentPageItems) {
+        if (!Array.isArray(currentPageItems) || currentPageItems.length < 5) return null;
+        try {
+            const firstParsed = this.parseListItem(currentPageItems[0]);
+            const lastParsed = this.parseListItem(currentPageItems[currentPageItems.length - 1]);
+            const minNum = Math.min(parseInt(firstParsed.num, 10) || 0, parseInt(lastParsed.num, 10) || 0);
+            if (minNum <= 1) return null; // 이미 1화까지 포함되어 있으면 불필요
+
+            const sampleEpUrl = firstParsed.src || lastParsed.src;
+            if (!sampleEpUrl) return null;
+
+            const viewerDoc = await this._fetchPageDocument(sampleEpUrl);
+            if (!viewerDoc || typeof viewerDoc.querySelectorAll !== 'function') return null;
+
+            const selects = Array.from(viewerDoc.querySelectorAll('select'));
+            let bestOptions = [];
+            for (const sel of selects) {
+                const opts = Array.from(sel.querySelectorAll('option')).filter(o => o.getAttribute('value'));
+                if (opts.length > currentPageItems.length && opts.length > bestOptions.length) {
+                    bestOptions = opts;
+                }
+            }
+            if (bestOptions.length <= currentPageItems.length) return null;
+
+            console.log(`[GenericParser] 🎯 뷰어 내 전체 회차 <select> 드롭다운 감지 (${bestOptions.length}개 회차) -> 전 회차 일괄 추출!`);
+            const base = new URL(sampleEpUrl, this.protocolDomain || 'http://localhost');
+            const seriesBaseMatch = base.pathname.match(/^(\/(?:novel|webtoon|manhwa|manga|comic|toon|book)\/[^\/]+)/i);
+            const seriesBasePath = seriesBaseMatch ? seriesBaseMatch[1] : base.pathname.replace(/\/[^\/]+$/, '');
+
+            const syntheticItems = bestOptions.map((opt, idx) => {
+                const rawVal = (opt.getAttribute('value') || '').trim();
+                const titleTxt = (opt.textContent || '').trim() || `${bestOptions.length - idx}화`;
+                let epHref = rawVal;
+                if (!rawVal.startsWith('http') && !rawVal.startsWith('/')) {
+                    epHref = `${seriesBasePath}/${rawVal}`;
+                }
+                const numMatch = titleTxt.match(/(\d+)\s*(?:화|회|편|권)/) || titleTxt.match(/^(\d+)/);
+                const inferredNum = numMatch ? numMatch[1] : String(bestOptions.length - idx);
+                const fakeLi = {
+                    _tokiEffectiveNum: inferredNum,
+                    tagName: 'LI',
+                    textContent: titleTxt,
+                    innerText: titleTxt,
+                    querySelector: (s) => {
+                        if (s.includes('a')) return { getAttribute: (a) => a === 'href' ? epHref : null, textContent: titleTxt, innerText: titleTxt };
+                        return { textContent: titleTxt, innerText: titleTxt };
+                    },
+                    querySelectorAll: () => []
+                };
+                return fakeLi;
+            });
+
+            return syntheticItems;
+        } catch (e) {
+            return null;
+        }
     }
 
     parseListItem(el) {
@@ -1121,12 +1256,15 @@ export class GenericParser extends BaseParser {
         const selector = viewerCfg.novelContent || 'article.novel-viewer, #novel_content, body';
 
         const candidateSelectors = [
+            '.theme-novel-content',
+            '.novel-epub-rendered',
             ...String(selector).split(',').map(s => s.trim()).filter(Boolean),
             'article.novel-viewer',
-            '#novel_content',
-            '.novel-epub-rendered',
-            '.theme-novel-content'
+            '#novel_content'
         ];
+
+        const deepText = extractDeepNovelText(iframeDocument, candidateSelectors);
+        if (deepText && deepText.length >= 40) return deepText;
 
         const el = this._deepQuerySelector(iframeDocument, candidateSelectors);
         if (!el) return "";

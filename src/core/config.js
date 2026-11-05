@@ -19,6 +19,8 @@ export const CFG_SCAN_SPEED = "TOKI_SCAN_SPEED";
 export const CFG_LOCAL_NAME_TEMPLATE = "TOKI_LOCAL_NAME_TEMPLATE";
 export const CFG_LOG_LEVEL = "TOKI_LOG_LEVEL";
 export const CFG_RULE_SUBSCRIPTIONS = "TOKI_RULE_SUBSCRIPTIONS";
+export const CFG_MAX_WORKERS = "TOKI_MAX_WORKERS";           // 동시 수집 팝업 창 수 (1~3)
+export const CFG_MERGE_PART_SIZE = "TOKI_MERGE_PART_SIZE";   // 만화 합본 분할 단위 (회차 수, 0 = 분할 없음)
 
 const BACKUP_KEY = "tokisync_config_backup";
 
@@ -117,7 +119,15 @@ export function getConfig() {
             return Math.round(val);
         })(),
         localNameTemplate: _gmGet(CFG_LOCAL_NAME_TEMPLATE, "{number:4} - {title}"),
-        logLevel: _gmGet(CFG_LOG_LEVEL, "info")
+        logLevel: _gmGet(CFG_LOG_LEVEL, "info"),
+        maxWorkers: (() => {
+            const n = parseInt(_gmGet(CFG_MAX_WORKERS, "1"), 10);
+            return isNaN(n) ? 1 : Math.min(3, Math.max(1, n));
+        })(),
+        mergePartSize: (() => {
+            const n = parseInt(_gmGet(CFG_MERGE_PART_SIZE, "10"), 10);
+            return isNaN(n) || n < 0 ? 10 : n;
+        })()
     };
     backupToLocalStorage(configObj);
     return configObj;

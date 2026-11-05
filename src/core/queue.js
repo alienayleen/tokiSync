@@ -4,6 +4,8 @@
  */
 
 import { EventBus, EVT } from './EventBus.js';
+import { startSilentAudio, stopSilentAudio } from './anti_sleep.js';
+import { getConfig } from './config.js';
 
 export const WORKER_STAGE = {
   INIT: 'STAGE_INIT',             // 초기화 및 Handshake 대기 중
@@ -18,7 +20,19 @@ export const WORKER_STAGE = {
 
 const STORAGE_KEY = 'TOKI_DOWNLOAD_QUEUE';
 export const TAB_ID = 'tab_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
-const MAX_CONCURRENCY = 2; // 최대 동시 다운로드 수
+
+/**
+ * [v1.27.0] 동시 수집 팝업 창 수 (설정값 TOKI_MAX_WORKERS, 1~3, 기본 1)
+ * 기존 MAX_CONCURRENCY 상수는 선언만 되고 사용되지 않았으며 스케줄러는 1로 하드코딩되어 있었습니다.
+ */
+export const getMaxWorkers = () => {
+  try {
+    const n = getConfig().maxWorkers;
+    return Math.min(3, Math.max(1, parseInt(n, 10) || 1));
+  } catch (e) {
+    return 1;
+  }
+};
 
 // 임시 팝업 창 참조 보관용 맵 (Liveness check 및 재활용 루프 대비)
 export const activeWorkers = new Map();
@@ -110,6 +124,7 @@ export const addEpisodesToQueue = (episodes, novelTitle, options = {}) => {
       seriesMetadata: ep.seriesMetadata || {},
       ownerTabId: ep.ownerTabId || options.ownerTabId || TAB_ID,
       isSingleVolume: Boolean(ep.isSingleVolume ?? options.isSingleVolume),
+      mergeSessionId: ep.mergeSessionId || options.mergeSessionId || '', // [v1.27.0] 합본 세션 소속 (빈 값이면 개별 저장)
       status: 'pending',
       progressPercent: 0,
       stage: WORKER_STAGE.INIT,
@@ -230,9 +245,11 @@ export const removeQueueItem = (id) => {
 /**
  * 완료(completed) 및 실패(failed) 항목들 일괄 삭제 (큐 청소)
  */
-export const removeCompletedAndFailedItems = () => {
+export const removeCompletedAndFailedItems = (options = {}) => {
+  const { keepMergeItems = false } = options;
   const queue = getRawQueue();
-  const filtered = queue.filter(item => item.status !== 'completed' && item.status !== 'failed');
+  // keepMergeItems: 합본 세션 소속 실패 항목은 "실패 회차 재시도" 판단을 위해 보존
+  const filtered = queue.filter(item => (item.status !== 'completed' && item.status !== 'failed') || (keepMergeItems && item.mergeSessionId && item.status === 'failed'));
   saveRawQueue(filtered);
 };
 
@@ -256,6 +273,144 @@ export const getQueueStats = () => {
   });
 
   return stats;
+};
+
+// =============================================================
+// 💓 [v1.27.0] 탭 생존 신호(Heartbeat) 및 고아(Orphan) 대기열 회수
+// - 대기열 항목은 ownerTabId 탭만 처리합니다. 그런데 탭을 새로고침/종료하면 TAB_ID가 바뀌어
+//   pending/processing 항목이 영구히 방치되었습니다. 탭별 생존 신호로 고아 항목을 식별합니다.
+// =============================================================
+const HB_PREFIX = 'TOKI_TAB_HB_';
+const HB_INTERVAL_MS = 10000;
+export const HB_STALE_MS = 180000; // 백그라운드 타이머 지연(최대 1분 간격)을 감안한 3분 유예
+let heartbeatTimer = null;
+
+const gmGet = (key, def) => {
+  try {
+    if (typeof GM_getValue !== 'undefined') return GM_getValue(key, def);
+    if (typeof localStorage !== 'undefined') {
+      const v = localStorage.getItem(key);
+      return v === null ? def : JSON.parse(v);
+    }
+  } catch (e) {}
+  return def;
+};
+const gmSet = (key, val) => {
+  try {
+    if (typeof GM_setValue !== 'undefined') return GM_setValue(key, val);
+    if (typeof localStorage !== 'undefined') localStorage.setItem(key, JSON.stringify(val));
+  } catch (e) {}
+};
+const gmDel = (key) => {
+  try {
+    if (typeof GM_deleteValue !== 'undefined') return GM_deleteValue(key);
+    if (typeof localStorage !== 'undefined') localStorage.removeItem(key);
+  } catch (e) {}
+};
+
+export const touchTabHeartbeat = () => gmSet(HB_PREFIX + TAB_ID, Date.now());
+
+/**
+ * 현재 탭의 생존 신호를 주기적으로 기록합니다. (페이지 이탈 시 즉시 삭제하여 다른 탭이 바로 이어받을 수 있게 함)
+ */
+export const startTabHeartbeat = () => {
+  if (heartbeatTimer) return;
+  touchTabHeartbeat();
+  heartbeatTimer = setInterval(touchTabHeartbeat, HB_INTERVAL_MS);
+  try {
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('pagehide', () => gmDel(HB_PREFIX + TAB_ID));
+    }
+  } catch (e) {}
+};
+
+export const isTabAlive = (tabId, now = Date.now()) => {
+  if (!tabId || tabId === TAB_ID) return true;
+  const ts = gmGet(HB_PREFIX + tabId, 0);
+  return typeof ts === 'number' && ts > 0 && (now - ts) < HB_STALE_MS;
+};
+
+/**
+ * 소유 탭이 사라진 pending/processing 항목 목록
+ */
+export const getOrphanItems = () => {
+  const now = Date.now();
+  const aliveCache = new Map();
+  return getRawQueue().filter(item => {
+    if (item.status !== 'pending' && item.status !== 'processing') return false;
+    const owner = item.ownerTabId;
+    if (!owner || owner === TAB_ID) return false;
+    if (!aliveCache.has(owner)) aliveCache.set(owner, isTabAlive(owner, now));
+    return !aliveCache.get(owner);
+  });
+};
+
+/**
+ * 원래 도메인과 현재 도메인이 다르면 회차 URL의 origin을 현재 도메인으로 교체합니다. (토끼 계열 미러 도메인 변경 대응)
+ */
+export const rewriteUrlOrigin = (url, targetOrigin) => {
+  if (!url || !targetOrigin) return url;
+  try {
+    const u = new URL(url);
+    const t = new URL(targetOrigin);
+    if (u.origin === t.origin) return url;
+    return `${t.origin}${u.pathname}${u.search}${u.hash}`;
+  } catch (e) {
+    return url;
+  }
+};
+
+/**
+ * 고아 항목(또는 지정 항목)을 현재 탭 소유로 이어받습니다.
+ * @param {{ ids?: string[], targetOrigin?: string }} options
+ * @returns {number} 이어받은 항목 수
+ */
+export const reclaimOrphanItems = (options = {}) => {
+  const { ids = null, targetOrigin = null, includeFailed = false } = options;
+  const orphanIds = new Set((ids && ids.length) ? ids : getOrphanItems().map(i => i.id));
+  if (orphanIds.size === 0) return 0;
+  const deadTabs = new Set();
+  const queue = getRawQueue();
+  let count = 0;
+  queue.forEach(item => {
+    if (!orphanIds.has(item.id)) return;
+    const isActive = item.status === 'pending' || item.status === 'processing';
+    if (!isActive && !(includeFailed && item.status === 'failed')) return;
+    if (item.status === 'failed') {
+      item.retryCount = 0;
+      item.errorMsg = '';
+    }
+    // 현재 탭이 실제로 열어 둔 팝업이 있는 항목은 건드리지 않음
+    if (item.status === 'processing' && item.ownerTabId === TAB_ID && activeWorkers.has(item.id)) return;
+    if (item.ownerTabId && item.ownerTabId !== TAB_ID && !isTabAlive(item.ownerTabId)) deadTabs.add(item.ownerTabId);
+    item.ownerTabId = TAB_ID;
+    item.status = 'pending';
+    item.stage = WORKER_STAGE.INIT;
+    item.progressPercent = 0;
+    item.lastActivity = Date.now();
+    if (targetOrigin) {
+      item.episodeUrl = rewriteUrlOrigin(item.episodeUrl, targetOrigin);
+      if (item.protocolDomain) item.protocolDomain = rewriteUrlOrigin(item.protocolDomain, targetOrigin).replace(/\/$/, '');
+    }
+    count++;
+  });
+  if (count > 0) {
+    saveRawQueue(queue);
+    deadTabs.forEach(t => gmDel(HB_PREFIX + t));
+  }
+  return count;
+};
+
+/**
+ * 고아 항목을 대기열에서 제거합니다.
+ */
+export const discardOrphanItems = (ids = null) => {
+  const target = new Set((ids && ids.length) ? ids : getOrphanItems().map(i => i.id));
+  if (target.size === 0) return 0;
+  const queue = getRawQueue();
+  const remaining = queue.filter(i => !target.has(i.id));
+  saveRawQueue(remaining);
+  return queue.length - remaining.length;
 };
 
 // =============================================================
@@ -365,6 +520,7 @@ export const stopAllWorkers = (shouldClear = false) => {
 };
 
 let isSchedulerRunning = false;
+let rerunRequested = false;
 
 // 인간 행동 모방 랜덤 지연시간(Jitter Delay) 유틸리티
 const sleepJitter = (minMs, maxMs) => {
@@ -380,8 +536,14 @@ export const runSchedulerOnce = async () => {
     isSchedulerRunning = false;
     return;
   }
-  if (isSchedulerRunning) return;
+  if (isSchedulerRunning) {
+    // [v1.27.0] 실행 중 유입된 트리거가 유실되지 않도록 종료 후 1회 재검사를 예약합니다.
+    rerunRequested = true;
+    return;
+  }
   isSchedulerRunning = true;
+  rerunRequested = false;
+  let launchedThisRun = false;
   console.log(`[Queue Scheduler] 🔍 runSchedulerOnce 진입 (activeWorkers=${activeWorkers.size}, _activeProcessing=${_activeProcessing.size})`);
 
   try {
@@ -416,8 +578,11 @@ export const runSchedulerOnce = async () => {
       }
     }
 
-    // 1. 현재 수집 중인 활성 팝업(activeWorkers) 또는 진행 중인 작업(_activeProcessing) 제약
-    if (activeWorkers.size >= 1 || _activeProcessing.size >= 1) {
+    // 1. 동시 수집 한도 제약 (설정값 maxWorkers)
+    //    [v1.27.0] 팝업이 닫힌 뒤 파일 조립/저장(_activeProcessing) 중인 회차는 다음 회차 수집을 막지 않도록,
+    //    조립 대기 한도를 maxWorkers만큼 별도로 허용합니다. (기존: 조립이 끝나야 다음 팝업 기동)
+    const maxWorkers = getMaxWorkers();
+    if (activeWorkers.size >= maxWorkers || _activeProcessing.size > maxWorkers) {
       isSchedulerRunning = false;
       return;
     }
@@ -427,7 +592,7 @@ export const runSchedulerOnce = async () => {
 
     // 2. 현재 탭에서 진행 중인 배치 세션이 최대 허용 한계(3개) 이상이면 리소스 가드를 위해 차단
     const currentProcessing = queue.filter(item => item.status === 'processing' && isMyBatchItem(item));
-    if (currentProcessing.length >= 3) {
+    if (currentProcessing.length >= maxWorkers * 2 + 1) {
       isSchedulerRunning = false;
       return;
     }
@@ -480,7 +645,7 @@ export const runSchedulerOnce = async () => {
     }
 
     // 5. 최종 가드: 아직 처리 중인 작업이 있거나 활성 팝업이 있으면 기동 취소
-    if (_activeProcessing.size >= 1 || activeWorkers.size >= 1) {
+    if (_activeProcessing.size > maxWorkers || activeWorkers.size >= maxWorkers) {
       console.log(`[Queue Scheduler] 🛡️ 활성 처리/팝업 감지로 기동 취소: ${nextItem.episodeTitle} (activeProcessing=${_activeProcessing.size}, activeWorkers=${activeWorkers.size})`);
       isSchedulerRunning = false;
       return;
@@ -490,9 +655,10 @@ export const runSchedulerOnce = async () => {
     console.log(`[Queue Scheduler] 🚀 1회성 신규 팝업 기동: ${nextItem.episodeTitle} (${nextItem.episodeUrl}), 현재 activeWorkers=${activeWorkers.size}, _activeProcessing=${_activeProcessing.size}`);
     updateQueueItem(nextItem.id, { status: 'processing', startedAt: Date.now() });
     
-    const popupRef = openEpisodePopup(nextItem.episodeUrl, nextItem.id);
+    const popupRef = openEpisodePopup(nextItem.episodeUrl, nextItem.id, activeWorkers.size);
     if (popupRef) {
         activeWorkers.set(nextItem.id, popupRef);
+        launchedThisRun = true;
         console.log(`[Queue Scheduler] ✅ 팝업 등록 완료: ${nextItem.episodeTitle} (activeWorkers=${activeWorkers.size})`);
     } else {
         // 팝업 차단 등으로 창 생성 실패 시 즉시 failed 처리
@@ -506,11 +672,16 @@ export const runSchedulerOnce = async () => {
     console.error('[Queue Scheduler] Error in scheduling loop:', err);
   } finally {
     isSchedulerRunning = false;
+    // [v1.27.0] 동시 수집 슬롯이 남아 있으면 즉시 다음 슬롯을 채웁니다.
+    if ((launchedThisRun && activeWorkers.size < getMaxWorkers()) || rerunRequested) {
+      rerunRequested = false;
+      setTimeout(() => runSchedulerOnce(), 0);
+    }
   }
 };
 
 // 팝업 기동 가교 (window.open 래퍼)
-const openEpisodePopup = (url, id) => {
+const openEpisodePopup = (url, id, slotIndex = 0) => {
   try {
     // Node.js 테스트 환경 등 윈도우 객체가 실존하지 않는 환경에서의 안전 예외처리
     if (typeof window === 'undefined' || typeof window.open === 'undefined') {
@@ -521,8 +692,8 @@ const openEpisodePopup = (url, id) => {
     // 봇 감지 회피 절충안 규격 (400x600, right-aligned)
     const width = 400;
     const height = 600;
-    const left = window.screen.width - width - 50;
-    const top = 100;
+    const left = window.screen.width - width - 50 - (slotIndex * 60);
+    const top = 100 + (slotIndex * 60);
     
     const popupRef = window.open(
       url, 

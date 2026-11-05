@@ -4,7 +4,7 @@
     {
       "id": "blacktoon_webtoon",
       "name": "통합 웹툰 규칙 (신형 v2 & 뉴토끼/마나토끼 호환)",
-      "_version": "1.26.7",
+      "_version": "1.26.8",
       "urlPattern": ".*/(webtoon|toon)/.*",
       "idExtraction": {
         "source": "url",
@@ -96,7 +96,7 @@
     {
       "id": "blacktoon_manhwa",
       "name": "통합 만화 규칙 (신형 v2 & 마나토끼/뉴토끼 호환)",
-      "_version": "1.26.7",
+      "_version": "1.26.8",
       "urlPattern": ".*/(manhwa|manga|comic)/.*",
       "idExtraction": {
         "source": "url",
@@ -188,7 +188,7 @@
     {
       "id": "blacktoon_novel",
       "name": "통합 소설 규칙 (신형 v2 & 북토끼/뉴토끼 호환)",
-      "_version": "1.26.7",
+      "_version": "1.26.8",
       "urlPattern": ".*/(novel|book)/.*",
       "idExtraction": {
         "source": "url",
@@ -273,7 +273,7 @@
     {
       "id": "toki_common",
       "name": "구형 토끼 계열 (그누보드 뉴토끼/마나토끼/북토끼) 통합 규칙",
-      "_version": "1.26.7",
+      "_version": "1.26.8",
       "urlPattern": "^(?!.*(newtoki[0-9]*\\.org|sbxh[0-9]*\\.|ntk[0-9]*\\.)).*(newtoki|manatoki|comic|booktoki).*",
       "category": "Webtoon",
       "meta": {
@@ -341,6 +341,6 @@
       }
     }
   ],
-  "_version": "1.26.7",
+  "_version": "1.26.8",
   "updatedAt": "2026-11-04T00:00:00Z"
 }

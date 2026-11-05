@@ -4,6 +4,9 @@ import { initBatchWorkerController } from './worker-controller.js';
 import { CbzBuilder } from './cbz.js';
 import { getConfig } from './config.js';
 import JSZip from 'jszip';
+import { getOrphanItems, reclaimOrphanItems, runSchedulerOnce, updateQueueItem, TAB_ID as CURRENT_TAB_ID } from './queue.js';
+import { createMergeSession, storeMergeEpisode, finalizeMergeSession, checkMergeSessions, getMergeSession, MERGE_STATUS } from './merge-session.js';
+import { _resetMergeStoreForTest } from './merge-store.js';
 
 globalThis.JSZip = JSZip;
 
@@ -1678,6 +1681,201 @@ test('GenericParser.getListItems()는 1페이지가 <strong>이고 PC/모바일 
     console.assert(allItems.length === 6, `strong 1페이지 + 듀얼 버튼 병합 실패: 기대 6개, 실제 ${allItems.length}개`);
     if (allItems.length !== 6) {
         throw new Error(`strong 1페이지 + 듀얼 버튼 병합 실패 (${allItems.length}개)`);
+    }
+});
+
+
+// ── 테스트 34: 외곽 래퍼(#novel_content) 내부 자식에 ShadowRoot(.theme-novel-content)가 중첩된 경우 및 <button><span>2</span></button> 페이지네이션 검증 ──
+test('extractDeepNovelText()는 외곽 래퍼 내부의 자식 Shadow DOM 본문을 1차 시도에 즉시 추출하여 3회 재시도를 방지해야 합니다.', async () => {
+    const { extractDeepNovelText } = await import('./utils.js');
+    const shadowRoot = {
+        querySelectorAll(sel) {
+            if (sel === 'p') {
+                return [
+                    { textContent: '첫 번째 소설 문단입니다. 본문 길이가 충분히 길어야 유효한 소설 텍스트로 판정됩니다.', closest: () => null },
+                    { textContent: '두 번째 소설 문단입니다. 중첩된 Shadow DOM 내부에서도 한 번에 추출되어야 합니다.', closest: () => null }
+                ];
+            }
+            return [];
+        }
+    };
+    const innerShadowHost = { className: 'theme-novel-content', shadowRoot };
+    const outerWrapper = {
+        id: 'novel_content',
+        shadowRoot: null,
+        querySelectorAll(sel) {
+            if (sel === 'p') return []; // Light DOM에는 p 태그가 없음
+            if (sel === '*') return [innerShadowHost];
+            return [];
+        }
+    };
+    const mockDoc = {
+        querySelectorAll(sel) {
+            if (sel === '#novel_content' || sel === 'article.novel-viewer') return [outerWrapper];
+            if (sel === '.theme-novel-content') return [innerShadowHost];
+            if (sel === '*') return [outerWrapper, innerShadowHost];
+            return [];
+        }
+    };
+
+    const text = extractDeepNovelText(mockDoc, ['article.novel-viewer, #novel_content, .theme-novel-content']);
+    console.assert(text.includes('첫 번째 소설 문단입니다'), `중첩 Shadow DOM 본문 추출 실패: "${text}"`);
+    if (!text.includes('첫 번째 소설 문단입니다')) {
+        throw new Error('중첩 Shadow DOM 본문 추출 실패');
+    }
+});
+
+// ── [v1.27.0] 공용 GM/DOM 모킹 헬퍼 ─────────────────────────
+function installV127Mocks() {
+    const backup = {
+        get: globalThis.GM_getValue, set: globalThis.GM_setValue, del: globalThis.GM_deleteValue,
+        listen: globalThis.GM_addValueChangeListener, doc: globalThis.document, win: globalThis.window,
+        createObjectURL: URL.createObjectURL, setTimeout: globalThis.setTimeout
+    };
+    const store = new Map();
+    const downloads = [];
+    globalThis.GM_getValue = (k, d) => (store.has(k) ? store.get(k) : d);
+    globalThis.GM_setValue = (k, v) => { store.set(k, v); };
+    globalThis.GM_deleteValue = (k) => { store.delete(k); };
+    delete globalThis.GM_addValueChangeListener;
+    globalThis.document = {
+        createElement: () => ({
+            click() { downloads.push({ name: this.download, blob: this._blob }); },
+            remove() {},
+            set href(v) { this._href = v; this._blob = blobByUrl.get(v); },
+            get href() { return this._href; }
+        })
+    };
+    const blobByUrl = new Map();
+    URL.createObjectURL = (blob) => { const u = `blob:mock/${blobByUrl.size}`; blobByUrl.set(u, blob); return u; };
+    _resetMergeStoreForTest();
+    clearQueue();
+    return {
+        store, downloads,
+        restore() {
+            globalThis.GM_getValue = backup.get; globalThis.GM_setValue = backup.set; globalThis.GM_deleteValue = backup.del;
+            if (backup.listen) globalThis.GM_addValueChangeListener = backup.listen;
+            globalThis.document = backup.doc; globalThis.window = backup.win;
+            URL.createObjectURL = backup.createObjectURL; globalThis.setTimeout = backup.setTimeout;
+            activeWorkers.clear();
+        }
+    };
+}
+
+test('[v1.27.0] 소유 탭의 생존 신호가 없는 대기열 항목은 고아로 식별되고, 이어받기 시 현재 탭 소유·현재 도메인 URL로 전환되어야 합니다.', () => {
+    const m = installV127Mocks();
+    try {
+        addEpisodesToQueue([{ title: '1화', url: 'https://old.example/novel/10/1?x=1', episodeNum: '1', protocolDomain: 'https://old.example' }], '고아작품', { ownerTabId: 'tab_dead' });
+        addEpisodesToQueue([{ title: '2화', url: 'https://old.example/novel/10/2', episodeNum: '2' }], '살아있는작품', { ownerTabId: 'tab_alive' });
+        globalThis.GM_setValue('TOKI_TAB_HB_tab_alive', Date.now());
+
+        const orphans = getOrphanItems();
+        if (orphans.length !== 1 || orphans[0].title !== '고아작품') throw new Error(`고아 식별 실패: ${orphans.map(o => o.title)}`);
+
+        const n = reclaimOrphanItems({ targetOrigin: 'https://new.example' });
+        if (n !== 1) throw new Error(`이어받기 개수 불일치: ${n}`);
+        const item = getQueue().find(q => q.title === '고아작품');
+        if (item.ownerTabId !== CURRENT_TAB_ID) throw new Error('소유 탭이 현재 탭으로 바뀌지 않음');
+        if (item.episodeUrl !== 'https://new.example/novel/10/1?x=1') throw new Error(`도메인 교체 실패: ${item.episodeUrl}`);
+        if (item.status !== 'pending') throw new Error('상태가 pending으로 초기화되지 않음');
+        if (getOrphanItems().length !== 0) throw new Error('이어받은 뒤에도 고아로 남음');
+    } finally {
+        m.restore();
+    }
+});
+
+test('[v1.27.0] 소설 범위 합본은 회차가 뒤섞여 보관되어도 번호 순서대로 한 파일로 저장하고 세션을 정리해야 합니다.', async () => {
+    const m = installV127Mocks();
+    try {
+        const items = ['1', '2', '3'].map(n => ({ id: getQueueItemId('합본작품', n), num: n, title: `${n}화`, url: `http://localhost/novel/1/${n}` }));
+        const session = createMergeSession({ kind: 'novelVolume', seriesTitle: '합본작품', novelFormat: 'txt', items, template: {} });
+        for (const n of ['3', '1', '2']) {
+            await storeMergeEpisode({ mergeSessionId: session.id, id: getQueueItemId('합본작품', n) }, { kind: 'text', text: `${n}번째 회차 본문입니다. `.repeat(5), title: `${n}화`, num: n });
+        }
+        const ok = await finalizeMergeSession(session.id);
+        if (!ok) throw new Error('합본 저장 실패');
+        if (m.downloads.length !== 1) throw new Error(`저장 파일 수 불일치: ${m.downloads.length}`);
+        if (m.downloads[0].name !== '합본작품 (1-3화).txt') throw new Error(`파일명 불일치: ${m.downloads[0].name}`);
+        const text = await m.downloads[0].blob.text();
+        const i1 = text.indexOf('=== 1화'), i2 = text.indexOf('=== 2화'), i3 = text.indexOf('=== 3화');
+        if (!(i1 >= 0 && i1 < i2 && i2 < i3)) throw new Error('회차 순서가 올바르지 않음');
+        if (getMergeSession(session.id)) throw new Error('저장 후 세션이 정리되지 않음');
+        const leftover = Array.from(m.store.keys()).filter(k => k.startsWith('TOKI_MERGE_TXT_'));
+        if (leftover.length) throw new Error('보관 데이터가 삭제되지 않음');
+    } finally {
+        m.restore();
+    }
+});
+
+test('[v1.27.0] 합본 세션에 실패 회차가 있으면 자동 합본하지 않고 확인 필요 상태로 두며, 부분 저장 시 누락 표시와 리포트를 남겨야 합니다.', async () => {
+    const m = installV127Mocks();
+    try {
+        const items = ['1', '2'].map(n => ({ id: getQueueItemId('부분작품', n), num: n, title: `${n}화`, url: `http://localhost/novel/2/${n}` }));
+        const session = createMergeSession({ kind: 'novelVolume', seriesTitle: '부분작품', novelFormat: 'txt', items, template: {} });
+        addEpisodesToQueue(items.map(it => ({ title: it.title, url: it.url, episodeNum: it.num })), '부분작품', { mergeSessionId: session.id });
+        await storeMergeEpisode({ mergeSessionId: session.id, id: items[0].id }, { kind: 'text', text: '첫 회차 본문입니다. '.repeat(5), title: '1화', num: '1' });
+        updateQueueItem(items[0].id, { status: 'completed' });
+        updateQueueItem(items[1].id, { status: 'failed', errorMsg: '수집 실패' });
+
+        await checkMergeSessions();
+        if (getMergeSession(session.id)?.status !== MERGE_STATUS.ATTENTION) throw new Error('확인 필요 상태로 전환되지 않음');
+        if (m.downloads.length !== 0) throw new Error('실패 회차가 있는데 자동 합본됨');
+
+        const ok = await finalizeMergeSession(session.id, { allowPartial: true });
+        if (!ok) throw new Error('부분 합본 저장 실패');
+        const names = m.downloads.map(d => d.name);
+        if (!names.includes('부분작품 (1화) [누락 1화].txt')) throw new Error(`부분 합본 파일명 불일치: ${names}`);
+        if (!names.some(n => n.includes('합본_누락_리포트'))) throw new Error('누락 리포트 미생성');
+    } finally {
+        m.restore();
+    }
+});
+
+test('[v1.27.0] 동시 수집 창 수를 2로 설정하면 스케줄러가 팝업 2개까지 기동해야 합니다.', async () => {
+    const m = installV127Mocks();
+    const realSetTimeout = globalThis.setTimeout;
+    try {
+        globalThis.setTimeout = (cb, d) => realSetTimeout(cb, d >= 1000 ? 1 : d);
+        globalThis.GM_setValue('TOKI_MAX_WORKERS', '2');
+        const opened = [];
+        globalThis.window = {
+            screen: { width: 1920 },
+            location: { origin: 'http://localhost' },
+            open: (url) => { const w = { closed: false, url, postMessage() {}, close() { this.closed = true; } }; opened.push(w); return w; },
+            addEventListener() {}, removeEventListener() {}
+        };
+        activeWorkers.clear();
+        addEpisodesToQueue(['1', '2', '3'].map(n => ({ title: `${n}화`, url: `http://localhost/webtoon/3/${n}`, episodeNum: n })), '동시작품', {});
+        await runSchedulerOnce();
+        for (let i = 0; i < 50 && activeWorkers.size < 2; i++) await new Promise(r => realSetTimeout(r, 5));
+        await new Promise(r => realSetTimeout(r, 30));
+        if (activeWorkers.size !== 2) throw new Error(`동시 기동 수 불일치: ${activeWorkers.size}`);
+        const processing = getQueue().filter(q => q.status === 'processing').length;
+        if (processing !== 2) throw new Error(`processing 항목 수 불일치: ${processing}`);
+    } finally {
+        globalThis.GM_setValue('TOKI_MAX_WORKERS', '1');
+        clearQueue();
+        m.restore();
+    }
+});
+
+test('[v1.27.0] 챕터 묶음 합본은 회차 파일을 분할 단위대로 ZIP에 담아 저장해야 합니다.', async () => {
+    const m = installV127Mocks();
+    try {
+        const items = ['1', '2', '3'].map(n => ({ id: getQueueItemId('묶음작품', n), num: n, title: `${n}화`, url: `http://localhost/webtoon/4/${n}` }));
+        const session = createMergeSession({ kind: 'zipOfFiles', seriesTitle: '묶음작품', partSize: 2, items, template: {} });
+        for (const it of items) {
+            await storeMergeEpisode({ mergeSessionId: session.id, id: it.id }, { kind: 'blob', blob: new Blob([`cbz-${it.num}`]), filename: `묶음작품 - ${it.num.padStart(4, '0')}.cbz`, title: it.title, num: it.num });
+        }
+        const ok = await finalizeMergeSession(session.id);
+        if (!ok) throw new Error('묶음 저장 실패');
+        const names = m.downloads.map(d => d.name);
+        if (names.join('|') !== '묶음작품 (1-2화) Part1.zip|묶음작품 (3화) Part2.zip') throw new Error(`분할 파일명 불일치: ${names}`);
+        const zip = await JSZip.loadAsync(await m.downloads[0].blob.arrayBuffer());
+        const entries = Object.keys(zip.files).sort();
+        if (entries.join('|') !== '묶음작품 - 0001.cbz|묶음작품 - 0002.cbz') throw new Error(`ZIP 내용 불일치: ${entries}`);
+    } finally {
+        m.restore();
     }
 });
 

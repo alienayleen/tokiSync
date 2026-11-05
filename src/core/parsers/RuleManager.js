@@ -6,14 +6,14 @@ import { CFG_PARSER_RULES } from '../config.js';
  */
 export class RuleManager {
     static get _version() {
-        return typeof __SCRIPT_VERSION__ !== 'undefined' ? __SCRIPT_VERSION__ : '1.26.7';
+        return typeof __SCRIPT_VERSION__ !== 'undefined' ? __SCRIPT_VERSION__ : '1.26.8';
     }
 
     static #builtInRules = [
         {
                 "id": "blacktoon_webtoon",
                 "name": "통합 웹툰 규칙 (신형 v2 & 뉴토끼/마나토끼 호환)",
-                "_version": "1.26.7",
+                "_version": "1.26.8",
                 "urlPattern": ".*/(webtoon|toon)/.*",
                 "idExtraction": {
                         "source": "url",
@@ -105,7 +105,7 @@ export class RuleManager {
         {
                 "id": "blacktoon_manhwa",
                 "name": "통합 만화 규칙 (신형 v2 & 마나토끼/뉴토끼 호환)",
-                "_version": "1.26.7",
+                "_version": "1.26.8",
                 "urlPattern": ".*/(manhwa|manga|comic)/.*",
                 "idExtraction": {
                         "source": "url",
@@ -197,7 +197,7 @@ export class RuleManager {
         {
                 "id": "blacktoon_novel",
                 "name": "통합 소설 규칙 (신형 v2 & 북토끼/뉴토끼 호환)",
-                "_version": "1.26.7",
+                "_version": "1.26.8",
                 "urlPattern": ".*/(novel|book)/.*",
                 "idExtraction": {
                         "source": "url",
@@ -282,7 +282,7 @@ export class RuleManager {
         {
                 "id": "toki_common",
                 "name": "구형 토끼 계열 (그누보드 뉴토끼/마나토끼/북토끼) 통합 규칙",
-                "_version": "1.26.7",
+                "_version": "1.26.8",
                 "urlPattern": "^(?!.*(newtoki[0-9]*\\.org|sbxh[0-9]*\\.|ntk[0-9]*\\.)).*(newtoki|manatoki|comic|booktoki).*",
                 "category": "Webtoon",
                 "meta": {
@@ -394,11 +394,11 @@ export class RuleManager {
                 modified = true;
             }
 
-            // 2. 기존 내장 규칙(blacktoon_*, toki_common)을 최신 v1.26.7 통합 스펙으로 자동 업그레이드
+            // 2. 기존 내장 규칙(blacktoon_*, toki_common)을 최신 v1.26.8 통합 스펙으로 자동 업그레이드
             parserRules = parserRules.map(r => {
-                if (builtInMap.has(r.id) && r._version !== '1.26.7') {
+                if (builtInMap.has(r.id) && r._version !== '1.26.8') {
                     modified = true;
-                    return { ...builtInMap.get(r.id), _version: '1.26.7' };
+                    return { ...builtInMap.get(r.id), _version: '1.26.8' };
                 }
                 return r;
             });
@@ -412,7 +412,7 @@ export class RuleManager {
             }
 
             if (modified) {
-                console.log("[RuleManager] 🔄 v1.26.7 통합 파서 규칙(newtoki1.org & sbxh9.com 겸용) 자동 업그레이드 완료.");
+                console.log("[RuleManager] 🔄 v1.26.8 통합 파서 규칙(newtoki1.org & sbxh9.com 겸용) 자동 업그레이드 완료.");
                 this.saveParserRules(parserRules);
             }
         }

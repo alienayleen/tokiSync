@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] - v1.27.0 예정 (2026-11-05)
+
+### 📚 합본 우선 파이프라인 (Merge Session)
+- **버그 수정 — 만화 "챕터 묶음(zipOfCbzs)" 합본이 동작하지 않던 문제**: v1.26.4에서 단행본 합본을 제외한 모든 정책을 배치 큐로 통합하면서, `zipOfCbzs`는 회차별 개별 CBZ로만 저장되고 `masterZip`은 사용되지 않았습니다(기본 정책 `folderInCbz`도 `zipOfCbzs`로 매핑되므로 기본 설정 사용자 모두 해당).
+- **신규 `src/core/merge-session.js`, `src/core/merge-store.js`**: 소설 범위 합본(`novelVolume`)과 챕터 묶음(`zipOfFiles`)을 배치 큐 위에서 처리합니다. 회차를 받는 즉시 저장소(소설 본문: GM 스토리지, 만화 CBZ: 사이트 origin의 IndexedDB)에 보관하고, 모든 회차가 끝나면 번호 순서대로 한 파일(또는 분할 단위별 ZIP)로 저장합니다.
+- 실패/중단 회차가 있으면 자동 합본하지 않고 "확인 필요" 상태로 두며, 대시보드에서 실패 회차 재시도·부분 합본 저장(누락 리포트 동반)·폐기를 선택할 수 있습니다.
+- 소설 범위 합본도 기존 순차 iframe 루프 대신 배치 큐를 사용하도록 바꿔 재시도·이어받기·동시 수집이 적용됩니다. 이에 따라 `tokiDownload()`의 미사용 순차 루프와 `generateDownloadReport()`를 제거했습니다(`processItem()`은 현재 회차 단건 다운로드용으로 유지).
+- **`src/core/worker-controller.js`**: `handleBatchSuccess()`가 합본 세션 소속 회차는 개별 저장 대신 합본 저장소에 보관합니다(소설 범위 합본은 회차별 EPUB 빌드 생략).
+- **설정**: "만화 합본 분할 단위"(`TOKI_MERGE_PART_SIZE`, 기본 10화, 0 = 분할 없음) 추가.
+
+### ⏸️ 중단된 작업 이어받기 (Orphan Queue)
+- **`src/core/queue.js`**: 탭별 생존 신호(`TOKI_TAB_HB_<tabId>`, 10초 주기, 페이지 이탈 시 삭제)를 도입하고, 소유 탭이 사라진 pending/processing 항목을 고아로 식별하는 `getOrphanItems()`, 현재 탭으로 이어받는 `reclaimOrphanItems()`(미러 도메인 변경 시 회차 URL origin 교체), `discardOrphanItems()`를 추가했습니다. 기존에는 탭 새로고침/종료 시 항목이 영구히 방치되었습니다.
+- **`src/core/downloader.js`**: `resumeQueuedWork()`, `startBatchPipeline()`을 추가했고, 새 다운로드 시 고아 항목과 합본 세션 실패 항목은 자동 정리 대상에서 제외합니다. 동일 회차가 이미 처리 중이면 중복 등록을 막습니다.
+
+### 🚦 동시 수집 / 백그라운드
+- **`src/core/queue.js`**: 선언만 되고 쓰이지 않던 `MAX_CONCURRENCY`를 설정값 "동시 수집 창 수"(`TOKI_MAX_WORKERS`, 1~3, 기본 1)로 대체했습니다. 팝업이 닫힌 뒤 파일 조립·저장 중인 회차가 다음 회차 수집을 막지 않도록 했고, 실행 중 들어온 스케줄 트리거가 유실되지 않도록 재검사를 예약합니다.
+- **버그 수정 — 스케줄러의 Anti-Sleep 호출이 동작하지 않던 문제**: `queue.js`가 `startSilentAudio/stopSilentAudio`를 import하지 않아 호출 시 ReferenceError가 try/catch에 묻혀 있었습니다.
+- **`src/core/anti_sleep.js`**: `startSilentAudio()`가 실제 재생 성공 여부를 `Promise<boolean>`으로 반환합니다. 기존에는 자동재생 차단 시에도 "백그라운드 모드 자동 활성화" 성공 로그가 출력되었습니다. 차단 시 다음 클릭/키 입력에서 자동 재시도하며, 상태는 대시보드에 표시됩니다.
+- **`src/core/worker-extractor.js`**: 수집 창이 최소화되거나 가려지면(hidden) 대시보드 로그로 경고를 보냅니다.
+- **`src/core/downloader.js`**: `finally`에서 `document.querySelector('iframe').remove()`로 사이트 자체 iframe까지 지울 수 있던 정리 코드를 제거했습니다.
+
+### 📄 전체 회차 불러오기
+- **대시보드 다운로드 탭**: "전체 회차 불러오기" 버튼(페이지별 진행률), 총 회차·번호 범위·번호가 비는 구간 경고, 범위 입력 미리보기("→ N화를 받습니다"), 최신 10/50/100화 빠른 선택을 추가했습니다. 10분 이내 불러온 목록은 다운로드 시 재사용합니다(`GenericParser.hasFreshAllPageCache()`).
+- **`src/core/parsers/GenericParser.js`**: `getListItems()`에 `onProgress` 콜백을 추가하고, 목록 페이지 동시 요청을 4 → 2로 줄이고 배치 사이에 350ms 간격을 두었습니다.
+
+### 🧪 테스트
+- `src/core/test-eventbus.js`: 고아 식별/이어받기, 소설 합본 순서·정리, 실패 시 확인 필요 전환과 부분 합본, 챕터 묶음 분할, 동시 수집 2개 기동 테스트 5건을 추가했습니다(총 41건 통과).
+
+## [v1.26.8] - 2026-11-05
+
+### 🐛 소설 본문 추출 (Shadow DOM 관통) 및 팝업 재시도 최적화
+- **`src/core/index.js`**: `attachShadow` 후킹 시 생성된 ShadowRoot를 `window.__tokisync_shadow_roots`에 수집하도록 변경했습니다.
+- **`src/core/utils.js`**: `deepQuerySelector()`가 쉼표 셀렉터를 분리하고 Shadow Host 셀렉터를 우선 탐색하도록 개선했으며, 중첩 Shadow DOM과 Light DOM을 모두 관통하는 `extractDeepNovelText()` 헬퍼를 추가했습니다.
+- **`src/core/worker-extractor.js`**: 소설 폴링을 `extractDeepNovelText()` 기반으로 교체하고(최대 20회, 50자 이상 확인), 본문이 확보되면 가상 스크롤을 조기 종료합니다.
+- **`src/core/worker-controller.js`**: 단일 워커 `WORKER_READY` 중복 수신을 차단하고, `fetchNovelText()`를 "1차 팝업 → Plan C(API 복호화) → 1회 팝업 재시도" 순서로 바꿔 불필요한 3회 팝업 새로고침을 줄였습니다.
+
+### ✨ 회차 목록 전체 수집 보강
+- **`src/core/parsers/GenericParser.js`**: 페이지 컨트롤 판별 로직(버튼/링크 내부 span, `pg_current` 구조) 보강, DOM 순서 기반 페이지네이션 컨테이너 폴백, Main World 스크립트 주입 클릭(React/Next.js 합성 이벤트 대응), 그리고 뷰어 내부 `<select>` 전체 회차 드롭다운을 이용한 Tier 4 폴백을 추가했습니다.
+- **`src/core/parsers/RuleManager.js`, `rules.sample.json`, `package.json`**: 버전을 1.26.8로 올렸습니다.
+- **`tokisync_user.js`**: 1.26.8 번들로 교체했습니다(사용자 제공 파일).
+
 ## [v1.26.4] - 2026-07-01
 
 ### 🛠️ Local/Drive Download Pipeline Consolidation

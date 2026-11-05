@@ -23,7 +23,14 @@ import './listeners.js';
                     init.mode = 'open';
                     console.log('[TokiSync] 🔒 닫힌 Shadow DOM -> Open 모드로 은밀 개방 완료');
                 }
-                return originalAttachShadow.apply(this, arguments);
+                const root = originalAttachShadow.apply(this, arguments);
+                try {
+                    if (!window.__tokisync_shadow_roots) window.__tokisync_shadow_roots = [];
+                    if (root && !window.__tokisync_shadow_roots.includes(root)) {
+                        window.__tokisync_shadow_roots.push(root);
+                    }
+                } catch (e) {}
+                return root;
             };
 
             // B. 네이티브 프로토타입 체인 완벽 일치 (hasOwnProperty('toString') 방어)

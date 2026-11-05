@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TokiSync (Link to Drive)
 // @namespace    http://tampermonkey.net/
-// @version      1.26.7
+// @version      1.26.8
 // @description  Toki series sites -> Google Drive syncing tool (Bundled)
 // @author       pray4skylark
 // @updateURL    https://alienayleen.github.io/tokiSync/tokiSync.user.js
@@ -2825,7 +2825,10 @@ class BaseParser {
     }
 }
 
+// EXTERNAL MODULE: ./src/core/utils.js
+var utils = __webpack_require__(721);
 ;// CONCATENATED MODULE: ./src/core/parsers/GenericParser.js
+
 
 
 /**
@@ -3114,13 +3117,29 @@ class GenericParser extends BaseParser {
             if (el.closest?.('ul.ep-list-v2, ul.novel-eps, .list-body, #toon_list, li.ep-row-v2, li.list-item')) return false;
             if (el.closest?.('#bo_vc, #bo_v_cmt, .view-comment, #comment, #comments, [class*="comment" i], [id*="comment" i], [class*="cmt" i], [id*="cmt" i]')) return false;
 
+            const tag = (el.tagName || '').toUpperCase();
+            // <button>이나 <a> 내부의 자식 <span>/<strong> 등은 부모 <button>/<a>가 컨트롤이므로 건너뜀
+            const parentBtnOrLink = el.closest?.('button, a');
+            if (parentBtnOrLink && parentBtnOrLink !== el) return false;
+
             const rawTxt = (el.textContent || '').trim();
             if (!rawTxt || rawTxt.length > 24) return false;
 
+            // <button> 또는 <a> 태그는 내부에 다른 <button>/<a>만 없으면 자식 <span> 개수와 무관하게 단일 컨트롤로 인정
+            if (tag === 'BUTTON' || tag === 'A' || el.getAttribute?.('role') === 'button') {
+                if (typeof el.querySelector === 'function' && el.querySelector('button, a')) return false;
+                return true;
+            }
+
+            const cleanTxt = rawTxt.replace(/현재|열린|페이지|쪽|\s+/g, '').replace(/^\[|\]$/g, '').trim();
+            const isPageToken = /^\d{1,3}$/.test(cleanTxt) || /^(?:›|>|다음|«|<<|처음|»|>>|맨끝|끝)$/.test(cleanTxt);
+
             const children = Array.from(el.children || []).filter(ch => !/pg_only|sound_only|sr-only|blind/i.test(ch.className || ''));
             if (children.length > 0) {
+                if (typeof el.querySelector === 'function' && el.querySelector('button, a')) return false;
                 if (children.some(ch => (ch.textContent || '').trim() === rawTxt)) return false;
-                if (children.length > 1) return false;
+                // <strong class="pg_current"><span>현재</span>1<span>페이지</span></strong> 형태 허용
+                if (!isPageToken || children.length > 3) return false;
             }
             return true;
         });
@@ -3204,6 +3223,11 @@ class GenericParser extends BaseParser {
                 }
             }
         } catch (e) {}
+
+        // 4. DOM 순서 기반 폴백: 에피소드 리스트 이후 ~ 댓글 영역 이전에 페이지 컨트롤이 존재하면 상위 컨테이너 반환
+        if (listEl && doc.body && hasPageControls(doc.body)) {
+            return doc.body;
+        }
 
         return null;
     }
@@ -3529,15 +3553,30 @@ class GenericParser extends BaseParser {
 
         const triggerClick = (el) => {
             if (!el) return false;
+            let clicked = false;
+            try {
+                // 1) 페이지 Main World 컨텍스트에서 직접 클릭 실행 (Tampermonkey 샌드박스 우회로 React/Next.js 합성 이벤트 100% 작동 보장)
+                if (this._doc && typeof this._doc.createElement === 'function' && (this._doc.head || this._doc.documentElement) && typeof el.setAttribute === 'function') {
+                    const token = 'toki_clk_' + Math.random().toString(36).slice(2, 9);
+                    el.setAttribute('data-toki-click-id', token);
+                    try {
+                        const s = this._doc.createElement('script');
+                        s.textContent = `(function(){var e=document.querySelector('[data-toki-click-id="${token}"]');if(e){['pointerdown','mousedown','mouseup'].forEach(function(t){e.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window}));});if(typeof e.click==='function')e.click();}})();`;
+                        (this._doc.head || this._doc.documentElement).appendChild(s);
+                        s.remove();
+                        clicked = true;
+                    } catch (_) {}
+                    try { el.removeAttribute('data-toki-click-id'); } catch (_) {}
+                }
+            } catch (_) {}
+
+            // 2) 샌드박스 직접 클릭 병행 (단위 테스트 및 CSP 환경 호환)
             if (typeof el.click === 'function') {
-                el.click();
-                return true;
+                try { el.click(); clicked = true; } catch (_) {}
+            } else if (el.parentElement && typeof el.parentElement.click === 'function') {
+                try { el.parentElement.click(); clicked = true; } catch (_) {}
             }
-            if (el.parentElement && typeof el.parentElement.click === 'function') {
-                el.parentElement.click();
-                return true;
-            }
-            return false;
+            return clicked;
         };
 
         // <a> 태그 클릭 시 SPA 라우터(#__next, document)는 통과하되 브라우저 전체 페이지 새로고침만 최상단(window)에서 방어
@@ -3891,7 +3930,78 @@ class GenericParser extends BaseParser {
             }
         }
 
+        // Tier 4. 뷰어 내부 <select> 전체 회차 드롭다운 폴백
+        const dropdownMerged = await this._collectViaViewerDropdown(currentPageItems);
+        if (dropdownMerged && dropdownMerged.length > currentPageItems.length) {
+            this._cachedAllPageUrl = currentUrl;
+            this._cachedAllPageItems = dropdownMerged;
+            return dropdownMerged;
+        }
+
         return currentPageItems;
+    }
+
+    /**
+     * Tier 4 폴백: 현재 페이지의 최소 회차 번호가 1보다 큰데(예: 1페이지가 934~834화) 목록 페이지네이션이 실패한 경우,
+     * 첫 번째 회차의 뷰어 페이지 HTML 내부에 있는 전체 회차 이동 <select> 드롭다운에서 전 회차 목록을 일괄 추출
+     * @private
+     */
+    async _collectViaViewerDropdown(currentPageItems) {
+        if (!Array.isArray(currentPageItems) || currentPageItems.length < 5) return null;
+        try {
+            const firstParsed = this.parseListItem(currentPageItems[0]);
+            const lastParsed = this.parseListItem(currentPageItems[currentPageItems.length - 1]);
+            const minNum = Math.min(parseInt(firstParsed.num, 10) || 0, parseInt(lastParsed.num, 10) || 0);
+            if (minNum <= 1) return null; // 이미 1화까지 포함되어 있으면 불필요
+
+            const sampleEpUrl = firstParsed.src || lastParsed.src;
+            if (!sampleEpUrl) return null;
+
+            const viewerDoc = await this._fetchPageDocument(sampleEpUrl);
+            if (!viewerDoc || typeof viewerDoc.querySelectorAll !== 'function') return null;
+
+            const selects = Array.from(viewerDoc.querySelectorAll('select'));
+            let bestOptions = [];
+            for (const sel of selects) {
+                const opts = Array.from(sel.querySelectorAll('option')).filter(o => o.getAttribute('value'));
+                if (opts.length > currentPageItems.length && opts.length > bestOptions.length) {
+                    bestOptions = opts;
+                }
+            }
+            if (bestOptions.length <= currentPageItems.length) return null;
+
+            console.log(`[GenericParser] 🎯 뷰어 내 전체 회차 <select> 드롭다운 감지 (${bestOptions.length}개 회차) -> 전 회차 일괄 추출!`);
+            const base = new URL(sampleEpUrl, this.protocolDomain || 'http://localhost');
+            const seriesBaseMatch = base.pathname.match(/^(\/(?:novel|webtoon|manhwa|manga|comic|toon|book)\/[^\/]+)/i);
+            const seriesBasePath = seriesBaseMatch ? seriesBaseMatch[1] : base.pathname.replace(/\/[^\/]+$/, '');
+
+            const syntheticItems = bestOptions.map((opt, idx) => {
+                const rawVal = (opt.getAttribute('value') || '').trim();
+                const titleTxt = (opt.textContent || '').trim() || `${bestOptions.length - idx}화`;
+                let epHref = rawVal;
+                if (!rawVal.startsWith('http') && !rawVal.startsWith('/')) {
+                    epHref = `${seriesBasePath}/${rawVal}`;
+                }
+                const numMatch = titleTxt.match(/(\d+)\s*(?:화|회|편|권)/) || titleTxt.match(/^(\d+)/);
+                const inferredNum = numMatch ? numMatch[1] : String(bestOptions.length - idx);
+                const fakeLi = {
+                    _tokiEffectiveNum: inferredNum,
+                    tagName: 'LI',
+                    textContent: titleTxt,
+                    innerText: titleTxt,
+                    querySelector: (s) => {
+                        if (s.includes('a')) return { getAttribute: (a) => a === 'href' ? epHref : null, textContent: titleTxt, innerText: titleTxt };
+                        return { textContent: titleTxt, innerText: titleTxt };
+                    },
+                    querySelectorAll: () => []
+                };
+                return fakeLi;
+            });
+
+            return syntheticItems;
+        } catch (e) {
+            return null;
+        }
     }
 
     parseListItem(el) {
@@ -3949,12 +4059,15 @@ class GenericParser extends BaseParser {
         const selector = viewerCfg.novelContent || 'article.novel-viewer, #novel_content, body';
 
         const candidateSelectors = [
+            '.theme-novel-content',
+            '.novel-epub-rendered',
             ...String(selector).split(',').map(s => s.trim()).filter(Boolean),
             'article.novel-viewer',
-            '#novel_content',
-            '.novel-epub-rendered',
-            '.theme-novel-content'
+            '#novel_content'
         ];
+
+        const deepText = (0,utils/* extractDeepNovelText */.JK)(iframeDocument, candidateSelectors);
+        if (deepText && deepText.length >= 40) return deepText;
 
         const el = this._deepQuerySelector(iframeDocument, candidateSelectors);
         if (!el) return "";
@@ -4209,14 +4322,14 @@ class GenericParser extends BaseParser {
  */
 class RuleManager {
     static get _version() {
-        return  true ? "1.26.7" : 0;
+        return  true ? "1.26.8" : 0;
     }
 
     static #builtInRules = [
         {
                 "id": "blacktoon_webtoon",
                 "name": "통합 웹툰 규칙 (신형 v2 & 뉴토끼/마나토끼 호환)",
-                "_version": "1.26.7",
+                "_version": "1.26.8",
                 "urlPattern": ".*/(webtoon|toon)/.*",
                 "idExtraction": {
                         "source": "url",
@@ -4308,7 +4421,7 @@ class RuleManager {
         {
                 "id": "blacktoon_manhwa",
                 "name": "통합 만화 규칙 (신형 v2 & 마나토끼/뉴토끼 호환)",
-                "_version": "1.26.7",
+                "_version": "1.26.8",
                 "urlPattern": ".*/(manhwa|manga|comic)/.*",
                 "idExtraction": {
                         "source": "url",
@@ -4400,7 +4513,7 @@ class RuleManager {
         {
                 "id": "blacktoon_novel",
                 "name": "통합 소설 규칙 (신형 v2 & 북토끼/뉴토끼 호환)",
-                "_version": "1.26.7",
+                "_version": "1.26.8",
                 "urlPattern": ".*/(novel|book)/.*",
                 "idExtraction": {
                         "source": "url",
@@ -4485,7 +4598,7 @@ class RuleManager {
         {
                 "id": "toki_common",
                 "name": "구형 토끼 계열 (그누보드 뉴토끼/마나토끼/북토끼) 통합 규칙",
-                "_version": "1.26.7",
+                "_version": "1.26.8",
                 "urlPattern": "^(?!.*(newtoki[0-9]*\\.org|sbxh[0-9]*\\.|ntk[0-9]*\\.)).*(newtoki|manatoki|comic|booktoki).*",
                 "category": "Webtoon",
                 "meta": {
@@ -4597,11 +4710,11 @@ class RuleManager {
                 modified = true;
             }
 
-            // 2. 기존 내장 규칙(blacktoon_*, toki_common)을 최신 v1.26.7 통합 스펙으로 자동 업그레이드
+            // 2. 기존 내장 규칙(blacktoon_*, toki_common)을 최신 v1.26.8 통합 스펙으로 자동 업그레이드
             parserRules = parserRules.map(r => {
-                if (builtInMap.has(r.id) && r._version !== '1.26.7') {
+                if (builtInMap.has(r.id) && r._version !== '1.26.8') {
                     modified = true;
-                    return { ...builtInMap.get(r.id), _version: '1.26.7' };
+                    return { ...builtInMap.get(r.id), _version: '1.26.8' };
                 }
                 return r;
             });
@@ -4615,7 +4728,7 @@ class RuleManager {
             }
 
             if (modified) {
-                console.log("[RuleManager] 🔄 v1.26.7 통합 파서 규칙(newtoki1.org & sbxh9.com 겸용) 자동 업그레이드 완료.");
+                console.log("[RuleManager] 🔄 v1.26.8 통합 파서 규칙(newtoki1.org & sbxh9.com 겸용) 자동 업그레이드 완료.");
                 this.saveParserRules(parserRules);
             }
         }
@@ -6175,7 +6288,7 @@ class FormRuleEditor {
     }
 
     render() {
-        const scriptVer =  true ? "1.26.7" : 0;
+        const scriptVer =  true ? "1.26.8" : 0;
         this.overlay.innerHTML = `
             <div class="toki-modal toki-form-editor-modal">
                 <div class="toki-modal-header">
@@ -8723,7 +8836,7 @@ function showProgressModal() {
 /***/ (function(__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) {
 
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "TK": function() { return /* binding */ deepQuerySelector; },
+/* harmony export */   "JK": function() { return /* binding */ extractDeepNovelText; },
 /* harmony export */   "_v": function() { return /* binding */ sleep; },
 /* harmony export */   "iV": function() { return /* binding */ getCommonPrefix; },
 /* harmony export */   "n1": function() { return /* binding */ scrollToLoad; },
@@ -8734,7 +8847,7 @@ function showProgressModal() {
 /* harmony export */   "xg": function() { return /* binding */ waitForContent; },
 /* harmony export */   "yH": function() { return /* binding */ saveFile; }
 /* harmony export */ });
-/* unused harmony exports waitIframeLoad, pauseForCaptcha, getImageDimensions */
+/* unused harmony exports deepQuerySelector, waitIframeLoad, pauseForCaptcha, getImageDimensions */
 /* harmony import */ var _gas_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(653);
 /* harmony import */ var _ui_index_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(414);
 
@@ -8749,21 +8862,169 @@ function showProgressModal() {
  * @returns {Element|null}
  */
 function deepQuerySelector(root, selectors) {
-    for (const sel of selectors) {
+    if (!root) return null;
+    // 쉼표(,)로 묶인 셀렉터를 개별 셀렉터로 분리하되, Shadow Host 전용 셀렉터(.theme-novel-content, .novel-epub-rendered)를 외곽 래퍼(#novel_content, article.novel-viewer)보다 먼저 탐색
+    const flatSelectors = [];
+    for (const raw of (Array.isArray(selectors) ? selectors : [selectors])) {
+        if (!raw) continue;
+        for (const part of String(raw).split(',').map(s => s.trim()).filter(Boolean)) {
+            if (!flatSelectors.includes(part)) flatSelectors.push(part);
+        }
+    }
+    flatSelectors.sort((a, b) => {
+        const aScore = /theme-novel-content|novel-epub-rendered/.test(a) ? 0 : 1;
+        const bScore = /theme-novel-content|novel-epub-rendered/.test(b) ? 0 : 1;
+        return aScore - bScore;
+    });
+
+    // 1. 내부에 shadowRoot를 직접 보유한 매칭 엘리먼트를 최우선 반환
+    for (const sel of flatSelectors) {
         try {
-            const found = root.querySelector(sel);
-            if (found) return found;
+            const matches = root.querySelectorAll ? Array.from(root.querySelectorAll(sel)) : [];
+            const withShadow = matches.find(el => el && el.shadowRoot);
+            if (withShadow) return withShadow;
         } catch (e) {}
     }
 
-    const children = root.querySelectorAll('*');
+    // 2. 하위 Shadow DOM 내부를 재귀 탐색
+    const children = root.querySelectorAll ? root.querySelectorAll('*') : [];
     for (const el of children) {
         if (el.shadowRoot) {
-            const found = deepQuerySelector(el.shadowRoot, selectors);
+            const found = deepQuerySelector(el.shadowRoot, flatSelectors);
             if (found) return found;
         }
     }
+
+    // 3. 일반 Light DOM 매칭 반환
+    for (const sel of flatSelectors) {
+        try {
+            const found = root.querySelector ? root.querySelector(sel) : null;
+            if (found) return found;
+        } catch (e) {}
+    }
     return null;
+}
+
+/**
+ * Shadow DOM(중첩/익명 포함) 및 Light DOM 전체를 관통하여 소설 본문 텍스트를 추출하는 통합 헬퍼
+ * - 외곽 래퍼(#novel_content, article.novel-viewer) 내부 자식에 shadowRoot가 있을 때 기존 querySelectorAll('p')가 빈 배열을 반환하던 버그를 원천 해결
+ */
+function extractDeepNovelText(doc, candidateSelectors = []) {
+    if (!doc) return "";
+
+    const extractFromRoot = (rootNode) => {
+        if (!rootNode) return "";
+        const paragraphs = [];
+        const visitedRoots = new Set();
+
+        const walk = (node) => {
+            if (!node || visitedRoots.has(node)) return;
+            visitedRoots.add(node);
+
+            if (node.shadowRoot) {
+                walk(node.shadowRoot);
+            }
+
+            if (typeof node.querySelectorAll === 'function') {
+                // 직계 및 내부 p 태그 수집 (스타일/스크립트/댓글 제외)
+                const pList = Array.from(node.querySelectorAll('p'));
+                for (const p of pList) {
+                    if (p.closest?.('#bo_vc, .view-comment, #comment, #comments, [class*="comment" i], header, nav, footer')) continue;
+                    const txt = (p.textContent || '').trim();
+                    if (txt.length > 0) paragraphs.push(txt);
+                }
+                // 자식 요소 중 shadowRoot를 가진 요소 재귀 순회
+                const allDesc = Array.from(node.querySelectorAll('*'));
+                for (const d of allDesc) {
+                    if (d.shadowRoot) walk(d.shadowRoot);
+                }
+            }
+        };
+
+        walk(rootNode);
+        if (paragraphs.length > 0) {
+            const joined = paragraphs.join('\n\n').trim();
+            if (joined.length >= 40) return joined;
+        }
+
+        // <p> 태그가 없는 평문/div 구조일 경우 shadowRoot 포함 텍스트 추출
+        const textChunks = [];
+        const walkText = (node) => {
+            if (!node) return;
+            if (node.shadowRoot) walkText(node.shadowRoot);
+            const target = node.shadowRoot || node;
+            if (typeof target.cloneNode === 'function') {
+                try {
+                    const clone = target.cloneNode(true);
+                    if (typeof clone.querySelectorAll === 'function') {
+                        clone.querySelectorAll('style, script, noscript, nav, header, footer, .sound_only, .pg_only').forEach(e => e.remove());
+                    }
+                    const t = (clone.innerText || clone.textContent || '').trim();
+                    if (t.length >= 40) textChunks.push(t);
+                } catch (e) {}
+            }
+        };
+        walkText(rootNode);
+        return textChunks.join('\n\n').trim();
+    };
+
+    // 1순위: index.js의 attachShadow 후킹으로 포착된 모든 ShadowRoot 직접 검사
+    try {
+        const win = doc.defaultView || (typeof window !== 'undefined' ? window : null);
+        const capturedRoots = win?.__tokisync_shadow_roots || [];
+        for (const sr of capturedRoots) {
+            const txt = extractFromRoot(sr);
+            if (txt && txt.length >= 50) return txt;
+        }
+    } catch (e) {}
+
+    // 2순위: 지정된 후보 셀렉터(.theme-novel-content, .novel-epub-rendered, article.novel-viewer, #novel_content 등) 순회
+    const flatSelectors = [
+        '.theme-novel-content',
+        '.novel-epub-rendered',
+        'article.novel-viewer',
+        '#novel_content',
+        '.novel-viewer',
+        '.view-content'
+    ];
+    for (const raw of candidateSelectors) {
+        if (!raw) continue;
+        for (const part of String(raw).split(',').map(s => s.trim()).filter(Boolean)) {
+            if (!flatSelectors.includes(part)) flatSelectors.push(part);
+        }
+    }
+
+    for (const sel of flatSelectors) {
+        try {
+            const els = doc.querySelectorAll ? Array.from(doc.querySelectorAll(sel)) : [];
+            for (const el of els) {
+                const txt = extractFromRoot(el);
+                if (txt && txt.length >= 50) return txt;
+            }
+        } catch (e) {}
+    }
+
+    // 3순위: 문서 내 임의의 Shadow Host 전체 전수 검사
+    try {
+        const allEls = doc.querySelectorAll ? Array.from(doc.querySelectorAll('*')) : [];
+        for (const el of allEls) {
+            if (el.shadowRoot) {
+                const txt = extractFromRoot(el.shadowRoot);
+                if (txt && txt.length >= 50) return txt;
+            }
+        }
+    } catch (e) {}
+
+    // 4순위: 레거시 폰트 사이즈 스타일 컨테이너 폴백
+    try {
+        const legacyEl = doc.querySelector('.vw-bot-mini--novel')?.parentElement?.querySelector('div[style*="--novel-font-size"]');
+        if (legacyEl) {
+            const txt = extractFromRoot(legacyEl);
+            if (txt && txt.length >= 50) return txt;
+        }
+    } catch (e) {}
+
+    return "";
 }
 
 function arrayBufferToBase64(buffer) {
@@ -9593,13 +9854,18 @@ async function fetchMediaViaWorkerSingleAttempt(episodeUrl, targetType = 'novel'
             });
         };
 
+        let isSingleReadyHandled = false;
+
         // Register consolidated IPC Listener
         cleanupIpc = (0,_ipc_broker_js__WEBPACK_IMPORTED_MODULE_0__/* .registerIpcListener */ .nj)(async (msg) => {
             const { type, payload, sourceEvent } = msg;
             const sourceWindow = sourceEvent?.source || activeWorkerRef;
 
-            // 1. Handshake Ready Received ➡️ Inject Action Instructions
+            // 1. Handshake Ready Received ➡️ Inject Action Instructions (중복 하트비트 3회 반복 유입 차단 가드)
             if (type === 'WORKER_READY') {
+                if (isSingleReadyHandled) return;
+                isSingleReadyHandled = true;
+
                 if (handshakeTimeoutId) {
                     console.log('[WorkerController] 🎉 단일 워커 핸드셰이킹 성공 (30초 세이프티 해제)');
                     clearTimeout(handshakeTimeoutId);
@@ -9809,20 +10075,28 @@ async function fetchMediaViaWorker(episodeUrl, targetType = 'novel', config = {}
  * 소설 본문 수집 (Plan B: 자립형 팝업 ➡️ Plan C: API 복호화 폴백)
  */
 async function fetchNovelText(episodeUrl, config = {}) {
-    console.log('[WorkerController] 소설 수집 개시 (Plan B — 자립형 팝업)');
-    const result = await fetchMediaViaWorker(episodeUrl, 'novel', config);
-
-    if (result.success && result.content) {
-        return result.content; // 추출된 본문 텍스트 반환
+    console.log('[WorkerController] 소설 수집 개시 (1차 팝업 추출 시도)');
+    const firstTry = await fetchMediaViaWorkerSingleAttempt(episodeUrl, 'novel', config);
+    if (firstTry.success && firstTry.content) {
+        return firstTry.content;
     }
 
-    // Plan C Fallback: Local API Decryption (if decryptApi configuration exists)
+    // 1차 팝업 실패 시 즉시 Plan C(API 복호화) 폴백을 먼저 시도하여 불필요한 3회 팝업 새로고침 방지
     if (config.decryptApi || config.endpoint) {
-        console.warn('[WorkerController] Plan B 실패 ➡️ Plan C(API 복호화) 로컬 폴백 시도');
-        const content = await (0,_novel_decryptor_js__WEBPACK_IMPORTED_MODULE_7__/* .fetchNovelTextViaApi */ .J)(episodeUrl, config.decryptApi || config);
-        if (content) {
-            return content;
+        console.log('[WorkerController] 1차 팝업 미응답 ➡️ Plan C(API 직접 복호화) 즉시 시도');
+        const apiContent = await (0,_novel_decryptor_js__WEBPACK_IMPORTED_MODULE_7__/* .fetchNovelTextViaApi */ .J)(episodeUrl, config.decryptApi || config);
+        if (apiContent && apiContent.trim().length >= 50) {
+            closeActiveWorker();
+            return apiContent;
         }
+    }
+
+    // API 폴백도 없거나 실패한 경우에만 1회 추가 팝업 재시도
+    closeActiveWorker();
+    await new Promise(r => setTimeout(r, 1000));
+    const retryResult = await fetchMediaViaWorkerSingleAttempt(episodeUrl, 'novel', config);
+    if (retryResult.success && retryResult.content) {
+        return retryResult.content;
     }
 
     return null;
@@ -12687,7 +12961,10 @@ function initWorkerExtractor() {
                         window.dispatchEvent(new Event('scroll'));
 
                         (0,ipc_broker/* sendToParent */.U_)('WORKER_LOG', { msg: `가상 스크롤 진행 중: ${Math.round((step / scrollSteps) * 100)}%`, level: 'info' });
-                        await (0,utils/* sleep */._v)(800 * speedMultiplier);
+                        if ((0,utils/* extractDeepNovelText */.JK)(document, ['.theme-novel-content', '.novel-epub-rendered', viewerCfg.novelContent || '#novel_content']).length >= 100) {
+                            break;
+                        }
+                        await (0,utils/* sleep */._v)(400 * speedMultiplier);
                     }
 
                     // 최종 스크롤 아래로 고정
@@ -12715,43 +12992,23 @@ function initWorkerExtractor() {
                     await (0,utils/* sleep */._v)(300 * speedMultiplier);
 
                     let attempt = 0;
-                    const maxAttempts = 10;
+                    const maxAttempts = 20;
 
-                    // Poll Shadow DOM for novel text
+                    // Poll Shadow DOM & Light DOM for novel text (하위 중첩 Shadow Root까지 관통 추출하며 실제 본문 50자 이상이 렌더링될 때까지 대기)
                     const novelSel = viewerCfg.novelContent || '#novel_content';
-                    const candidateSelectors = [novelSel, '.novel-epub-rendered', '.theme-novel-content'];
+                    const candidateSelectors = ['.theme-novel-content', '.novel-epub-rendered', novelSel];
 
                     while (attempt < maxAttempts) {
                         attempt++;
-                        console.log(`[TokiSync:Worker] 소설 Shadow DOM 폴링 중... (${attempt}/${maxAttempts})`);
+                        console.log(`[TokiSync:Worker] 소설 본문(Shadow/Light DOM) 폴링 중... (${attempt}/${maxAttempts})`);
 
-                        // [Shadow DOM 관통 탐색] 셀렉터가 이름 없는(anonymous) Shadow Host 내부
-                        // 깊숙이 중첩되어 있어도 일반 querySelector가 닿지 못하던 문제를 해결
-                        let contentEl = (0,utils/* deepQuerySelector */.TK)(document, candidateSelectors);
-                        if (!contentEl) {
-                            // 레거시 사이트 구조 특화 폴백 (형제 엘리먼트 기반 탐지)
-                            contentEl = document.querySelector('.vw-bot-mini--novel')?.parentElement?.querySelector('div[style*="--novel-font-size"]') || null;
-                        }
-
-                        if (contentEl) {
+                        const extracted = (0,utils/* extractDeepNovelText */.JK)(document, candidateSelectors);
+                        if (extracted && extracted.trim().length >= 50) {
                             reportProgress(queueId, 50, core_queue/* WORKER_STAGE.PARSING */.fx.PARSING);
-                            // 매칭된 엘리먼트 자신이 Shadow Host라면 내부 shadowRoot가 실제 탐색 대상
-                            const searchRoot = contentEl.shadowRoot || contentEl;
-                            const pTags = searchRoot.querySelectorAll('p');
-                            if (pTags.length > 0) {
-                                content = Array.from(pTags)
-                                    .map(p => p.textContent.trim())
-                                    .filter(text => text.length > 0)
-                                    .join('\n\n');
-                            } else {
-                                const tempDiv = document.createElement('div');
-                                tempDiv.innerHTML = searchRoot.innerHTML || '';
-                                tempDiv.querySelectorAll('style, script').forEach(el => el.remove());
-                                content = tempDiv.innerText || tempDiv.textContent;
-                            }
+                            content = extracted.trim();
                             break;
                         }
-                        await (0,utils/* sleep */._v)(200 * speedMultiplier);
+                        await (0,utils/* sleep */._v)(250 * speedMultiplier);
                     }
 
                     // Fallback to Plan C: Decryption API
@@ -13120,7 +13377,14 @@ EventBus/* EventBus.on */.N.on(EventBus/* EVT.RULE_CACHE_CLEAR */.I.RULE_CACHE_C
                     init.mode = 'open';
                     console.log('[TokiSync] 🔒 닫힌 Shadow DOM -> Open 모드로 은밀 개방 완료');
                 }
-                return originalAttachShadow.apply(this, arguments);
+                const root = originalAttachShadow.apply(this, arguments);
+                try {
+                    if (!window.__tokisync_shadow_roots) window.__tokisync_shadow_roots = [];
+                    if (root && !window.__tokisync_shadow_roots.includes(root)) {
+                        window.__tokisync_shadow_roots.push(root);
+                    }
+                } catch (e) {}
+                return root;
             };
 
             // B. 네이티브 프로토타입 체인 완벽 일치 (hasOwnProperty('toString') 방어)
