@@ -10,21 +10,169 @@ import { LogBox, Notifier } from './ui/index.js';
  * @returns {Element|null}
  */
 export function deepQuerySelector(root, selectors) {
-    for (const sel of selectors) {
+    if (!root) return null;
+    // 쉼표(,)로 묶인 셀렉터를 개별 셀렉터로 분리하되, Shadow Host 전용 셀렉터(.theme-novel-content, .novel-epub-rendered)를 외곽 래퍼(#novel_content, article.novel-viewer)보다 먼저 탐색
+    const flatSelectors = [];
+    for (const raw of (Array.isArray(selectors) ? selectors : [selectors])) {
+        if (!raw) continue;
+        for (const part of String(raw).split(',').map(s => s.trim()).filter(Boolean)) {
+            if (!flatSelectors.includes(part)) flatSelectors.push(part);
+        }
+    }
+    flatSelectors.sort((a, b) => {
+        const aScore = /theme-novel-content|novel-epub-rendered/.test(a) ? 0 : 1;
+        const bScore = /theme-novel-content|novel-epub-rendered/.test(b) ? 0 : 1;
+        return aScore - bScore;
+    });
+
+    // 1. 내부에 shadowRoot를 직접 보유한 매칭 엘리먼트를 최우선 반환
+    for (const sel of flatSelectors) {
         try {
-            const found = root.querySelector(sel);
-            if (found) return found;
+            const matches = root.querySelectorAll ? Array.from(root.querySelectorAll(sel)) : [];
+            const withShadow = matches.find(el => el && el.shadowRoot);
+            if (withShadow) return withShadow;
         } catch (e) {}
     }
 
-    const children = root.querySelectorAll('*');
+    // 2. 하위 Shadow DOM 내부를 재귀 탐색
+    const children = root.querySelectorAll ? root.querySelectorAll('*') : [];
     for (const el of children) {
         if (el.shadowRoot) {
-            const found = deepQuerySelector(el.shadowRoot, selectors);
+            const found = deepQuerySelector(el.shadowRoot, flatSelectors);
             if (found) return found;
         }
     }
+
+    // 3. 일반 Light DOM 매칭 반환
+    for (const sel of flatSelectors) {
+        try {
+            const found = root.querySelector ? root.querySelector(sel) : null;
+            if (found) return found;
+        } catch (e) {}
+    }
     return null;
+}
+
+/**
+ * Shadow DOM(중첩/익명 포함) 및 Light DOM 전체를 관통하여 소설 본문 텍스트를 추출하는 통합 헬퍼
+ * - 외곽 래퍼(#novel_content, article.novel-viewer) 내부 자식에 shadowRoot가 있을 때 기존 querySelectorAll('p')가 빈 배열을 반환하던 버그를 원천 해결
+ */
+export function extractDeepNovelText(doc, candidateSelectors = []) {
+    if (!doc) return "";
+
+    const extractFromRoot = (rootNode) => {
+        if (!rootNode) return "";
+        const paragraphs = [];
+        const visitedRoots = new Set();
+
+        const walk = (node) => {
+            if (!node || visitedRoots.has(node)) return;
+            visitedRoots.add(node);
+
+            if (node.shadowRoot) {
+                walk(node.shadowRoot);
+            }
+
+            if (typeof node.querySelectorAll === 'function') {
+                // 직계 및 내부 p 태그 수집 (스타일/스크립트/댓글 제외)
+                const pList = Array.from(node.querySelectorAll('p'));
+                for (const p of pList) {
+                    if (p.closest?.('#bo_vc, .view-comment, #comment, #comments, [class*="comment" i], header, nav, footer')) continue;
+                    const txt = (p.textContent || '').trim();
+                    if (txt.length > 0) paragraphs.push(txt);
+                }
+                // 자식 요소 중 shadowRoot를 가진 요소 재귀 순회
+                const allDesc = Array.from(node.querySelectorAll('*'));
+                for (const d of allDesc) {
+                    if (d.shadowRoot) walk(d.shadowRoot);
+                }
+            }
+        };
+
+        walk(rootNode);
+        if (paragraphs.length > 0) {
+            const joined = paragraphs.join('\n\n').trim();
+            if (joined.length >= 40) return joined;
+        }
+
+        // <p> 태그가 없는 평문/div 구조일 경우 shadowRoot 포함 텍스트 추출
+        const textChunks = [];
+        const walkText = (node) => {
+            if (!node) return;
+            if (node.shadowRoot) walkText(node.shadowRoot);
+            const target = node.shadowRoot || node;
+            if (typeof target.cloneNode === 'function') {
+                try {
+                    const clone = target.cloneNode(true);
+                    if (typeof clone.querySelectorAll === 'function') {
+                        clone.querySelectorAll('style, script, noscript, nav, header, footer, .sound_only, .pg_only').forEach(e => e.remove());
+                    }
+                    const t = (clone.innerText || clone.textContent || '').trim();
+                    if (t.length >= 40) textChunks.push(t);
+                } catch (e) {}
+            }
+        };
+        walkText(rootNode);
+        return textChunks.join('\n\n').trim();
+    };
+
+    // 1순위: index.js의 attachShadow 후킹으로 포착된 모든 ShadowRoot 직접 검사
+    try {
+        const win = doc.defaultView || (typeof window !== 'undefined' ? window : null);
+        const capturedRoots = win?.__tokisync_shadow_roots || [];
+        for (const sr of capturedRoots) {
+            const txt = extractFromRoot(sr);
+            if (txt && txt.length >= 50) return txt;
+        }
+    } catch (e) {}
+
+    // 2순위: 지정된 후보 셀렉터(.theme-novel-content, .novel-epub-rendered, article.novel-viewer, #novel_content 등) 순회
+    const flatSelectors = [
+        '.theme-novel-content',
+        '.novel-epub-rendered',
+        'article.novel-viewer',
+        '#novel_content',
+        '.novel-viewer',
+        '.view-content'
+    ];
+    for (const raw of candidateSelectors) {
+        if (!raw) continue;
+        for (const part of String(raw).split(',').map(s => s.trim()).filter(Boolean)) {
+            if (!flatSelectors.includes(part)) flatSelectors.push(part);
+        }
+    }
+
+    for (const sel of flatSelectors) {
+        try {
+            const els = doc.querySelectorAll ? Array.from(doc.querySelectorAll(sel)) : [];
+            for (const el of els) {
+                const txt = extractFromRoot(el);
+                if (txt && txt.length >= 50) return txt;
+            }
+        } catch (e) {}
+    }
+
+    // 3순위: 문서 내 임의의 Shadow Host 전체 전수 검사
+    try {
+        const allEls = doc.querySelectorAll ? Array.from(doc.querySelectorAll('*')) : [];
+        for (const el of allEls) {
+            if (el.shadowRoot) {
+                const txt = extractFromRoot(el.shadowRoot);
+                if (txt && txt.length >= 50) return txt;
+            }
+        }
+    } catch (e) {}
+
+    // 4순위: 레거시 폰트 사이즈 스타일 컨테이너 폴백
+    try {
+        const legacyEl = doc.querySelector('.vw-bot-mini--novel')?.parentElement?.querySelector('div[style*="--novel-font-size"]');
+        if (legacyEl) {
+            const txt = extractFromRoot(legacyEl);
+            if (txt && txt.length >= 50) return txt;
+        }
+    } catch (e) {}
+
+    return "";
 }
 
 export function arrayBufferToBase64(buffer) {

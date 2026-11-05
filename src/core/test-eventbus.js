@@ -1681,5 +1681,46 @@ test('GenericParser.getListItems()는 1페이지가 <strong>이고 PC/모바일 
     }
 });
 
+
+// ── 테스트 34: 외곽 래퍼(#novel_content) 내부 자식에 ShadowRoot(.theme-novel-content)가 중첩된 경우 및 <button><span>2</span></button> 페이지네이션 검증 ──
+test('extractDeepNovelText()는 외곽 래퍼 내부의 자식 Shadow DOM 본문을 1차 시도에 즉시 추출하여 3회 재시도를 방지해야 합니다.', async () => {
+    const { extractDeepNovelText } = await import('./utils.js');
+    const shadowRoot = {
+        querySelectorAll(sel) {
+            if (sel === 'p') {
+                return [
+                    { textContent: '첫 번째 소설 문단입니다. 본문 길이가 충분히 길어야 유효한 소설 텍스트로 판정됩니다.', closest: () => null },
+                    { textContent: '두 번째 소설 문단입니다. 중첩된 Shadow DOM 내부에서도 한 번에 추출되어야 합니다.', closest: () => null }
+                ];
+            }
+            return [];
+        }
+    };
+    const innerShadowHost = { className: 'theme-novel-content', shadowRoot };
+    const outerWrapper = {
+        id: 'novel_content',
+        shadowRoot: null,
+        querySelectorAll(sel) {
+            if (sel === 'p') return []; // Light DOM에는 p 태그가 없음
+            if (sel === '*') return [innerShadowHost];
+            return [];
+        }
+    };
+    const mockDoc = {
+        querySelectorAll(sel) {
+            if (sel === '#novel_content' || sel === 'article.novel-viewer') return [outerWrapper];
+            if (sel === '.theme-novel-content') return [innerShadowHost];
+            if (sel === '*') return [outerWrapper, innerShadowHost];
+            return [];
+        }
+    };
+
+    const text = extractDeepNovelText(mockDoc, ['article.novel-viewer, #novel_content, .theme-novel-content']);
+    console.assert(text.includes('첫 번째 소설 문단입니다'), `중첩 Shadow DOM 본문 추출 실패: "${text}"`);
+    if (!text.includes('첫 번째 소설 문단입니다')) {
+        throw new Error('중첩 Shadow DOM 본문 추출 실패');
+    }
+});
+
 // 테스트 기동
 runTests();

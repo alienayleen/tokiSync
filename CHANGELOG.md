@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.26.8] - 2026-11-05
+
+### 🐛 소설 본문 추출 (Shadow DOM 관통) 및 팝업 재시도 최적화
+- **`src/core/index.js`**: `attachShadow` 후킹 시 생성된 ShadowRoot를 `window.__tokisync_shadow_roots`에 수집하도록 변경했습니다.
+- **`src/core/utils.js`**: `deepQuerySelector()`가 쉼표 셀렉터를 분리하고 Shadow Host 셀렉터를 우선 탐색하도록 개선했으며, 중첩 Shadow DOM과 Light DOM을 모두 관통하는 `extractDeepNovelText()` 헬퍼를 추가했습니다.
+- **`src/core/worker-extractor.js`**: 소설 폴링을 `extractDeepNovelText()` 기반으로 교체하고(최대 20회, 50자 이상 확인), 본문이 확보되면 가상 스크롤을 조기 종료합니다.
+- **`src/core/worker-controller.js`**: 단일 워커 `WORKER_READY` 중복 수신을 차단하고, `fetchNovelText()`를 "1차 팝업 → Plan C(API 복호화) → 1회 팝업 재시도" 순서로 바꿔 불필요한 3회 팝업 새로고침을 줄였습니다.
+
+### ✨ 회차 목록 전체 수집 보강
+- **`src/core/parsers/GenericParser.js`**: 페이지 컨트롤 판별 로직(버튼/링크 내부 span, `pg_current` 구조) 보강, DOM 순서 기반 페이지네이션 컨테이너 폴백, Main World 스크립트 주입 클릭(React/Next.js 합성 이벤트 대응), 그리고 뷰어 내부 `<select>` 전체 회차 드롭다운을 이용한 Tier 4 폴백을 추가했습니다.
+- **`src/core/parsers/RuleManager.js`, `rules.sample.json`, `package.json`**: 버전을 1.26.8로 올렸습니다.
+- **`tokisync_user.js`**: 1.26.8 번들로 교체했습니다(사용자 제공 파일).
+
 ## [v1.26.4] - 2026-07-01
 
 ### 🛠️ Local/Drive Download Pipeline Consolidation

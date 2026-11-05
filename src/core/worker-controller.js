@@ -116,13 +116,18 @@ async function fetchMediaViaWorkerSingleAttempt(episodeUrl, targetType = 'novel'
             });
         };
 
+        let isSingleReadyHandled = false;
+
         // Register consolidated IPC Listener
         cleanupIpc = registerIpcListener(async (msg) => {
             const { type, payload, sourceEvent } = msg;
             const sourceWindow = sourceEvent?.source || activeWorkerRef;
 
-            // 1. Handshake Ready Received ➡️ Inject Action Instructions
+            // 1. Handshake Ready Received ➡️ Inject Action Instructions (중복 하트비트 3회 반복 유입 차단 가드)
             if (type === 'WORKER_READY') {
+                if (isSingleReadyHandled) return;
+                isSingleReadyHandled = true;
+
                 if (handshakeTimeoutId) {
                     console.log('[WorkerController] 🎉 단일 워커 핸드셰이킹 성공 (30초 세이프티 해제)');
                     clearTimeout(handshakeTimeoutId);
@@ -332,20 +337,28 @@ async function fetchMediaViaWorker(episodeUrl, targetType = 'novel', config = {}
  * 소설 본문 수집 (Plan B: 자립형 팝업 ➡️ Plan C: API 복호화 폴백)
  */
 export async function fetchNovelText(episodeUrl, config = {}) {
-    console.log('[WorkerController] 소설 수집 개시 (Plan B — 자립형 팝업)');
-    const result = await fetchMediaViaWorker(episodeUrl, 'novel', config);
-
-    if (result.success && result.content) {
-        return result.content; // 추출된 본문 텍스트 반환
+    console.log('[WorkerController] 소설 수집 개시 (1차 팝업 추출 시도)');
+    const firstTry = await fetchMediaViaWorkerSingleAttempt(episodeUrl, 'novel', config);
+    if (firstTry.success && firstTry.content) {
+        return firstTry.content;
     }
 
-    // Plan C Fallback: Local API Decryption (if decryptApi configuration exists)
+    // 1차 팝업 실패 시 즉시 Plan C(API 복호화) 폴백을 먼저 시도하여 불필요한 3회 팝업 새로고침 방지
     if (config.decryptApi || config.endpoint) {
-        console.warn('[WorkerController] Plan B 실패 ➡️ Plan C(API 복호화) 로컬 폴백 시도');
-        const content = await fetchNovelTextViaApi(episodeUrl, config.decryptApi || config);
-        if (content) {
-            return content;
+        console.log('[WorkerController] 1차 팝업 미응답 ➡️ Plan C(API 직접 복호화) 즉시 시도');
+        const apiContent = await fetchNovelTextViaApi(episodeUrl, config.decryptApi || config);
+        if (apiContent && apiContent.trim().length >= 50) {
+            closeActiveWorker();
+            return apiContent;
         }
+    }
+
+    // API 폴백도 없거나 실패한 경우에만 1회 추가 팝업 재시도
+    closeActiveWorker();
+    await new Promise(r => setTimeout(r, 1000));
+    const retryResult = await fetchMediaViaWorkerSingleAttempt(episodeUrl, 'novel', config);
+    if (retryResult.success && retryResult.content) {
+        return retryResult.content;
     }
 
     return null;

@@ -3,7 +3,7 @@
  * Executes extraction and forwards raw content back to the parent controller.
  */
 
-import { sleep, waitForContent, scrollToLoad, fetchBlobWithXHR, blobToArrayBuffer, deepQuerySelector } from './utils.js';
+import { sleep, waitForContent, scrollToLoad, fetchBlobWithXHR, blobToArrayBuffer, deepQuerySelector, extractDeepNovelText } from './utils.js';
 import { WORKER_STAGE, getQueue } from './queue.js';
 import { registerIpcListener, sendToParent } from './ipc-broker.js';
 import { GenericParser } from './parsers/GenericParser.js';
@@ -221,7 +221,10 @@ export function initWorkerExtractor() {
                         window.dispatchEvent(new Event('scroll'));
 
                         sendToParent('WORKER_LOG', { msg: `가상 스크롤 진행 중: ${Math.round((step / scrollSteps) * 100)}%`, level: 'info' });
-                        await sleep(800 * speedMultiplier);
+                        if (extractDeepNovelText(document, ['.theme-novel-content', '.novel-epub-rendered', viewerCfg.novelContent || '#novel_content']).length >= 100) {
+                            break;
+                        }
+                        await sleep(400 * speedMultiplier);
                     }
 
                     // 최종 스크롤 아래로 고정
@@ -249,43 +252,23 @@ export function initWorkerExtractor() {
                     await sleep(300 * speedMultiplier);
 
                     let attempt = 0;
-                    const maxAttempts = 10;
+                    const maxAttempts = 20;
 
-                    // Poll Shadow DOM for novel text
+                    // Poll Shadow DOM & Light DOM for novel text (하위 중첩 Shadow Root까지 관통 추출하며 실제 본문 50자 이상이 렌더링될 때까지 대기)
                     const novelSel = viewerCfg.novelContent || '#novel_content';
-                    const candidateSelectors = [novelSel, '.novel-epub-rendered', '.theme-novel-content'];
+                    const candidateSelectors = ['.theme-novel-content', '.novel-epub-rendered', novelSel];
 
                     while (attempt < maxAttempts) {
                         attempt++;
-                        console.log(`[TokiSync:Worker] 소설 Shadow DOM 폴링 중... (${attempt}/${maxAttempts})`);
+                        console.log(`[TokiSync:Worker] 소설 본문(Shadow/Light DOM) 폴링 중... (${attempt}/${maxAttempts})`);
 
-                        // [Shadow DOM 관통 탐색] 셀렉터가 이름 없는(anonymous) Shadow Host 내부
-                        // 깊숙이 중첩되어 있어도 일반 querySelector가 닿지 못하던 문제를 해결
-                        let contentEl = deepQuerySelector(document, candidateSelectors);
-                        if (!contentEl) {
-                            // 레거시 사이트 구조 특화 폴백 (형제 엘리먼트 기반 탐지)
-                            contentEl = document.querySelector('.vw-bot-mini--novel')?.parentElement?.querySelector('div[style*="--novel-font-size"]') || null;
-                        }
-
-                        if (contentEl) {
+                        const extracted = extractDeepNovelText(document, candidateSelectors);
+                        if (extracted && extracted.trim().length >= 50) {
                             reportProgress(queueId, 50, WORKER_STAGE.PARSING);
-                            // 매칭된 엘리먼트 자신이 Shadow Host라면 내부 shadowRoot가 실제 탐색 대상
-                            const searchRoot = contentEl.shadowRoot || contentEl;
-                            const pTags = searchRoot.querySelectorAll('p');
-                            if (pTags.length > 0) {
-                                content = Array.from(pTags)
-                                    .map(p => p.textContent.trim())
-                                    .filter(text => text.length > 0)
-                                    .join('\n\n');
-                            } else {
-                                const tempDiv = document.createElement('div');
-                                tempDiv.innerHTML = searchRoot.innerHTML || '';
-                                tempDiv.querySelectorAll('style, script').forEach(el => el.remove());
-                                content = tempDiv.innerText || tempDiv.textContent;
-                            }
+                            content = extracted.trim();
                             break;
                         }
-                        await sleep(200 * speedMultiplier);
+                        await sleep(250 * speedMultiplier);
                     }
 
                     // Fallback to Plan C: Decryption API
