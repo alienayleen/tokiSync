@@ -13,7 +13,8 @@ import { startSilentAudio, stopSilentAudio } from './anti_sleep.js';
 import { fetchHistory, refreshCacheAfterUpload, getBooksByCacheId, initUpdateUploadViaGASRelay, getMergeIndexFragment } from './gas.js';
 import { fetchHistoryDirect, checkSingleHistoryDirect, getOAuthToken, getOrCreateFolder } from './network.js';
 import { fetchNovelText, fetchComicImages, closeActiveWorker, initBatchWorkerController } from './worker-controller.js';
-import { addEpisodesToQueue, initQueueScheduler, activeWorkers, WORKER_STAGE, updateQueueItem, getQueue, removeQueueItem, getQueueItemId, clearQueue, stopAllWorkers, removeSeriesFromQueue, removeCompletedAndFailedItems, TAB_ID } from './queue.js';
+import { addEpisodesToQueue, initQueueScheduler, runSchedulerOnce, activeWorkers, WORKER_STAGE, updateQueueItem, getQueue, getQueueItemId, removeQueueItem, removeCompletedAndFailedItems, TAB_ID, getMaxWorkers, getOrphanItems, reclaimOrphanItems, isTabAlive } from './queue.js';
+import { createMergeSession, resumeMergeSession, getMergeSessions } from './merge-session.js';
 
 async function shouldSkipEpisode({
     numStr,
@@ -52,6 +53,9 @@ async function shouldSkipEpisode({
     return false;
 }
 
+/**
+ * 단건(현재 페이지) 회차 추출: main.js의 현재 회차 다운로드에서 사용합니다.
+ */
 export async function processItem(item, builder, siteInfo, iframe, parser, seriesTitle = "", targetDoc = null, rootFolder = "", destination = "local") {
     const { category } = siteInfo;
     const isNovel = (category === 'Novel' || category === 'novel');
@@ -193,16 +197,19 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
     let isAsyncDelegate = false;
     
     // --- 🚨 대기열 스마트 자동 정리 및 동시 작업(Multi-Series Queue) 지원 ---
+    // [v1.27.0] 소유 탭이 사라진 고아 항목과 합본 세션 소속 항목은 자동 정리 대상에서 제외합니다.
+    //           (고아 항목은 대시보드의 "중단된 작업" 패널에서 이어받기/비우기로 처리)
     const currentQueue = getQueue();
     if (currentQueue.length > 0) {
-        const hasPendingOrProcessing = currentQueue.some(item => item.status === 'pending' || item.status === 'processing');
+        const orphanIds = new Set(getOrphanItems().map(i => i.id));
+        const hasPendingOrProcessing = currentQueue.some(item => (item.status === 'pending' || item.status === 'processing') && !orphanIds.has(item.id));
         if (!hasPendingOrProcessing) {
-            // 진행 중인 작업이 없으면 이전 완료/실패 기록을 묻지 않고 자동 초기화
-            console.log('[TokiSync] 활성 작업이 없으므로 이전 대기열 내역을 자동 초기화합니다.');
-            clearQueue();
+            // 진행 중인 작업이 없으면 이전 완료/실패 기록을 정리 (고아 항목·합본 세션 항목은 보존)
+            console.log('[TokiSync] 활성 작업이 없으므로 이전 대기열 완료/실패 내역을 정리합니다.');
+            removeCompletedAndFailedItems({ keepMergeItems: true });
         } else {
             // 다른 탭/작품이 수집 중인 경우: 완료·실패된 잔여 항목만 정리하고 새 작품을 대기열에 병합 추가 (동시 작업 허용)
-            removeCompletedAndFailedItems();
+            removeCompletedAndFailedItems({ keepMergeItems: true });
             console.log('[TokiSync] ➕ 진행 중인 작업 감지 -> 기존 작업을 중단하지 않고 대기열에 새 작업을 추가합니다.');
         }
     }
@@ -212,27 +219,20 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
     logger.show();
     logger.info(`다운로드 시작 (정책: ${policy}, 강제 덮어쓰기: ${forceOverwrite})...`);
 
-    // Auto-start Anti-Sleep mode
-    try {
-        startSilentAudio();
-        logger.success('[Anti-Sleep] 백그라운드 모드 자동 활성화');
-    } catch (e) {
-        logger.log('[Anti-Sleep] 자동 시작 실패 (사용자 상호작용 필요)', 'error');
-    }
-
-    const failedEpisodes = [];  // [v1.8.1] 완전 실패 리스트
-    const partialFailures = []; // [v1.8.1] 부분 실패 리스트 (이미지 일부 누락)
+    // Auto-start Anti-Sleep mode (실제 재생 성공 여부를 확인한 뒤 로그 출력)
+    startSilentAudio().then(ok => {
+        if (ok) logger.success('[Anti-Sleep] 백그라운드 유지 모드 활성화');
+        else logger.warn('[Anti-Sleep] 브라우저가 자동재생을 막아 백그라운드 유지 모드가 꺼져 있습니다. 페이지를 한 번 클릭하면 자동으로 다시 시도합니다.', 'Anti-Sleep');
+    });
     const siteInfo = await detectSite();
     if (!siteInfo) {
         EventBus.emit(EVT.NOTIFY_ERROR, { msg: "지원하지 않는 사이트이거나 다운로드 페이지가 아닙니다." });
-        stopSilentAudio();
         return;
     }
 
     const parser = await ParserFactory.getParser();
     if (!parser) {
         EventBus.emit(EVT.NOTIFY_ERROR, { msg: "파서를 초기화할 수 없습니다." });
-        stopSilentAudio();
         return;
     }
 
@@ -243,9 +243,6 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
 
     try {
         // Prepare Strategy Variables
-        let mainBuilder = null;
-        let masterZip = null;
-        let extension = 'zip';
         let destination = 'local'; // 기본 저장 대상
         let buildingPolicy = 'individual'; // 기본 빌딩 정책
         
@@ -291,17 +288,12 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
             'manga': 'cbz'
         };
 
-        if (buildingPolicy === 'zipOfCbzs') {
-            masterZip = new JSZip(); // Master Container for current batch
-            extension = EXTENSION_MAP[category] ?? 'cbz';
-        } else {
-            // Individual / native / drive
-            extension = EXTENSION_MAP[category] ?? 'cbz';
-        }
-
-        // Get List (다중 페이지 전체 회차 강제 최신 스캔)
-        logger.info('📄 전체 페이지 회차 목록을 스캔 중입니다...', 'Downloader');
-        let list = await parser.getListItems({ allPages: true, forceRefresh: true });
+        // Get List
+        // [v1.27.0] 대시보드에서 "전체 회차 불러오기"로 최근(10분 이내) 스캔한 목록이 있으면 재사용하여
+        //           다운로드마다 전체 페이지를 다시 요청하지 않습니다.
+        const hasFreshScan = typeof parser.hasFreshAllPageCache === 'function' && parser.hasFreshAllPageCache(10 * 60 * 1000);
+        logger.info(hasFreshScan ? '📄 최근 불러온 전체 회차 목록을 재사용합니다.' : '📄 전체 페이지 회차 목록을 스캔 중입니다...', 'Downloader');
+        let list = await parser.getListItems({ allPages: true, forceRefresh: !hasFreshScan });
 
         // [v1.26.7] 회차 번호가 모두 0이거나 누락된 경우 역순(최신순->1화순) 인덱스 기반 고유 번호 부여
         const rawMapped = list.map((li, idx) => {
@@ -543,28 +535,34 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
             }
         }
 
-        // [v1.21.2] 공통 범용 큐 선등록 래퍼 (Universal Queue Pre-Registration)
-        // 어떤 다운로드 정책이 들어와도 루프 시작 전 전체 수집 대상 에피소드 목록을 큐에 선등록
+        // [v1.27.0] 합본 정책 판별
+        // - 소설 + "범위 합본"            → novelVolume (EPUB/TXT 한 권)
+        // - 챕터 묶음(zipOfCbzs) 정책      → zipOfFiles (회차 파일을 ZIP으로 묶음, 만화는 분할 단위 적용)
+        // v1.26.4 이후 zipOfCbzs도 배치 큐로 넘어가면서 실제로는 회차별 개별 저장만 되던 문제를 함께 해결합니다.
         const currentNovelMode = getConfig().novelMode;
-        const currentIsSingleVolume = isNovel && currentNovelMode === 'singleVolume';
-        
+        const mergeKind = (isNovel && currentNovelMode === 'singleVolume')
+            ? 'novelVolume'
+            : (buildingPolicy === 'zipOfCbzs' ? 'zipOfFiles' : null);
+        if (mergeKind && (destination === 'drive' || destination === 'drive_kavita')) {
+            logger.warn('ℹ️ 합본 결과물은 로컬로 저장됩니다. (드라이브 업로드는 개별 회차 정책에서만 지원)', 'Merge');
+        }
+
         const pendingEpisodes = [];
         for (let i = 0; i < list.length; i++) {
             const item = parser.parseListItem(list[i].element || list[i]);
             const numStr = item.num ? item.num.toString() : '';
-            const numPlain = parseInt(numStr).toString();
-            
-            // 구글 드라이브 스킵 필터 (드라이브 전용)
+
+            // 구글 드라이브 스킵 필터 (드라이브 개별 저장 전용)
             const isSkip = await shouldSkipEpisode({
                 numStr,
                 destination,
-                isSingleVolume: currentIsSingleVolume,
+                isSingleVolume: !!mergeKind,
                 uploadedHistorySet,
                 historyCheckTimeoutFlag,
                 historyFolderId
             });
             if (isSkip) continue;
-            
+
             pendingEpisodes.push({
                 title: item.title,
                 url: item.src || item.url || (list[i].element || list[i]).href || location.href,
@@ -572,7 +570,7 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
                 category: category,
                 viewerCfg: parser.rule.viewer || {},
                 rootFolder: rootFolder,
-                destination: destination,
+                destination: mergeKind ? (destination === 'native' ? 'native' : 'local') : destination,
                 novelFormat: configNovelFormat,
                 matchedRule: parser.rule,
                 protocolDomain: parser.protocolDomain || window.location.origin,
@@ -581,541 +579,187 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
         }
 
         if (pendingEpisodes.length === 0) {
-            if ((destination === 'drive' || destination === 'drive_kavita') && !currentIsSingleVolume) {
+            if (destination === 'drive' || destination === 'drive_kavita') {
                 logger.success('✅ 모든 에피소드가 이미 드라이브에 존재하여 수집을 조기 완료합니다.', 'Queue');
-                stopSilentAudio();
-                return;
-            }
-        } else {
-            // [v1.21.4] 구글 드라이브 업로드 모드 시, 큐 등록 전 작품 폴더를 선제 생성/확정하여 큐 전파 (경쟁적 중복 폴더 생성 차단)
-            let activeFolderId = historyFolderId;
-            if ((destination === 'drive' || destination === 'drive_kavita') && !activeFolderId) {
-                const cleanSeries = seriesTitle.replace(/^\[[^\]]+\]\s*/, '');
-                const targetFolder = destination === 'drive_kavita' ? cleanSeries : rootFolder;
-                logger.log(`📁 [Drive] 신규 작품 폴더 선제 생성 중: ${targetFolder}`);
-                try {
-                    const token = await getOAuthToken();
-                    let parentFolderId = getConfig().folderId;
-                    if (destination === 'drive' || destination === 'drive_kavita') {
-                        const categoryFolder = category || 'Webtoon';
-                        parentFolderId = await getOrCreateFolder(categoryFolder, getConfig().folderId, token);
-                    }
-                    activeFolderId = await getOrCreateFolder(targetFolder, parentFolderId, token);
-                    logger.success(`📁 [Drive] 신규 작품 폴더 선제 생성 완료 -> ID: ${activeFolderId}`);
-                } catch (folderErr) {
-                    logger.error(`❌ [Drive] 폴더 선제 생성 중 에러 발생: ${folderErr.message}`);
-                }
-            }
-
-            // 모든 pendingEpisodes에 확정된 폴더 ID 주입
-            const mappedEpisodes = pendingEpisodes.map(ep => ({
-                ...ep,
-                folderId: activeFolderId || ''
-            }));
-
-            const injected = addEpisodesToQueue(mappedEpisodes, seriesTitle, { ownerTabId: TAB_ID, isSingleVolume: currentIsSingleVolume });
-            logger.log(`🗂️ [공통 큐] 수집 대상 ${injected}개 에피소드를 대기열에 선등록 완료.`, 'Queue');
-        }
-
-        // [v1.26.4] 소설 합본 모드를 제외한 모든 다운로드 정책을 신뢰성 높은 배치 큐 파이프라인으로 대통합
-        if (!currentIsSingleVolume) {
-            logger.log(`🚦 [멀티큐] 차세대 자율형 멀티큐 배치 수집기(v1.21.0) 가동 준비...`, 'Queue');
-
-            // 팝업 차단 회피용 동기적 자식 창 사전 오픈 (Pre-open)
-            const MAX_CONCURRENCY = 1;
-            const openCount = activeWorkers.size > 0 ? 0 : Math.min(MAX_CONCURRENCY, pendingEpisodes.length);
-            logger.log(`🛡️ 팝업 차단 필터 우회를 위한 자식 창 ${openCount}개 선제 확보(Pre-open) 중...`, 'Queue');
-
-            const width = 400;
-            const height = 600;
-            const leftBase = window.screen.width - width - 50;
-            const topBase = 100;
-
-            const freshlyOpened = [];
-            for (let i = 0; i < openCount; i++) {
-                const ep = pendingEpisodes[i];
-                const id = getQueueItemId(seriesTitle, ep.episodeNum);
-                const left = leftBase - (i * 50);
-                const top = topBase + (i * 50);
-                const workerName = `tokisync_novel_worker_${id}`.replace(/[^a-zA-Z0-9_]/g, '');
-
-                logger.log(`🚀 [Pre-open #${i + 1}] 자식 팝업 창 생성: ${ep.title}`);
-                const popupRef = window.open(
-                    ep.url,
-                    workerName,
-                    `width=${width},height=${height},left=${left},top=${top},noopener=false,scrollbars=yes,resizable=yes`
-                );
-
-                if (popupRef) {
-                    activeWorkers.set(id, popupRef);
-                    updateQueueItem(id, { status: 'processing', stage: WORKER_STAGE.INIT });
-                    freshlyOpened.push(id);
-                } else {
-                    logger.error(`❌ [Pre-open #${i + 1}] 브라우저 차단으로 자식 창 확보에 실패하였습니다.`, 'Queue');
-                }
-            }
-
-            if (freshlyOpened.length > 0 || activeWorkers.size > 0) {
-                logger.success(`🚦 멀티큐 스케줄러 기동 완료. 릴레이 루프 활성화.`, 'Queue');
-                initBatchWorkerController();
-                initQueueScheduler();
-                isAsyncDelegate = true;
             } else {
-                logger.error(`❌ 선제 확보된 자식 창이 없어 큐 수집을 중지합니다.`, 'Queue');
-                stopSilentAudio();
+                logger.warn('수집할 회차가 없습니다.', 'Downloader');
             }
-
-            return; // 큐 엔진에 스케줄 위임 후 early exit
+            return;
         }
 
-        // Create IFrame
-        // 목록 페이지 최하단에 배치 + opacity 0.1
-        // IntersectionObserver가 정상 동작하며, 브라우저가 일반 문서 흐름으로 렌더링
-        const iframe = document.createElement('iframe');
-        iframe.classList.add('toki-visible-block', 'toki-downloader-iframe');
-        document.body.appendChild(iframe);
-
-        // [v1.7.1] Novel Single Volume Mode Init
-        const configParams = getConfig();
-        const novelMode = configParams.novelMode;
-        const novelFormat = configParams.novelFormat || 'epub';
-        const isSingleVolume = isNovel && novelMode === 'singleVolume';
-        let masterNovelBuilder = null;
-        if (isSingleVolume) {
-            masterNovelBuilder = novelFormat === 'txt' ? new TxtBuilder() : new EpubBuilder();
-            logger.log(`📙 소설 단행본 합본 모드 활성화 (${novelFormat.toUpperCase()}) (마지막에 한 번에 저장됩니다)`);
+        // 동일 회차가 이미 다른 작업으로 대기/진행 중이면 중복 등록 차단 (합본 세션 결과 누락 방지)
+        const pendingIds = new Set(pendingEpisodes.map(ep => getQueueItemId(seriesTitle, ep.episodeNum)));
+        const conflicting = getQueue().filter(q => pendingIds.has(q.id) && (q.status === 'pending' || q.status === 'processing'));
+        if (conflicting.length > 0) {
+            logger.warn(`⚠️ 선택한 회차 중 ${conflicting.length}개가 이미 대기열에서 처리 중입니다. 기존 작업이 끝난 뒤 다시 시도하거나 대시보드에서 정리해 주세요.`, 'Queue');
+            EventBus.emit(EVT.NOTIFY_ERROR, { msg: `선택한 회차 중 ${conflicting.length}개가 이미 대기열에서 처리 중입니다.\n기존 작업이 끝난 뒤 다시 시도하거나, 대시보드에서 중단된 작업을 정리해 주세요.` });
+            return;
         }
 
-        // --- Processing Loop ---
-        for (let i = 0; i < list.length; i++) {
-            const item = parser.parseListItem(list[i].element || list[i]); 
-            console.clear();
-            logger.info(`[${i + 1}/${list.length}] 처리 중: ${item.title}`);
-
-            // [v1.5.0 Smart Skip] Skip already-uploaded episodes (Drive policy only)
-            // [v1.7.1] Bypass skipping in Single Volume mode (we need all chapters)
-            const numStr = item.num ? item.num.toString() : '';
-            const isSkip = await shouldSkipEpisode({
-                numStr,
-                destination,
-                isSingleVolume,
-                uploadedHistorySet,
-                historyCheckTimeoutFlag,
-                historyFolderId,
-                logOnSkip: true,
-                episodeTitle: item.title
-            });
-            if (isSkip) continue;
-
-            // Decision based on Policy
-            let currentBuilder = null;
-
-            // [v1.6.0] Strategy: Always use a FRESH builder per item for Kavita compatibility
-            // [v1.7.1] Except for Novel Single Volume Mode
-            if (isSingleVolume) {
-                currentBuilder = masterNovelBuilder;
-            } else {
-                if (isNovel) currentBuilder = novelFormat === 'txt' ? new TxtBuilder() : new EpubBuilder();
-                else currentBuilder = new CbzBuilder();
-            }
-
-            // Process Item
-            let selfContained = false;
+        // [v1.21.4] 구글 드라이브 업로드 모드 시, 큐 등록 전 작품 폴더를 선제 생성/확정 (경쟁적 중복 폴더 생성 차단)
+        let activeFolderId = historyFolderId;
+        if (!mergeKind && (destination === 'drive' || destination === 'drive_kavita') && !activeFolderId) {
+            const cleanSeries = seriesTitle.replace(/^\[[^\]]+\]\s*/, '');
+            const targetFolder = destination === 'drive_kavita' ? cleanSeries : rootFolder;
+            logger.log(`📁 [Drive] 신규 작품 폴더 선제 생성 중: ${targetFolder}`);
             try {
-                selfContained = await processItem(item, currentBuilder, siteInfo, iframe, parser, seriesTitle, null, rootFolder, destination);
-                
-                // [v1.8.1] 부분 실패 체크 (이미지 누락 여부) - 자립형 워커가 아닌 로컬 빌더 구동 시에만 처리
-                if (!selfContained && currentBuilder && currentBuilder.chapters) {
-                    const latestChapter = currentBuilder.chapters[currentBuilder.chapters.length - 1];
-                    if (latestChapter && Array.isArray(latestChapter.images)) {
-                        const missingCount = latestChapter.images.filter(img => img.isMissing).length;
-                        if (missingCount > 0) {
-                            console.warn(`[Downloader] 부분 실패 감지: ${item.title} (이미지 ${missingCount}개 누락)`);
-                            partialFailures.push({
-                                num: item.num,
-                                title: item.title,
-                                missingCount: missingCount
-                            });
-                        }
-                    }
-                }
-
-                if (!selfContained && isSingleVolume) {
-                    const currentSize = currentBuilder.chapters ? currentBuilder.chapters.length : (currentBuilder.content ? currentBuilder.content.split('===').length - 1 : 0);
-                    logger.log(`📥 챕터 추가 완료: ${item.title} (현재 ${currentSize}개)`, 'Downloader');
-                }
-            } catch (err) {
-                console.error(err);
-                const errorMsg = err.message || "알 수 없는 오류";
-                logger.error(`항목 처리 실패 (${item.title}): ${errorMsg}`, 'Downloader');
-                
-                // 실패 시 큐 아이템 상태도 failed로 즉시 동기화하여 pending/processing 고착 방지
-                const failedId = getQueueItemId(seriesTitle, item.num ? item.num.toString() : '');
-                EventBus.emit(EVT.QUEUE_ITEM_UPDATE, { id: failedId, updates: { status: 'failed', stage: WORKER_STAGE.FAILED, errorMsg } });
-
-                // [v1.8.1] 실패 내역 저장
-                failedEpisodes.push({
-                    num: item.num,
-                    title: item.title,
-                    error: errorMsg
-                });
-                continue; // Skip faulty item but continue loop
-            }
-
-            // 만약 자식 워커가 업로드/저장까지 자체 종결했다면, 부모 창의 개별 파일 빌딩/저장 흐름을 완전히 건너뛴다.
-            if (selfContained) {
-                continue;
-            }
-
-            // Post-Process for Non-Default Policies
-            if (buildingPolicy !== 'folderInCbz' && !isSingleVolume) {
-                // Build the individual chapter file
-             
-                // Clean Filename Logic
-                // [v1.4.0 Update] Standardized format: "0001 - SeriesTitle 1화" (Keep Full Title)
-                // Reason: Better identification when moving files out of folder
-                
-                let chapterTitle = item.title;
-                
-                // [v1.4.0] Title Normalization
-                // If list title text differs from official metadata title, replace it.
-                // Ex: List="Hot Manga 19", Meta="Cool Manga" -> "Cool Manga 19"
-                // Condition: We have both titles, they differ, and item starts with list prefix
-                if (seriesTitle && listPrefixTitle && seriesTitle !== listPrefixTitle && listPrefixTitle.length > 2) {
-                     if (chapterTitle.startsWith(listPrefixTitle)) {
-                         chapterTitle = chapterTitle.replace(listPrefixTitle, seriesTitle).trim();
-                     }
-                }
-                
-                // Only clean (remove series title) if uploading to Drive
-                // [Deprecated] User requested to keep series title
-                /*
-                if (destination === 'drive' && seriesTitle && chapterTitle.startsWith(seriesTitle)) {
-                    chapterTitle = chapterTitle.replace(seriesTitle, '').trim();
-                }
-                */
-
-                // Final Filename: Dynamic based on Template or Drive fallback
-                let fullFilename;
-                if (destination !== 'drive') {
-                    const template = config.localNameTemplate || "{number:4} - {title}";
-                    const cleanSeries = (seriesTitle || rootFolder || '').replace(/^\[[^\]]+\]\s*/, '');
-                    
-                    // 1. Dynamic padding {number:X} support
-                    fullFilename = template.replace(/\{number:(\d)\}/g, (match, p1) => {
-                        const padSize = parseInt(p1, 10);
-                        return padSize > 0 
-                            ? (item.num || '').toString().padStart(padSize, '0') 
-                            : (item.num || '').toString();
-                    });
-
-                    // 2. Legacy {number} & {rawNumber} fallback + 작품명(문서 이름) 자동 포함 보장
-                    const cleanValidSeries = cleanSeries.replace(/^Unknown\s*Series$/i, '').trim();
-                    const legacyPaddedNum = (item.num || '').toString().padStart(4, '0');
-                    const rawChapTitle = (chapterTitle || '').trim();
-                    const hasSeries = !cleanValidSeries || rawChapTitle.includes(cleanValidSeries);
-                    const effectiveChapTitle = (!template.includes('{series}') && !hasSeries)
-                        ? `${cleanValidSeries} ${rawChapTitle}`.trim()
-                        : rawChapTitle;
-                    fullFilename = fullFilename
-                        .replace(/\{number\}/g, legacyPaddedNum)
-                        .replace(/\{rawNumber\}/g, (item.num || '').toString())
-                        .replace(/\{series\}/g, cleanValidSeries)
-                        .replace(/\{title\}/g, effectiveChapTitle);
-                    if (cleanValidSeries && !fullFilename.includes(cleanValidSeries)) {
-                        fullFilename = `${cleanValidSeries} - ${fullFilename}`.trim();
-                    }
-                } else {
-                    // drive (레거시): 기존 명명법인 `[ID] 작품명 0001화` 강제 적용
-                    const paddedNum = (item.num || '').toString().padStart(4, '0');
-                    fullFilename = `${rootFolder} ${paddedNum}화`;
-                }
-
-                // [v1.6.0] Kavita Metadata Insertion
-                const innerZip = await currentBuilder.build({ 
-                    series: seriesTitle || rootFolder,
-                    title: chapterTitle,
-                    number: item.num,
-                    writer: siteName
-                });
-                const blob = await innerZip.generateAsync({ type: "blob" });
-
-                if (buildingPolicy === 'zipOfCbzs') {
-                    console.log(`[MasterZip] 추가 중: ${fullFilename}.${extension}`);
-                    masterZip.file(`${fullFilename}.${extension}`, blob);
-                    
-                    // [v1.8.2] Batching Logic
-                    // Novel: Infinite batch. Webtoon: 10 per batch to prevent OOM (하향 조정)
-                    const processedCount = i + 1;
-                    const isLastItem = (i === list.length - 1);
-                    const BATCH_SIZE = isNovel ? Infinity : 10;
-
-                    if ((BATCH_SIZE !== Infinity && processedCount % BATCH_SIZE === 0) || isLastItem) {
-                        const batchNum = Math.ceil(processedCount / BATCH_SIZE);
-                        const batchFilename = `${rootFolder}_Part${batchNum}`;
-                        
-                        logger.info(`📦 배치 저장 중... (${batchFilename})`);
-                        await saveFile(masterZip, batchFilename, 'local', 'zip', { category });
-                        
-                        // Clear masterZip for next batch to save memory and GC
-                        masterZip = null;
-                        masterZip = new JSZip();
-                    }
-                } else if (buildingPolicy === 'individual') {
-                    // [v1.6.0] Phase B-3: Fast Path Smart Branching
-                    let success = false;
-                    const cachedFileId = episodeCacheMap.get(fullFilename);
-
-                    if ((destination === 'drive' || destination === 'drive_kavita') && cachedFileId) {
-                        try {
-                            logger.log(`⚡ [Fast Path] 캐시 히트! 무탐색 덮어쓰기 (PUT) 진행 -> ID: ${cachedFileId}`);
-                            
-                            // 1. Init Update Session
-                            // Notice: We do NOT use direct upload here because direct upload deletes existing files.
-                            // We MUST use GAS Relay to trigger the specific PATCH/PUT resumable session.
-                            const updateUrl = await initUpdateUploadViaGASRelay(cachedFileId, `${fullFilename}.${extension}`);
-                            
-                            // 2. Transmit chunks (re-use standard GM_xmlHttpRequest logic from gas.js)
-                            // We can build a quick uploader here or expose a method. Since gas.js encapsulates it tightly,
-                            // we inline the chunk upload for the Fast Path for maximum control:
-                            const CHUNK_SIZE = 20 * 1024 * 1024;
-                            const totalSize = blob.size;
-                            let start = 0;
-                            const buffer = await blob.arrayBuffer();
-                            
-                            while (start < totalSize) {
-                                const end = Math.min(start + CHUNK_SIZE, totalSize);
-                                const chunkBuffer = buffer.slice(start, end);
-                                const chunkBase64 = arrayBufferToBase64(chunkBuffer);
-
-                                await new Promise((res, rej) => {
-                                    GM_xmlhttpRequest({
-                                        method: "POST", url: getConfig().gasUrl,
-                                            data: JSON.stringify({ 
-                                                type: "upload", uploadUrl: updateUrl, chunkData: chunkBase64, 
-                                                folderId: getConfig().folderId,
-                                                protocolVersion: 3,
-                                                start: start, end: end, total: totalSize, apiKey: getConfig().apiKey
-                                            }),
-                                        headers: { "Content-Type": "text/plain" },
-                                        timeout: 300000,
-                                        onload: (resp) => {
-                                            try { 
-                                                const json = JSON.parse(resp.responseText); 
-                                                if (json.status === 'success') res(); else rej(new Error("Fail")); 
-                                            } catch (e) { rej(e); }
-                                        },
-                                        onerror: rej
-                                    });
-                                });
-                                start = end;
-                            }
-                            
-                            logger.success(`⚡ [Fast Path] ${fullFilename} 업데이트(PUT) 완료!`, 'FastPath');
-                            success = true;
-                        } catch (fastPathErr) {
-                            const errMsg = fastPathErr.message || "";
-                            logger.log(`⚠️ Fast Path 업로드 중 에러 발생 (${errMsg}), Fallback 시작...`, 'warn', 'FastPath');
-                            
-                            // [v1.7.3] 자가 회복 로직: 휴지통 또는 파일 부재 시 캐시 삭제
-                            const lowerMsg = errMsg.toLowerCase();
-                            if (lowerMsg.includes('trash') || lowerMsg.includes('not found')) {
-                                logger.warn(`🗑️ [Fast Path] 휴지통/부재 감지 → 캐시에서 해당 항목 삭제 및 일반 업로드 전환: ${fullFilename}`);
-                                episodeCacheMap.delete(fullFilename);
-                            }
-                            
-                            success = false; // Fallback
-                        }
-                    }
-
-                    if (!success) {
-                        // Fallback (or local save)
-                        logger.log(`[Upload] 일반 업로드(Create/POST) 진행...`);
-                        await saveFile(blob, fullFilename, destination, extension, {
-                            folderName: rootFolder,
-                            category: category
-                        });
-                    }
-                }
-            }
-            
-            // [v1.4.0] Add completion badge to list item (real-time feedback)
-            if (item.element && !item.element.querySelector('.toki-badge')) {
-                const badge = document.createElement('span');
-                badge.className = 'toki-badge';
-                badge.innerText = '✅';
-                // Styles moved to .toki-badge in ui.css
-                
-                // Target: .wr-subject > a (link element)
-                const linkEl = item.element.querySelector('.wr-subject > a');
-                if (linkEl) {
-                    linkEl.prepend(badge);
-                } else {
-                    // Fallback
-                    const titleEl = item.element.querySelector('.wr-subject, .item-subject, .title');
-                    if (titleEl) {
-                        titleEl.prepend(badge);
-                    } else {
-                        item.element.appendChild(badge);
-                    }
-                }
-                
-                // Visual feedback (v1.9.5 consistent styling)
-                item.element.classList.add('toki-downloaded');
-            }
-            
-            // GC 가드: 사용 완료된 개별 챕터 빌더의 메모리 즉시 해제
-            currentBuilder = null;
-        }
-
-
-        // [v1.7.1] Finalize Single Volume EPUB/TXT
-        if (isSingleVolume && masterNovelBuilder) {
-            const hasContent = masterNovelBuilder.chapters ? masterNovelBuilder.chapters.length > 0 : masterNovelBuilder.content.length > 0;
-            if (hasContent) {
-                try {
-                    // [v1.7.1 Update] Use Chapter Range for Filename instead of "(합본)"
-                    // [v1.7.1 Update] Use Chapter Range for Filename instead of "(합본)" - Safe Parsing
-                    const startRaw = last.num;
-                    const endRaw = first.num;
-                    const startNum = parseInt(startRaw);
-                    const endNum = parseInt(endRaw);
-
-                    let rangeLabel = "";
-                    if (isNaN(startNum) || isNaN(endNum)) {
-                        // Fallback to original labels if either is not numeric (e.g., "공지")
-                        rangeLabel = (startRaw === endRaw) ? `${startRaw}` : `${startRaw}-${endRaw}`;
-                    } else {
-                        rangeLabel = (startNum === endNum) ? `${startNum}화` : `${Math.min(startNum, endNum)}-${Math.max(startNum, endNum)}화`;
-                    }
-                    const cleanSingleTitle = (explicitSeriesTitle || seriesTitle || rootFolder || '').replace(/^\[[^\]]+\]\s*/, '').replace(/^Unknown\s*Series$/i, '').trim() || rootFolder;
-                    const finalFilename = `${cleanSingleTitle} (${rangeLabel})`;
-                    
-                    logger.info(`📚 단행본 조립 및 저장 중... (${finalFilename})`);
-                    
-                    const finalZip = await masterNovelBuilder.build({
-                        series: seriesTitle || rootFolder,
-                        title: seriesTitle || rootFolder,
-                        writer: siteName
-                    });
-                    const finalBlob = await finalZip.generateAsync({ type: "blob" });
-                    
-                    await saveFile(finalBlob, finalFilename, destination, extension, {
-                        folderName: rootFolder,
-                        category: category
-                    });
-                    
-                    logger.success(`✅ 단행본 합본 저장 완료: ${finalFilename}`);
-                    removeSeriesFromQueue(seriesTitle);
-                    EventBus.emit(EVT.UPDATE_PROGRESS);
-                } catch (epubErr) {
-                    logger.error(`단행본 빌드 실패: ${epubErr.message}`);
-                }
-            } else {
-                logger.warn('⚠️ 유효한 챕터가 없어 단행본 빌드를 취소합니다.', 'Downloader');
+                const token = await getOAuthToken();
+                const parentFolderId = await getOrCreateFolder(category || 'Webtoon', getConfig().folderId, token);
+                activeFolderId = await getOrCreateFolder(targetFolder, parentFolderId, token);
+                logger.success(`📁 [Drive] 신규 작품 폴더 선제 생성 완료 -> ID: ${activeFolderId}`);
+            } catch (folderErr) {
+                logger.error(`❌ [Drive] 폴더 선제 생성 중 에러 발생: ${folderErr.message}`);
             }
         }
 
-        // Cleanup
-        iframe.remove();
-
-        // [v1.5.5] 배치 완료 후 Drive 캐시 단일 갱신 (에피소드마다 호출하지 않음)
-        if (destination === 'drive' || destination === 'drive_kavita') {
-            const cleanFolder = rootFolder.replace(/^\[[^\]]+\]\s*/, '');
-            const targetFolder = destination === 'drive_kavita' ? cleanFolder : rootFolder;
-            refreshCacheAfterUpload(targetFolder, category, seriesMetadata).catch(e =>
-                logger.warn(`캐시 갱신 호출 중 실패 (무시): ${e.message}`, 'GAS:Cache')
-            );
+        // 합본 세션 생성
+        let mergeSessionId = '';
+        if (mergeKind) {
+            const template = {
+                category,
+                viewerCfg: parser.rule.viewer || {},
+                rootFolder,
+                destination: destination === 'native' ? 'native' : 'local',
+                novelFormat: configNovelFormat,
+                matchedRule: parser.rule,
+                protocolDomain: parser.protocolDomain || window.location.origin,
+                seriesMetadata,
+                folderId: ''
+            };
+            const session = createMergeSession({
+                kind: mergeKind,
+                seriesTitle,
+                displayTitle: (explicitSeriesTitle || seriesTitle || rootFolder),
+                rootFolder,
+                category,
+                novelFormat: configNovelFormat,
+                siteName,
+                destination,
+                partSize: isNovel ? 0 : getConfig().mergePartSize,
+                origin: window.location.origin,
+                items: pendingEpisodes.map(ep => ({
+                    id: getQueueItemId(seriesTitle, ep.episodeNum),
+                    num: ep.episodeNum,
+                    title: ep.title,
+                    url: ep.url
+                })),
+                template
+            });
+            mergeSessionId = session.id;
+            const kindLabel = mergeKind === 'novelVolume' ? `소설 단행본(${configNovelFormat.toUpperCase()})` : '챕터 묶음(ZIP)';
+            logger.info(`📚 [합본] ${kindLabel} 작업 생성: ${pendingEpisodes.length}화 수집 후 한 번에 저장합니다. (중간에 탭을 닫아도 이어받기 가능)`, 'Merge');
         }
 
-        logger.success(`✅ 모든 작업 완료!`);
-        Notifier.notify('TokiSync', `다운로드 완료! (${list.length - failedEpisodes.length}개 성공, ${failedEpisodes.length}개 실패)`);
+        const mappedEpisodes = pendingEpisodes.map(ep => ({
+            ...ep,
+            folderId: activeFolderId || '',
+            mergeSessionId
+        }));
+        const injected = addEpisodesToQueue(mappedEpisodes, seriesTitle, { ownerTabId: TAB_ID, isSingleVolume: false, mergeSessionId });
+        logger.log(`🗂️ [공통 큐] 수집 대상 ${injected}개 에피소드를 대기열에 선등록 완료.`, 'Queue');
 
-        // [v1.8.1] 고도화된 실패 리포트 생성 및 저장 (MCP 검토 반영)
-        await generateDownloadReport(seriesTitle || rootFolder, seriesId, list.length, failedEpisodes, partialFailures);
-
+        // 배치 큐 파이프라인 기동
+        isAsyncDelegate = startBatchPipeline(pendingEpisodes.map(ep => ({
+            id: getQueueItemId(seriesTitle, ep.episodeNum),
+            url: ep.url,
+            title: ep.title
+        })));
+        if (!isAsyncDelegate && mergeSessionId) {
+            logger.warn('⚠️ 수집 창을 열지 못해 합본 작업이 대기 상태로 남았습니다. 팝업 차단을 해제한 뒤 대시보드에서 "이어받기"를 눌러 주세요.', 'Merge');
+        }
+        return; // 큐 엔진에 스케줄 위임 후 early exit
     } catch (error) {
         console.error(error);
         logger.error(`전체 다운로드 루틴 오류 발생: ${error.message}`, 'System');
         alert(`다운로드 중 오류 발생:\n${error.message}`);
     } finally {
         if (!isAsyncDelegate) {
-            // 동기 루프(단행본 합본 등)가 종료되면 잔여 pending/processing 상태를 자동 정리하고 다운로드 버튼 UI를 즉시 복원
-            const remQueue = getQueue();
-            if (remQueue.length > 0 && !remQueue.some(i => i.status === 'processing')) {
-                clearQueue();
-            }
             EventBus.emit(EVT.UPDATE_PROGRESS);
-            // Auto-stop Anti-Sleep mode
-            stopSilentAudio();
-            logger.log('[Anti-Sleep] 백그라운드 모드 자동 종료');
+            // 이 탭에서 진행 중인 배치 작업이 없을 때만 Anti-Sleep 종료
+            const hasMyActive = getQueue().some(i => i.ownerTabId === TAB_ID && (i.status === 'pending' || i.status === 'processing'));
+            if (!hasMyActive) stopSilentAudio();
         } else {
             console.log('[Anti-Sleep] 비동기 멀티큐 배치 위임으로 안티 슬립 상태를 지속 유지합니다.');
         }
-        
-        // [Cleanup 팝업 세션] 다운로드 종료 후 액티브 팝업 폐쇄
-        try {
-            closeActiveWorker();
-        } catch (popupErr) {
-            console.warn('[Downloader] 팝업 클린업 실패:', popupErr);
-        }
-
-        // Cleanup
-        const iframe = document.querySelector('iframe');
-        if (iframe) iframe.remove();
+        // (v1.27.0) 기존 finally의 document.querySelector('iframe').remove()는 사이트 자체 iframe까지 지울 수 있어 제거했습니다.
     }
 }
 
+/**
+ * 배치 큐 파이프라인 기동: 팝업 차단 회피용 자식 창 사전 확보(Pre-open) + 배치 컨트롤러/스케줄러 초기화
+ * @param {Array<{id:string,url:string,title:string}>} targets 사전 확보 후보 (대기열 순서)
+ * @returns {boolean} 스케줄러 위임 성공 여부
+ */
+export function startBatchPipeline(targets = []) {
+    logger.log(`🚦 [멀티큐] 배치 수집기 가동 준비...`, 'Queue');
+    const maxWorkers = getMaxWorkers();
+    const openCount = Math.max(0, Math.min(maxWorkers - activeWorkers.size, targets.length));
+    if (openCount > 0) {
+        logger.log(`🛡️ 팝업 차단 회피를 위한 자식 창 ${openCount}개 선제 확보(Pre-open) 중... (동시 수집 ${maxWorkers}개)`, 'Queue');
+    }
 
+    const width = 400;
+    const height = 600;
+    const leftBase = window.screen.width - width - 50;
+    const topBase = 100;
+    let opened = 0;
+
+    for (let i = 0; i < openCount; i++) {
+        const target = targets[i];
+        const slot = activeWorkers.size;
+        const workerName = `tokisync_novel_worker_${target.id}`.replace(/[^a-zA-Z0-9_]/g, '');
+        logger.log(`🚀 [Pre-open #${i + 1}] 자식 팝업 창 생성: ${target.title}`);
+        const popupRef = window.open(
+            target.url,
+            workerName,
+            `width=${width},height=${height},left=${leftBase - slot * 60},top=${topBase + slot * 60},noopener=false,scrollbars=yes,resizable=yes`
+        );
+        if (popupRef) {
+            activeWorkers.set(target.id, popupRef);
+            updateQueueItem(target.id, { status: 'processing', stage: WORKER_STAGE.INIT, startedAt: Date.now() });
+            opened++;
+        } else {
+            logger.error(`❌ [Pre-open #${i + 1}] 브라우저 팝업 차단으로 자식 창 확보에 실패했습니다. 이 사이트의 팝업을 허용해 주세요.`, 'Queue');
+            EventBus.emit(EVT.NOTIFY_ERROR, { msg: '브라우저가 수집 창(팝업)을 차단했습니다.\n주소창 오른쪽의 팝업 차단 아이콘에서 이 사이트의 팝업을 "항상 허용"으로 바꾼 뒤 다시 시도해 주세요.' });
+            break;
+        }
+    }
+
+    if (opened > 0 || activeWorkers.size > 0 || openCount === 0) {
+        initBatchWorkerController();
+        initQueueScheduler();
+        runSchedulerOnce();
+        logger.success(`🚦 멀티큐 스케줄러 기동 완료.`, 'Queue');
+        return true;
+    }
+    logger.error(`❌ 선제 확보된 자식 창이 없어 큐 수집을 시작하지 못했습니다.`, 'Queue');
+    return false;
+}
 
 /**
- * [v1.8.1] 다운로드 실패 리포트 생성 및 다운로드 (MCP 검토 의견 반영)
- * @private
+ * [v1.27.0] 중단된 작업 이어받기 (고아 대기열 항목 + 합본 세션)
+ * @param {{ sessionId?: string }} options sessionId가 있으면 해당 합본 세션만, 없으면 모든 고아 항목
+ * @returns {Promise<number>} 다시 수집할 회차 수
  */
-async function generateDownloadReport(seriesTitle, seriesId, listCount, failedEpisodes, partialFailures) {
-    if (failedEpisodes.length === 0 && partialFailures.length === 0) return;
-
-    logger.warn(`⚠️ 다운로드 중 일부 오류가 발견되었습니다. 리포트를 생성합니다.`, 'System');
-
-    const timestamp = new Date().toLocaleString();
-    const lines = [
-        `[TokiSync 다운로드 리포트]`,
-        `작품명: ${seriesTitle}`,
-        `일시: ${timestamp}`,
-        `--------------------------------------------------`,
-        `■ 요약 (Summary)`,
-        `- 총 시도: ${listCount}개`,
-        `- 성공: ${listCount - failedEpisodes.length}개`,
-        `- 완전 실패: ${failedEpisodes.length}개 (파일이 생성되지 않음)`,
-        `- 부분 실패: ${partialFailures.length}개 (파일은 생성되었으나 일부 데이터 누락)`,
-        `--------------------------------------------------`,
-    ];
-
-    if (failedEpisodes.length > 0) {
-        lines.push(``, `■ 완전 실패 목록 (Critical Failures)`, `(원인 분석 후 해당 회차만 재시도해 보세요)`);
-        failedEpisodes.forEach(fail => {
-            lines.push(`- [${fail.num}] ${fail.title} : ${fail.error}`);
-        });
+export async function resumeQueuedWork(options = {}) {
+    const targetOrigin = window.location.origin;
+    let count = 0;
+    if (options.sessionId) {
+        count = await resumeMergeSession(options.sessionId, { targetOrigin });
+    } else {
+        // 고아 합본 세션 먼저 이어받기 → 나머지 고아 항목
+        for (const session of getMergeSessions()) {
+            if (session.ownerTabId !== TAB_ID && !isTabAlive(session.ownerTabId)) {
+                count += await resumeMergeSession(session.id, { targetOrigin });
+            }
+        }
+        count += reclaimOrphanItems({ targetOrigin });
     }
-
-    if (partialFailures.length > 0) {
-        lines.push(``, `■ 부분 실패 목록 (Warnings/Partial Success)`, `(다운로드는 완료되었으나 일부 페이지가 누락된 항목입니다)`);
-        partialFailures.forEach(fail => {
-            lines.push(`- [${fail.num}] ${fail.title} : 이미지 ${fail.missingCount}개 누락`);
-        });
-    }
-
-    lines.push(``, `--------------------------------------------------`, `위 리포트를 참고하여 누락된 회차를 확인하시기 바랍니다.`);
-
-    const reportContent = lines.join('\n');
-    const reportBlob = new Blob([reportContent], { type: 'text/plain;charset=utf-8' });
-    const cleanSeriesTitle = (seriesTitle || "Unknown").replace(/[<>:"/\\|?*]/g, '').trim();
-    const reportFilename = `${cleanSeriesTitle}_다운로드_실패_리포트`;
-
-    try {
-        await saveFile(reportBlob, reportFilename, 'local', 'txt');
-        logger.success(`✅ 실패 리포트 다운로드 완료: ${reportFilename}.txt`);
-    } catch (e) {
-        console.error('[Downloader] 리포트 저장 실패:', e);
-    }
+    startSilentAudio();
+    const targets = getQueue()
+        .filter(q => q.status === 'pending' && q.ownerTabId === TAB_ID)
+        .map(q => ({ id: q.id, url: q.episodeUrl, title: q.episodeTitle }));
+    if (targets.length > 0) startBatchPipeline(targets);
+    EventBus.emit(EVT.UPDATE_PROGRESS);
+    return count;
 }

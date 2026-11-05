@@ -970,8 +970,22 @@ export class GenericParser extends BaseParser {
      * @param {boolean} [options.allPages=true] 모든 페이지네이션을 순회하여 전체 회차를 가져올지 여부
      * @param {boolean} [options.forceRefresh=false] 캐시 무시 여부
      */
+    /**
+     * [v1.27.0] 최근 전체 회차 스캔 결과가 현재 URL 기준으로 유효한지 확인
+     * @param {number} maxAgeMs
+     */
+    hasFreshAllPageCache(maxAgeMs = 10 * 60 * 1000) {
+        const currentUrl = this._doc?.URL || (typeof window !== 'undefined' && window.location ? window.location.href : '');
+        return !!(this._cachedAllPageItems && this._cachedAllPageUrl === currentUrl && this._cachedAllPageAt && (Date.now() - this._cachedAllPageAt) < maxAgeMs);
+    }
+
     async getListItems(options = {}) {
-        const { allPages = true, forceRefresh = false } = options;
+        const { allPages = true, forceRefresh = false, onProgress = null } = options;
+        const report = (info) => {
+            if (typeof onProgress === 'function') {
+                try { onProgress(info); } catch (e) {}
+            }
+        };
         const listCfg = this.rule.list || {};
 
         let currentPageItems = this._extractItemsFromDoc(this._doc, listCfg);
@@ -1008,7 +1022,10 @@ export class GenericParser extends BaseParser {
 
             const fetchedPages = new Set([pagInfo.currentPage]);
             let knownMaxPage = Math.min(pagInfo.maxPage, 100);
-            const BATCH_CONCURRENCY = 4;
+            // [v1.27.0] 사이트 차단(WAF) 위험을 줄이기 위해 동시 요청 4 → 2, 배치 사이 간격 추가
+            const BATCH_CONCURRENCY = 2;
+            const BATCH_GAP_MS = 350;
+            report({ phase: 'pages', fetched: 1, total: knownMaxPage });
 
             let nextPageToFetch = 1;
             while (nextPageToFetch <= knownMaxPage) {
@@ -1022,6 +1039,9 @@ export class GenericParser extends BaseParser {
                 }
 
                 if (batchPages.length === 0) break;
+                if (fetchedPages.size > batchPages.length + 1) {
+                    await new Promise(r => setTimeout(r, BATCH_GAP_MS));
+                }
 
                 const results = await Promise.all(batchPages.map(async (pNum) => {
                     const pageUrl = pagInfo.buildUrl(pNum);
@@ -1048,6 +1068,8 @@ export class GenericParser extends BaseParser {
                         }
                     }
                 }
+                const itemCount = Array.from(pageItemsMap.values()).reduce((acc, arr) => acc + arr.length, 0);
+                report({ phase: 'pages', fetched: Math.min(fetchedPages.size, knownMaxPage), total: knownMaxPage, items: itemCount });
             }
 
             const sortedPageNums = Array.from(pageItemsMap.keys()).sort((a, b) => a - b);
@@ -1074,17 +1096,20 @@ export class GenericParser extends BaseParser {
                 console.log(`[GenericParser] ✅ 전체 ${sortedPageNums.length}개 페이지 병합 완료: 총 ${mergedItems.length}개 회차 추출됨.`);
                 this._cachedAllPageUrl = currentUrl;
                 this._cachedAllPageItems = mergedItems;
+                this._cachedAllPageAt = Date.now();
                 return mergedItems;
             }
             console.warn('[GenericParser] ⚠️ 정적 URL 요청에서 추가 회차가 감지되지 않아 실시간 DOM 버튼 클릭 모드로 전환합니다.');
         }
 
+        report({ phase: 'buttons' });
         // Tier 2. SPA/실시간 버튼 클릭형 페이지네이션(« ‹ 1 2 ... 10 … › » 또는 JS 페이지네이션) 수행
         const btnMerged = await this._collectViaButtonPagination(listCfg, currentPageItems);
         if (btnMerged && btnMerged.length > currentPageItems.length) {
             console.log(`[GenericParser] ✅ 버튼 순회 페이지 병합 완료: 총 ${btnMerged.length}개 회차 추출됨.`);
             this._cachedAllPageUrl = currentUrl;
             this._cachedAllPageItems = btnMerged;
+            this._cachedAllPageAt = Date.now();
             return btnMerged;
         }
 
@@ -1096,6 +1121,7 @@ export class GenericParser extends BaseParser {
                 console.log(`[GenericParser] ✅ 숨김 iframe 페이지 병합 완료: 총 ${iframeMerged.length}개 회차 추출됨.`);
                 this._cachedAllPageUrl = currentUrl;
                 this._cachedAllPageItems = iframeMerged;
+                this._cachedAllPageAt = Date.now();
                 return iframeMerged;
             }
         }
@@ -1105,6 +1131,7 @@ export class GenericParser extends BaseParser {
         if (dropdownMerged && dropdownMerged.length > currentPageItems.length) {
             this._cachedAllPageUrl = currentUrl;
             this._cachedAllPageItems = dropdownMerged;
+            this._cachedAllPageAt = Date.now();
             return dropdownMerged;
         }
 

@@ -1,4 +1,7 @@
-import { tokiDownload, processItem } from './downloader.js';
+import { tokiDownload, processItem, parseRangeSpec, resumeQueuedWork } from './downloader.js';
+import { startTabHeartbeat, getOrphanItems, discardOrphanItems, getQueue, TAB_ID } from './queue.js';
+import { getMergeSessions, getMergeSessionProgress, finalizeMergeSession, discardMergeSession, resumeMergeSession, installMergeWatcher, MERGE_STATUS } from './merge-session.js';
+import { getAntiSleepState } from './anti_sleep.js';
 import { detectSite } from './detector.js'; 
 import { getConfig, setConfig, isConfigValid } from './config.js';
 import { MenuModal, LogBox } from './ui/index.js';
@@ -204,6 +207,13 @@ export async function main() {
         return; 
     }
 
+    // [v1.27.0] 탭 생존 신호 기록 (다른 탭이 이 탭의 작업을 고아로 오인하지 않도록) + 합본 완료 감시
+    startTabHeartbeat();
+    installMergeWatcher();
+
+    // [v1.27.0] 전체 회차 스캔 결과 (범위 미리보기용)
+    let scannedEpisodeNums = null;
+
     // -- History Sync (Async) & Cross-Tab Auto Refresh --
     let lastSyncTime = Date.now();
     let isSyncing = false;
@@ -299,6 +309,77 @@ export async function main() {
             }
             return { min: 1, max: 100 };
         },
+        // ── [v1.27.0] 전체 회차 불러오기 ─────────────────────────
+        scanEpisodes: async (onProgress) => {
+            const parser = await ParserFactory.getParser();
+            if (!parser) throw new Error('파서를 찾을 수 없습니다. 작품 목록 페이지에서 실행해 주세요.');
+            const firstPage = await parser.getListItems({ allPages: false });
+            const list = await parser.getListItems({ allPages: true, forceRefresh: true, onProgress });
+            const nums = list.map(li => parseInt(parser.parseListItem(li.element || li).num, 10)).filter(n => !isNaN(n) && n > 0);
+            scannedEpisodeNums = nums;
+            const uniq = Array.from(new Set(nums)).sort((a, b) => a - b);
+            const min = uniq.length ? uniq[0] : null;
+            const max = uniq.length ? uniq[uniq.length - 1] : null;
+            const gaps = [];
+            if (uniq.length > 1) {
+                for (let i = 1; i < uniq.length; i++) {
+                    const prev = uniq[i - 1], cur = uniq[i];
+                    if (cur - prev > 1) gaps.push(cur - prev === 2 ? `${prev + 1}` : `${prev + 1}~${cur - 1}`);
+                }
+            }
+            return {
+                count: list.length,
+                firstPageCount: firstPage.length,
+                min, max,
+                gaps,
+                noNumberCount: list.length - nums.length
+            };
+        },
+        previewRange: (spec) => {
+            if (!scannedEpisodeNums) return null;
+            const set = parseRangeSpec(spec);
+            if (!set) return { matched: scannedEpisodeNums.length, total: scannedEpisodeNums.length, all: true };
+            const matched = scannedEpisodeNums.filter(n => set.has(n)).length;
+            return { matched, total: scannedEpisodeNums.length, requested: set.size, all: false };
+        },
+        getLatestRangeSpec: (n) => {
+            if (!scannedEpisodeNums || scannedEpisodeNums.length === 0) return '';
+            const uniq = Array.from(new Set(scannedEpisodeNums)).sort((a, b) => b - a).slice(0, n);
+            if (uniq.length === 0) return '';
+            return `${uniq[uniq.length - 1]}-${uniq[0]}`;
+        },
+        // ── [v1.27.0] 중단된 작업 / 합본 세션 상태 ───────────────
+        getWorkState: () => {
+            const orphans = getOrphanItems();
+            const orphanTitles = Array.from(new Set(orphans.filter(o => !o.mergeSessionId).map(o => o.title)));
+            const queue = getQueue();
+            const sessions = getMergeSessions().map(sess => {
+                const prog = getMergeSessionProgress(sess, queue);
+                return {
+                    id: sess.id,
+                    title: sess.displayTitle || sess.seriesTitle,
+                    kind: sess.kind,
+                    format: sess.kind === 'novelVolume' ? (sess.novelFormat || 'epub').toUpperCase() : 'ZIP',
+                    status: sess.status,
+                    isOrphan: !prog.isMine && !prog.ownerAlive,
+                    isOtherTab: !prog.isMine && prog.ownerAlive,
+                    sameOrigin: !sess.origin || sess.origin === window.location.origin,
+                    ...prog,
+                    missingItems: undefined
+                };
+            });
+            return {
+                orphanCount: orphans.filter(o => !o.mergeSessionId).length,
+                orphanTitles,
+                sessions,
+                antiSleep: getAntiSleepState(),
+                hasMyActive: queue.some(q => q.ownerTabId === TAB_ID && (q.status === 'pending' || q.status === 'processing'))
+            };
+        },
+        resumeWork: (sessionId) => resumeQueuedWork(sessionId ? { sessionId } : {}),
+        discardOrphans: () => discardOrphanItems(getOrphanItems().filter(o => !o.mergeSessionId).map(o => o.id)),
+        saveMergeNow: (sessionId) => finalizeMergeSession(sessionId, { allowPartial: true }),
+        discardMerge: (sessionId) => discardMergeSession(sessionId),
         migrateKavita: runKavitaMigration,
         migrateThumbnails: runThumbnailMigration,
         syncHistory: syncHistory,

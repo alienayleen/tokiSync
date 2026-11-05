@@ -13,6 +13,7 @@ import { EpubBuilder } from './epub.js';
 import { CbzBuilder } from './cbz.js';
 import { TxtBuilder } from './txt.js';
 import { saveFile } from './utils.js';
+import { getMergeSession, storeMergeEpisode, scheduleMergeCheck, installMergeWatcher } from './merge-session.js';
 
 // Reference for the single worker popup (used in sequential mode)
 let activeWorkerRef = null;
@@ -381,6 +382,8 @@ export async function fetchComicImages(episodeUrl, config = {}) {
  * 여러 개의 자식 팝업 창으로부터 오는 IPC 이벤트를 독립적으로 라우팅하여 멀티태스킹 수행
  */
 export function initBatchWorkerController() {
+    // [v1.27.0] 합본 세션 완료 감시 (큐 변화 시 디바운스 검사)
+    installMergeWatcher();
     if (window.tokisync_batch_controller_initialized || isBatchControllerInitialized) {
         console.log('[WorkerController] 🚦 [배치 모드] 이미 초기화되어 중복 기동을 차단합니다.');
         return;
@@ -560,122 +563,157 @@ export function initBatchWorkerController() {
             const finalContent = cachedMedia.content || payload.content;
             const finalImages = cachedMedia.images || payload.images;
 
-            if (isNovel) {
+            // [v1.27.0] 합본 세션 판별: 소설 범위 합본은 본문 텍스트만 보관하고 개별 EPUB 빌드를 생략합니다.
+            const mergeSession = item.mergeSessionId ? getMergeSession(item.mergeSessionId) : null;
+            if (item.mergeSessionId && !mergeSession) {
+                throw new Error('합본 세션이 폐기되어 결과를 보관할 수 없습니다.');
+            }
+            if (mergeSession && mergeSession.kind === 'novelVolume') {
                 if (!finalContent) {
                     throw new Error("수집된 소설 본문 데이터가 없습니다.");
                 }
-                const builder = novelFormat === 'txt' ? new TxtBuilder() : new EpubBuilder();
-                builder.addChapter(episodeTitle, finalContent.trim());
-
-                EventBus.emit(EVT.LOG, {
-                    msg: `🔨 [${episodeTitle}] ${novelFormat.toUpperCase()} 압축 조립 중... (${(finalContent.length / 1024).toFixed(0)}KB)`,
-                    level: 'info',
-                    tag: 'Builder'
-                });
-
-                const innerZip = await builder.build({
-                    series: title || rootFolder,
+                await storeMergeEpisode(item, {
+                    kind: 'text',
+                    text: finalContent.trim(),
                     title: episodeTitle,
-                    number: episodeNum,
-                    writer: siteName
+                    num: episodeNum
                 });
-                blob = await innerZip.generateAsync({ type: "blob" });
-            } else {
-                if (!finalImages || !Array.isArray(finalImages)) {
-                    throw new Error("수집된 만화 이미지 데이터가 없습니다.");
-                }
-                const builder = new CbzBuilder();
-                const resolvedImages = finalImages.map(img => {
-                    const mimeType = img.ext?.includes('png') ? 'image/png' : (img.ext?.includes('webp') ? 'image/webp' : 'image/jpeg');
-                    return {
-                        url: img.url,
-                        blob: img.data ? new Blob([img.data], { type: mimeType }) : new Blob([]),
-                        ext: img.ext || '.jpg',
-                        isMissing: !!img.isMissing
-                    };
-                });
-                builder.addChapter(episodeTitle, resolvedImages);
-
                 EventBus.emit(EVT.LOG, {
-                    msg: `🔨 [${episodeTitle}] CBZ 압축 중... (이미지 ${resolvedImages.length}개)`,
-                    level: 'info',
-                    tag: 'Builder'
+                    msg: `🗃️ [${episodeTitle}] 합본용 본문 보관 완료 (${(finalContent.length / 1024).toFixed(0)}KB)`,
+                    tag: 'Merge',
+                    level: 'info'
                 });
-
-                const innerZip = await builder.build({
-                    series: title || rootFolder,
-                    title: episodeTitle,
-                    number: episodeNum,
-                    writer: siteName
-                });
-                blob = await innerZip.generateAsync({ type: "blob" });
-            }
-
-            // 3. 파일 이름 및 폴더명 결정 (destination 기반 분기)
-            let fullFilename = "";
-            let targetFolderName = rootFolder;
-
-            if (destination === 'drive_kavita') {
-                const cleanSeries = rootFolder.replace(/^\[[^\]]+\]\s*/, '');
-                targetFolderName = cleanSeries;
-
-                // Kavita 표준 스캐너 100% 매칭 규격: {cleanSeries} - c{paddedNum} (3자리 패딩)
-                const paddedNum = (episodeNum || '').toString().padStart(3, '0');
-                fullFilename = `${cleanSeries} - c${paddedNum}`;
-            } else if (destination === 'drive') {
-                // drive (레거시): 기존 명명법 강제 적용
-                const legacyPaddedNum = (episodeNum || '').toString().padStart(4, '0');
-                fullFilename = `${rootFolder} ${legacyPaddedNum}화`;
             } else {
-                // local / native: 사용자 설정 localNameTemplate 동적 파싱 적용 + 작품명(문서 이름) 자동 포함 보장
-                const template = getConfig().localNameTemplate || "{number:4} - {title}";
-                const rawSeriesCandidate = item.seriesMetadata?.originalSeriesTitle || title || rootFolder || '';
-                const cleanSeries = rawSeriesCandidate.replace(/^\[[^\]]+\]\s*/, '').replace(/^Unknown\s*Series$/i, '').trim();
-                const rawEpTitle = (episodeTitle || '').trim();
-                const hasSeriesInTitle = !cleanSeries || rawEpTitle.includes(cleanSeries);
-                const effectiveEpTitle = (!template.includes('{series}') && !hasSeriesInTitle)
-                    ? `${cleanSeries} ${rawEpTitle}`.trim()
-                    : rawEpTitle;
+                if (isNovel) {
+                    if (!finalContent) {
+                        throw new Error("수집된 소설 본문 데이터가 없습니다.");
+                    }
+                    const builder = novelFormat === 'txt' ? new TxtBuilder() : new EpubBuilder();
+                    builder.addChapter(episodeTitle, finalContent.trim());
 
-                fullFilename = template
-                    .replace(/\{number:(\d)\}/g, (_, p) => (episodeNum || '').toString().padStart(parseInt(p, 10), '0'))
-                    .replace(/\{number\}/g, (episodeNum || '').toString().padStart(4, '0'))
-                    .replace(/\{rawNumber\}/g, (episodeNum || '').toString())
-                    .replace(/\{series\}/g, cleanSeries)
-                    .replace(/\{title\}/g, effectiveEpTitle);
+                    EventBus.emit(EVT.LOG, {
+                        msg: `🔨 [${episodeTitle}] ${novelFormat.toUpperCase()} 압축 조립 중... (${(finalContent.length / 1024).toFixed(0)}KB)`,
+                        level: 'info',
+                        tag: 'Builder'
+                    });
 
-                if (cleanSeries && !fullFilename.includes(cleanSeries)) {
-                    fullFilename = `${cleanSeries} - ${fullFilename}`.trim();
+                    const innerZip = await builder.build({
+                        series: title || rootFolder,
+                        title: episodeTitle,
+                        number: episodeNum,
+                        writer: siteName
+                    });
+                    blob = await innerZip.generateAsync({ type: "blob" });
+                } else {
+                    if (!finalImages || !Array.isArray(finalImages)) {
+                        throw new Error("수집된 만화 이미지 데이터가 없습니다.");
+                    }
+                    const builder = new CbzBuilder();
+                    const resolvedImages = finalImages.map(img => {
+                        const mimeType = img.ext?.includes('png') ? 'image/png' : (img.ext?.includes('webp') ? 'image/webp' : 'image/jpeg');
+                        return {
+                            url: img.url,
+                            blob: img.data ? new Blob([img.data], { type: mimeType }) : new Blob([]),
+                            ext: img.ext || '.jpg',
+                            isMissing: !!img.isMissing
+                        };
+                    });
+                    builder.addChapter(episodeTitle, resolvedImages);
+
+                    EventBus.emit(EVT.LOG, {
+                        msg: `🔨 [${episodeTitle}] CBZ 압축 중... (이미지 ${resolvedImages.length}개)`,
+                        level: 'info',
+                        tag: 'Builder'
+                    });
+
+                    const innerZip = await builder.build({
+                        series: title || rootFolder,
+                        title: episodeTitle,
+                        number: episodeNum,
+                        writer: siteName
+                    });
+                    blob = await innerZip.generateAsync({ type: "blob" });
                 }
-            }
 
-            console.log(`[WorkerController] [배치 저장] 파일 조립 완료 (정책: ${destination}). 전송 시작: ${fullFilename}.${extension}`);
+                // 3. 파일 이름 및 폴더명 결정 (destination 기반 분기)
+                let fullFilename = "";
+                let targetFolderName = rootFolder;
+
+                if (destination === 'drive_kavita') {
+                    const cleanSeries = rootFolder.replace(/^\[[^\]]+\]\s*/, '');
+                    targetFolderName = cleanSeries;
+
+                    // Kavita 표준 스캐너 100% 매칭 규격: {cleanSeries} - c{paddedNum} (3자리 패딩)
+                    const paddedNum = (episodeNum || '').toString().padStart(3, '0');
+                    fullFilename = `${cleanSeries} - c${paddedNum}`;
+                } else if (destination === 'drive') {
+                    // drive (레거시): 기존 명명법 강제 적용
+                    const legacyPaddedNum = (episodeNum || '').toString().padStart(4, '0');
+                    fullFilename = `${rootFolder} ${legacyPaddedNum}화`;
+                } else {
+                    // local / native: 사용자 설정 localNameTemplate 동적 파싱 적용 + 작품명(문서 이름) 자동 포함 보장
+                    const template = getConfig().localNameTemplate || "{number:4} - {title}";
+                    const rawSeriesCandidate = item.seriesMetadata?.originalSeriesTitle || title || rootFolder || '';
+                    const cleanSeries = rawSeriesCandidate.replace(/^\[[^\]]+\]\s*/, '').replace(/^Unknown\s*Series$/i, '').trim();
+                    const rawEpTitle = (episodeTitle || '').trim();
+                    const hasSeriesInTitle = !cleanSeries || rawEpTitle.includes(cleanSeries);
+                    const effectiveEpTitle = (!template.includes('{series}') && !hasSeriesInTitle)
+                        ? `${cleanSeries} ${rawEpTitle}`.trim()
+                        : rawEpTitle;
+
+                    fullFilename = template
+                        .replace(/\{number:(\d)\}/g, (_, p) => (episodeNum || '').toString().padStart(parseInt(p, 10), '0'))
+                        .replace(/\{number\}/g, (episodeNum || '').toString().padStart(4, '0'))
+                        .replace(/\{rawNumber\}/g, (episodeNum || '').toString())
+                        .replace(/\{series\}/g, cleanSeries)
+                        .replace(/\{title\}/g, effectiveEpTitle);
+
+                    if (cleanSeries && !fullFilename.includes(cleanSeries)) {
+                        fullFilename = `${cleanSeries} - ${fullFilename}`.trim();
+                    }
+                }
+
+                console.log(`[WorkerController] [배치 저장] 파일 조립 완료 (정책: ${destination}). 전송 시작: ${fullFilename}.${extension}`);
             
-            const isLocal = (destination === 'local' || destination === 'native');
-            EventBus.emit(EVT.LOG, {
-                msg: isLocal
-                    ? `💾 [${episodeTitle}] 로컬 파일 저장 개시... (${(blob.size / 1024 / 1024).toFixed(1)} MB)`
-                    : `🚀 [${episodeTitle}] 구글 드라이브 업로드 전송 시작... (${(blob.size / 1024 / 1024).toFixed(1)} MB)`,
-                tag: 'Downloader:Batch',
-                level: 'info'
-            });
-
-            // saveFile은 'local'/'native'/'drive' 3개 타입만 처리하므로 drive_kavita는 'drive'로 변환 전달
-            const saveType = (destination === 'drive_kavita') ? 'drive' : destination;
-
-            // [H8] 업로드 중 lastActivity keepalive — 30초마다 갱신하여 300초 타임아웃 오발사 방지
-            const keepalive = setInterval(() => {
-                updateQueueItem(matchedId, { lastActivity: Date.now() });
-            }, 30000);
-            try {
-                await saveFile(blob, fullFilename, saveType, extension, {
-                    folderId: item.folderId,
-                    folderName: targetFolderName,
-                    category: category,
-                    destination: destination
+                const isLocal = (destination === 'local' || destination === 'native');
+                EventBus.emit(EVT.LOG, {
+                    msg: mergeSession
+                        ? `🗃️ [${episodeTitle}] 합본용 보관 중... (${(blob.size / 1024 / 1024).toFixed(1)} MB)`
+                        : isLocal
+                        ? `💾 [${episodeTitle}] 로컬 파일 저장 개시... (${(blob.size / 1024 / 1024).toFixed(1)} MB)`
+                        : `🚀 [${episodeTitle}] 구글 드라이브 업로드 전송 시작... (${(blob.size / 1024 / 1024).toFixed(1)} MB)`,
+                    tag: 'Downloader:Batch',
+                    level: 'info'
                 });
-            } finally {
-                clearInterval(keepalive);
+
+                // saveFile은 'local'/'native'/'drive' 3개 타입만 처리하므로 drive_kavita는 'drive'로 변환 전달
+                const saveType = (destination === 'drive_kavita') ? 'drive' : destination;
+
+                // [H8] 업로드 중 lastActivity keepalive — 30초마다 갱신하여 300초 타임아웃 오발사 방지
+                const keepalive = setInterval(() => {
+                    updateQueueItem(matchedId, { lastActivity: Date.now() });
+                }, 30000);
+                try {
+                    if (mergeSession) {
+                        // [v1.27.0] 합본 세션 소속: 개별 저장 대신 합본 저장소에 보관 (모든 회차 완료 후 일괄 합본)
+                        await storeMergeEpisode(item, {
+                            kind: 'blob',
+                            blob,
+                            filename: `${fullFilename}.${extension}`,
+                            title: episodeTitle,
+                            num: episodeNum
+                        });
+                    } else {
+                        await saveFile(blob, fullFilename, saveType, extension, {
+                            folderId: item.folderId,
+                            folderName: targetFolderName,
+                            category: category,
+                            destination: destination
+                        });
+                    }
+                } finally {
+                    clearInterval(keepalive);
+                }
             }
 
             // 4. 업로드 완료 후 최종 성공 전이 및 캐시 삭제
@@ -687,6 +725,7 @@ export function initBatchWorkerController() {
             extractedDataCache.delete(matchedId); // 인메모리 캐시 클린업
             _activeProcessing.delete(matchedId);
             console.log(`[WorkerController] 🎉 [배치] 업로드 및 완료 처리 성공 (ID: ${matchedId})`);
+            if (item.mergeSessionId) scheduleMergeCheck();
 
         } catch (uploadErr) {
             _activeProcessing.delete(matchedId);

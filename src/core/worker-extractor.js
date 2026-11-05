@@ -99,6 +99,20 @@ export function initWorkerExtractor() {
             if (isExtracting) return;
             isExtracting = true;
 
+            // [v1.27.0] 수집 창이 최소화/가려진 상태(hidden)이면 브라우저가 렌더링과 타이머를 늦춰
+            //           지연 로딩 이미지가 뜨지 않거나 타임아웃이 날 수 있으므로 부모 대시보드에 경고를 중계합니다.
+            const reportHidden = () => {
+                if (document.visibilityState === 'hidden') {
+                    sendToParent('WORKER_LOG', {
+                        queueId,
+                        msg: '⚠️ 수집 창이 최소화되었거나 다른 창에 가려져 있습니다. 브라우저가 이 창의 렌더링을 멈추면 이미지 로딩이 지연·실패할 수 있으니, 수집 창을 화면에 보이게 두세요.',
+                        level: 'warn'
+                    });
+                }
+            };
+            reportHidden();
+            document.addEventListener('visibilitychange', reportHidden);
+
             // Stop Handshake Heartbeat
             if (handshakeInterval) {
                 clearInterval(handshakeInterval);

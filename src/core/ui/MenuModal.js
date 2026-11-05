@@ -44,11 +44,26 @@ export class MenuModal {
             <div class="toki-modal-body">
                 <!-- 1. Download Tab -->
                 <div class="toki-tab-content active" id="toki-tab-download">
+                    <div id="toki-work-panel" class="toki-work-panel"></div>
                     <div id="toki-download-actions">
+                        <div class="toki-control-group">
+                            <label class="toki-label">회차 목록</label>
+                            <button class="toki-btn-action toki-btn-secondary toki-btn-sm" id="toki-btn-scan-episodes">
+                                <span>📄 전체 회차 불러오기</span>
+                            </button>
+                            <div id="toki-scan-summary" class="toki-scan-summary">아직 불러오지 않았습니다. 목록이 여러 페이지(예: 한 페이지 100화)로 나뉜 작품은 먼저 불러오면 전체 회차 수와 누락 구간을 미리 확인할 수 있습니다.</div>
+                        </div>
                         <div class="toki-control-group">
                             <label class="toki-label">에피소드 범위 지정</label>
                             <input type="text" id="toki-range-input" class="toki-input" placeholder="예: 1,2,4-10,15 (비우면 전체)">
                             <div class="toki-text-xs toki-mt-8 toki-ml-4">쉼표(,)로 개별 번호, 하이픈(-)으로 연속 범위 지정</div>
+                            <div id="toki-range-preview" class="toki-range-preview"></div>
+                            <div class="toki-quick-range">
+                                <button class="toki-chip" data-quick-range="all" disabled>전체</button>
+                                <button class="toki-chip" data-quick-range="10" disabled>최신 10화</button>
+                                <button class="toki-chip" data-quick-range="50" disabled>최신 50화</button>
+                                <button class="toki-chip" data-quick-range="100" disabled>최신 100화</button>
+                            </div>
                         </div>
                         <div class="toki-control-group toki-mb-24">
                             <label class="toki-checkbox-wrapper">
@@ -156,6 +171,27 @@ export class MenuModal {
                             </select>
                         </div>
                     </div>
+
+                    <div class="toki-form-grid">
+                        <div class="toki-control-group">
+                            <label class="toki-label">동시 수집 창 수</label>
+                            <select id="toki-sel-max-workers" class="toki-select">
+                                <option value="1">1개 (안전, 기본)</option>
+                                <option value="2">2개</option>
+                                <option value="3">3개 (차단 위험 증가)</option>
+                            </select>
+                        </div>
+                        <div class="toki-control-group">
+                            <label class="toki-label">만화 합본 분할 단위</label>
+                            <select id="toki-sel-merge-part" class="toki-select">
+                                <option value="10">10화씩</option>
+                                <option value="20">20화씩</option>
+                                <option value="50">50화씩</option>
+                                <option value="0">분할 없음 (한 파일)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="toki-text-xs toki-mb-10 toki-ml-4">합본: 소설은 "소설 패키징 = 범위 합본", 만화는 "저장 정책 = 챕터 묶음"을 선택하세요. 회차는 받는 즉시 보관되어 탭을 닫아도 이어받을 수 있습니다. 분할 없음은 회차가 많으면 메모리를 많이 사용합니다.</div>
 
                     <div class="toki-control-group">
                         <label class="toki-label">Smart Skip 민감도</label>
@@ -372,6 +408,11 @@ export class MenuModal {
             };
         }
 
+        // [v1.27.0] 전체 회차 불러오기 / 범위 미리보기 / 빠른 선택
+        this.bindEpisodeScan(doc);
+        // [v1.27.0] 중단된 작업·합본 세션 패널
+        this.bindWorkPanel(popupWindow);
+
         const inlinePause = doc.getElementById('toki-inline-pause');
         if (inlinePause) {
             inlinePause.onclick = () => {
@@ -437,6 +478,10 @@ export class MenuModal {
             if (selNovelTerm) selNovelTerm.value = cfg.novelMode || 'perChapter';
             if (selSmartSkip) selSmartSkip.value = cfg.smartSkipRatio !== undefined ? String(cfg.smartSkipRatio) : '50';
             if (selLogLevel) selLogLevel.value = cfg.logLevel || 'info';
+            const selMaxWorkersInit = doc.getElementById('toki-sel-max-workers');
+            const selMergePartInit = doc.getElementById('toki-sel-merge-part');
+            if (selMaxWorkersInit) selMaxWorkersInit.value = String(cfg.maxWorkers || 1);
+            if (selMergePartInit) selMergePartInit.value = String(cfg.mergePartSize ?? 10);
         }
 
         if (selPolicy) {
@@ -644,6 +689,10 @@ export class MenuModal {
                     this.handlers.setConfig('TOKI_NOVEL_MODE', newNovelMode);
                     this.handlers.setConfig('TOKI_SMART_SKIP_RATIO', newSmartSkip);
                     this.handlers.setConfig('TOKI_LOG_LEVEL', newLogLevel);
+                    const selMaxWorkersSave = doc.getElementById('toki-sel-max-workers');
+                    const selMergePartSave = doc.getElementById('toki-sel-merge-part');
+                    if (selMaxWorkersSave) this.handlers.setConfig('TOKI_MAX_WORKERS', selMaxWorkersSave.value);
+                    if (selMergePartSave) this.handlers.setConfig('TOKI_MERGE_PART_SIZE', selMergePartSave.value);
                 }
 
                 popupWindow.alert('설정이 저장되었습니다.');
@@ -665,6 +714,185 @@ export class MenuModal {
             };
         }
 
+    }
+
+    // ── [v1.27.0] 전체 회차 불러오기 ─────────────────────────────
+    bindEpisodeScan(doc) {
+        const scanBtn = doc.getElementById('toki-btn-scan-episodes');
+        const summary = doc.getElementById('toki-scan-summary');
+        const rangeInput = doc.getElementById('toki-range-input');
+        const preview = doc.getElementById('toki-range-preview');
+        const chips = Array.from(doc.querySelectorAll('[data-quick-range]'));
+        const esc = (t) => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+        const updatePreview = () => {
+            if (!preview || !rangeInput || !this.handlers.previewRange) return;
+            const res = this.handlers.previewRange(rangeInput.value.trim());
+            if (!res) { preview.textContent = ''; return; }
+            if (res.all) preview.textContent = `→ 전체 ${res.total}화를 받습니다.`;
+            else if (res.matched === 0) preview.textContent = `→ 일치하는 회차가 없습니다. (불러온 ${res.total}화 기준)`;
+            else if (res.matched < res.requested) preview.textContent = `→ 요청 ${res.requested}개 중 ${res.matched}화만 목록에 있습니다.`;
+            else preview.textContent = `→ ${res.matched}화를 받습니다.`;
+        };
+        if (rangeInput) rangeInput.addEventListener('input', updatePreview);
+
+        chips.forEach(chip => {
+            chip.onclick = () => {
+                const v = chip.getAttribute('data-quick-range');
+                if (!rangeInput) return;
+                rangeInput.value = v === 'all' ? '' : (this.handlers.getLatestRangeSpec ? this.handlers.getLatestRangeSpec(parseInt(v, 10)) : '');
+                updatePreview();
+            };
+        });
+
+        if (!scanBtn || !this.handlers.scanEpisodes) return;
+        scanBtn.onclick = async () => {
+            scanBtn.disabled = true;
+            scanBtn.innerHTML = '<span>⏳ 불러오는 중...</span>';
+            if (summary) summary.textContent = '목록 페이지를 순서대로 불러오는 중입니다...';
+            try {
+                const res = await this.handlers.scanEpisodes((info) => {
+                    if (!summary || !info) return;
+                    if (info.phase === 'pages') {
+                        summary.textContent = `목록 페이지 불러오는 중... ${info.fetched}/${info.total} 페이지${info.items ? ` (${info.items}화 확인)` : ''}`;
+                    } else if (info.phase === 'buttons') {
+                        summary.textContent = '페이지 버튼을 눌러 가며 목록을 모으는 중입니다...';
+                    }
+                });
+                if (summary) {
+                    const lines = [];
+                    lines.push(`총 <b>${res.count}화</b> 감지${res.min !== null ? ` (<b>${res.min}~${res.max}화</b>)` : ''}`);
+                    if (res.firstPageCount && res.count > res.firstPageCount) {
+                        lines.push(`현재 페이지 ${res.firstPageCount}화 + 다른 페이지 ${res.count - res.firstPageCount}화를 합쳤습니다.`);
+                    } else if (res.firstPageCount && res.count === res.firstPageCount && res.min > 1) {
+                        lines.push(`<span class="toki-scan-warn">⚠️ 다른 페이지를 찾지 못했습니다. 1화부터 있는 작품이라면 목록이 일부만 수집되었을 수 있습니다.</span>`);
+                    }
+                    if (res.gaps.length > 0) {
+                        const shown = res.gaps.slice(0, 8).map(esc).join(', ');
+                        lines.push(`<span class="toki-scan-warn">⚠️ 번호가 비는 구간: ${shown}${res.gaps.length > 8 ? ` 외 ${res.gaps.length - 8}곳` : ''} (휴재·삭제 회차이거나 페이지 수집 실패일 수 있습니다)</span>`);
+                    }
+                    if (res.noNumberCount > 0) lines.push(`번호를 읽지 못한 항목 ${res.noNumberCount}개(공지·외전 등)는 순서대로 번호가 붙습니다.`);
+                    lines.push('10분 안에 다운로드하면 이 목록을 다시 불러오지 않고 그대로 사용합니다.');
+                    summary.innerHTML = lines.join('<br>');
+                }
+                chips.forEach(c => { c.disabled = false; });
+                updatePreview();
+            } catch (e) {
+                if (summary) summary.textContent = `❌ 불러오기 실패: ${e.message}`;
+            } finally {
+                scanBtn.disabled = false;
+                scanBtn.innerHTML = '<span>🔄 전체 회차 다시 불러오기</span>';
+            }
+        };
+    }
+
+    // ── [v1.27.0] 중단된 작업 / 합본 세션 패널 ─────────────────────
+    bindWorkPanel(popupWindow) {
+        const doc = popupWindow.document;
+        const panel = doc.getElementById('toki-work-panel');
+        if (!panel) return;
+
+        const render = () => {
+            if (popupWindow.closed || !this.handlers.getWorkState) return;
+            let state;
+            try { state = this.handlers.getWorkState(); } catch (e) { return; }
+            const esc = (t) => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+            const cards = [];
+
+            if (state.hasMyActive || state.antiSleep !== 'off') {
+                if (state.antiSleep === 'running') {
+                    cards.push(`<div class="toki-work-card is-ok">🔊 백그라운드 유지 모드 작동 중</div>`);
+                } else if (state.antiSleep === 'blocked') {
+                    cards.push(`<div class="toki-work-card is-warn">⚠️ 백그라운드 유지 모드가 꺼져 있습니다. 브라우저가 자동재생을 막았습니다. <b>작품 페이지(원래 탭)를 한 번 클릭</b>하면 다시 시도합니다. 꺼진 상태에서 탭을 오래 숨기면 수집이 느려질 수 있습니다.</div>`);
+                }
+            }
+
+            if (state.orphanCount > 0) {
+                cards.push(`<div class="toki-work-card is-warn">
+                    <div class="toki-work-title">⏸️ 중단된 개별 작업 ${state.orphanCount}화</div>
+                    <div class="toki-work-meta">${esc(state.orphanTitles.join(', '))} — 작업하던 탭이 닫히거나 새로고침되어 멈춰 있습니다.</div>
+                    <div class="toki-work-actions">
+                        <button class="toki-chip" data-work-action="resume-orphans">▶️ 이 탭에서 이어받기</button>
+                        <button class="toki-chip" data-work-action="discard-orphans">🗑️ 비우기</button>
+                    </div>
+                </div>`);
+            }
+
+            state.sessions.forEach(sess => {
+                let statusText = '';
+                let cls = '';
+                const actions = [];
+                if (sess.status === 'saving') {
+                    statusText = '💾 합본 파일 만드는 중...';
+                } else if (sess.isOrphan) {
+                    statusText = '⏸️ 중단됨 (작업하던 탭이 닫힘)';
+                    cls = 'is-warn';
+                    actions.push(`<button class="toki-chip" data-work-action="resume-session" data-id="${sess.id}">▶️ 이어받기</button>`);
+                } else if (sess.isOtherTab) {
+                    statusText = '🔄 다른 탭에서 수집 중';
+                } else if (sess.status === 'attention') {
+                    statusText = sess.stoppedByUser ? '⏹️ 사용자가 중단함' : `⚠️ ${sess.failed}화 실패`;
+                    cls = 'is-warn';
+                    actions.push(`<button class="toki-chip" data-work-action="resume-session" data-id="${sess.id}">🔁 ${sess.stoppedByUser ? '이어서 받기' : '실패 회차 재시도'}</button>`);
+                } else {
+                    statusText = `🔄 수집 중 (대기·진행 ${sess.active}화)`;
+                }
+                if (sess.stored > 0 && sess.status !== 'saving' && !sess.isOtherTab) {
+                    actions.push(`<button class="toki-chip" data-work-action="save-session" data-id="${sess.id}">💾 지금 합본 저장${sess.stored < sess.total ? ` (${sess.stored}화만)` : ''}</button>`);
+                }
+                if (sess.status !== 'saving' && !sess.isOtherTab) {
+                    actions.push(`<button class="toki-chip" data-work-action="discard-session" data-id="${sess.id}">🗑️ 폐기</button>`);
+                }
+                const originNote = (!sess.sameOrigin && sess.kind === 'zipOfFiles')
+                    ? '<div class="toki-work-meta">ℹ️ 다른 도메인에서 시작한 작업입니다. 만화 회차 데이터는 도메인별로 보관되어, 이어받으면 이 도메인에서 일부 회차를 다시 받을 수 있습니다.</div>'
+                    : '';
+                cards.push(`<div class="toki-work-card ${cls}">
+                    <div class="toki-work-title">📚 합본: ${esc(sess.title)} <span class="toki-work-meta">(${sess.format})</span></div>
+                    <div class="toki-work-meta">${statusText} · 보관 ${sess.stored}/${sess.total}화</div>
+                    <div class="toki-work-bar"><div style="width:${sess.percent}%"></div></div>
+                    ${originNote}
+                    ${actions.length ? `<div class="toki-work-actions">${actions.join('')}</div>` : ''}
+                </div>`);
+            });
+
+            panel.innerHTML = cards.join('');
+            panel.style.display = cards.length ? 'flex' : 'none';
+        };
+
+        panel.onclick = async (e) => {
+            const btn = e.target.closest('[data-work-action]');
+            if (!btn) return;
+            const action = btn.getAttribute('data-work-action');
+            const id = btn.getAttribute('data-id');
+            btn.disabled = true;
+            try {
+                if (action === 'resume-orphans' && this.handlers.resumeWork) {
+                    await this.handlers.resumeWork();
+                } else if (action === 'discard-orphans' && this.handlers.discardOrphans) {
+                    if (popupWindow.confirm('중단된 개별 작업을 대기열에서 지우시겠습니까?')) this.handlers.discardOrphans();
+                } else if (action === 'resume-session' && this.handlers.resumeWork) {
+                    await this.handlers.resumeWork(id);
+                } else if (action === 'save-session' && this.handlers.saveMergeNow) {
+                    if (popupWindow.confirm('지금까지 보관된 회차만으로 합본 파일을 저장하시겠습니까?\n(빠진 회차는 별도 리포트로 저장되며, 저장 후 이 합본 작업은 정리됩니다)')) {
+                        await this.handlers.saveMergeNow(id);
+                    }
+                } else if (action === 'discard-session' && this.handlers.discardMerge) {
+                    if (popupWindow.confirm('이 합본 작업과 보관된 회차 데이터를 모두 삭제하시겠습니까?')) await this.handlers.discardMerge(id);
+                }
+            } catch (err) {
+                popupWindow.alert('작업 실패: ' + err.message);
+            } finally {
+                render();
+            }
+        };
+
+        if (this._workPanelUnsub) this._workPanelUnsub();
+        let pending = null;
+        this._workPanelUnsub = EventBus.on(EVT.UPDATE_PROGRESS, () => {
+            if (pending) return;
+            pending = setTimeout(() => { pending = null; render(); }, 300);
+        });
+        render();
     }
 
     show() {
