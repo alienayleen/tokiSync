@@ -9,10 +9,66 @@ import { registerIpcListener, sendToParent } from './ipc-broker.js';
 import { GenericParser } from './parsers/GenericParser.js';
 import { fetchNovelTextViaApi } from './novel-decryptor.js';
 import { startSilentAudio, stopSilentAudio } from './anti_sleep.js';
+import { getImageConcurrency, reportBlockSignal, isBlockStatus, getPacingState } from './pacing.js';
 
 // 🛡️ 자립형 워커 엔진 중복 실행 방지 가드용 변수
 let isWorkerExtractorInitialized = false;
 let workerIpcCleanup = null;
+
+/**
+ * [v1.27.0] 뷰어 페이지에서 "다음화" 링크 주소 찾기 (순차 연속 받기용)
+ * - 규칙의 viewer.nextEpisode 셀렉터 → id/class/rel에 next가 들어간 링크 → "다음화/다음 회/다음편" 텍스트 링크 순
+ * - href가 없거나(#, javascript:) 비활성(disabled)이거나 현재 주소와 같은 링크는 제외
+ */
+export function findNextEpisodeUrl(doc, viewerCfg = {}) {
+    if (!doc || typeof doc.querySelectorAll !== 'function') return null;
+    const here = (() => { try { return new URL(doc.URL || location.href); } catch (e) { return null; } })();
+    const usable = (a) => {
+        if (!a) return null;
+        const raw = (a.getAttribute && a.getAttribute('href')) || '';
+        if (!raw || raw === '#' || /^javascript:/i.test(raw)) return null;
+        const disabledAttr = !!(a.getAttribute && (a.getAttribute('aria-disabled') === 'true' || (a.hasAttribute && a.hasAttribute('disabled'))));
+        if (disabledAttr || /(^|\s)(disabled|disable)(\s|$)/i.test(String(a.className || ''))) return null;
+        try {
+            const u = new URL(raw, here ? here.href : undefined);
+            if (here && u.origin === here.origin && u.pathname === here.pathname && u.search === here.search) return null;
+            if (here && u.origin !== here.origin) {
+                const fam = (h) => h.toLowerCase().replace(/^www\./, '').replace(/\d+/g, '');
+                if (fam(u.hostname) !== fam(here.hostname)) return null;
+            }
+            return u.href;
+        } catch (e) {
+            return null;
+        }
+    };
+
+    const selectors = [];
+    if (viewerCfg.nextEpisode) selectors.push(...String(viewerCfg.nextEpisode).split(',').map(x => x.trim()).filter(Boolean));
+    selectors.push('a#goNextBtn', 'a[rel="next"]', 'a[id*="next" i]', 'a[class*="next" i]');
+    for (const sel of selectors) {
+        let els = [];
+        try { els = Array.from(doc.querySelectorAll(sel)); } catch (e) { continue; }
+        for (const el of els) {
+            const a = el.tagName === 'A' ? el : (el.closest ? el.closest('a') : null);
+            // 댓글/목록 페이지네이션의 "next"는 제외 (회차 이동 문구 또는 화살표형 버튼만 허용)
+            const text = (a && (a.textContent || '').replace(/\s+/g, '')) || '';
+            if (/page|pagination|comment|cmt/i.test(`${a && a.className} ${a && a.id}`) && !/화|회|편/.test(text)) continue;
+            const href = usable(a);
+            if (href) return href;
+        }
+    }
+    const textRe = /^(?:다음화|다음회|다음편|다음에피소드|다음이야기|다음)(?:보기)?[▶›>→]*$|^[▶›>→]*다음화/;
+    const anchors = Array.from(doc.querySelectorAll('a[href]'));
+    for (const a of anchors) {
+        const text = (a.textContent || '').replace(/\s+/g, '');
+        if (!text || text.length > 12) continue;
+        if (!/다음화|다음회|다음편|다음에피소드/.test(text) && !textRe.test(text)) continue;
+        if (/^다음$/.test(text) && a.closest && a.closest('[class*="pag" i], [class*="comment" i], #bo_vc')) continue;
+        const href = usable(a);
+        if (href) return href;
+    }
+    return null;
+}
 
 // Define localized stage reporting helper
 function reportProgress(queueId, percent, stage) {
@@ -22,6 +78,27 @@ function reportProgress(queueId, percent, stage) {
         percent: Math.min(100, Math.max(0, Math.round(percent))),
         stage
     });
+}
+
+/**
+ * [v1.27.0] 같은 창에서 다음 회차로 이동: 페이지의 실제 "다음화" 링크를 눌러 자연스럽게 넘어가고,
+ * 링크가 없거나 SPA 라우팅으로 페이지가 새로 로드되지 않으면 주소 이동으로 강제 전환합니다.
+ */
+function navigateToEpisode(nextUrl) {
+    const norm = (u) => {
+        try { const x = new URL(u, location.href); x.hash = ''; return `${x.origin}${x.pathname.replace(/\/+$/, '')}${x.search}`; } catch (e) { return u; }
+    };
+    const target = norm(nextUrl);
+    const link = Array.from(document.querySelectorAll('a[href]')).find(a => norm(a.href) === target && (a.target || '_self') !== '_blank');
+    // 페이지가 새로 로드되면 이 타이머는 사라지고, SPA처럼 문서가 유지되면 5초 뒤 강제 이동
+    setTimeout(() => { location.href = nextUrl; }, 5000);
+    if (link) {
+        try {
+            link.click();
+            return;
+        } catch (e) {}
+    }
+    location.href = nextUrl;
 }
 
 /**
@@ -321,12 +398,18 @@ export function initWorkerExtractor() {
                     // Downloader helper with concurrency 5
                     const runImageDownloads = async (imageUrls) => {
                         const downloaded = [];
-                        const CONCURRENCY_LIMIT = 5;
+                        // [v1.27.0] 자동 속도 단계에 따라 이미지 동시 다운로드 수를 1~5개로 조절 (청크마다 다시 읽음)
+                        let CONCURRENCY_LIMIT = getImageConcurrency();
                         let processedCount = 0;
+                        let blockSignalSent = false;
 
                         reportProgress(queueId, 0, WORKER_STAGE.DOWNLOADING);
 
                         for (let i = 0; i < imageUrls.length; i += CONCURRENCY_LIMIT) {
+                            CONCURRENCY_LIMIT = getImageConcurrency();
+                            if (i > 0 && getPacingState().level >= 3) {
+                                await sleep(300 + Math.floor(Math.random() * 500));
+                            }
                             // [v1.21.8] 다운로드 루프 중 중단 여부 체크 (스토리지에서 큐 상태 확인)
                             const queue = getQueue();
                             const currentItem = queue.find(q => q.id === queueId);
@@ -358,6 +441,11 @@ export function initWorkerExtractor() {
                                      };
                                 } catch (err) {
                                     console.error(`[TokiSync:Worker] 이미지 다운로드 실패 (${url}):`, err);
+                                    if (!blockSignalSent && isBlockStatus(err && err.status)) {
+                                        blockSignalSent = true;
+                                        reportBlockSignal(`이미지 서버가 ${err.status} 응답으로 요청을 제한함`, { retryAfterMs: err.retryAfterMs || 0 });
+                                        sendToParent('WORKER_LOG', { queueId, msg: `⚠️ 이미지 서버가 ${err.status} 응답을 보냈습니다. 자동으로 속도를 낮추고 잠시 쉽니다.`, level: 'warn' });
+                                    }
                                     processedCount++;
                                     const percent = (processedCount / imageUrls.length) * 100;
                                     reportProgress(queueId, percent, WORKER_STAGE.DOWNLOADING);
@@ -428,6 +516,18 @@ export function initWorkerExtractor() {
                     const payload = { queueId };
                     const transferables = [];
 
+                    // [v1.27.0] 순차 연속 받기용: 다음화 링크와 현재 페이지의 실제 회차 정보
+                    try {
+                        payload.nextEpisodeUrl = findNextEpisodeUrl(document, viewerCfg);
+                        const meta = parser.getViewerMetadata ? parser.getViewerMetadata(document) : null;
+                        if (meta) {
+                            payload.pageEpisodeTitle = meta.episodeTitle;
+                            payload.pageEpisodeNum = meta.episodeNum;
+                        }
+                    } catch (metaErr) {
+                        console.warn('[TokiSync:Worker] 다음화/메타데이터 탐지 실패 (무시):', metaErr);
+                    }
+
                     if (targetType === 'novel') {
                         payload.content = content.trim();
                     } else {
@@ -474,6 +574,17 @@ export function initWorkerExtractor() {
                         console.log(`[TokiSync:Worker] 🎉 부모의 ACK 수신 완료! 중앙 스토리지 완료/실패 대기 개시...`);
                         if (ackTimeout) clearTimeout(ackTimeout);
                         ackCleanup();
+
+                        // [v1.27.0] 순차 연속 받기: 창을 닫지 않고 같은 창에서 다음화로 이동
+                        if (ackMsg.payload?.nextUrl) {
+                            const nextUrl = ackMsg.payload.nextUrl;
+                            const gapMs = Math.max(0, parseInt(ackMsg.payload.nextGapMs, 10) || 0);
+                            cleanupIpc();
+                            sendToParent('WORKER_LOG', { queueId, msg: `➡️ 다음화로 이동 준비 (${(gapMs / 1000).toFixed(1)}초 대기)`, level: 'info' });
+                            await sleep(gapMs);
+                            navigateToEpisode(nextUrl);
+                            return;
+                        }
 
                         // 즉시 1회 검사
                         checkStateAndClose(getQueue());

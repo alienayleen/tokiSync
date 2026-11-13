@@ -4,7 +4,10 @@ import { initBatchWorkerController } from './worker-controller.js';
 import { CbzBuilder } from './cbz.js';
 import { getConfig } from './config.js';
 import JSZip from 'jszip';
-import { getOrphanItems, reclaimOrphanItems, runSchedulerOnce, updateQueueItem, TAB_ID as CURRENT_TAB_ID } from './queue.js';
+import { getOrphanItems, reclaimOrphanItems, runSchedulerOnce, updateQueueItem, rewriteUrlOrigin, TAB_ID as CURRENT_TAB_ID } from './queue.js';
+import { reportBlockSignal, reportPacingSuccess, getPacingState, getPacingWait, resetPacing, getEffectiveMaxWorkers } from './pacing.js';
+import { createChain, continueChain, getChain } from './chain.js';
+import { findNextEpisodeUrl } from './worker-extractor.js';
 import { createMergeSession, storeMergeEpisode, finalizeMergeSession, checkMergeSessions, getMergeSession, MERGE_STATUS } from './merge-session.js';
 import { _resetMergeStoreForTest } from './merge-store.js';
 
@@ -1765,18 +1768,19 @@ function installV127Mocks() {
 test('[v1.27.0] 소유 탭의 생존 신호가 없는 대기열 항목은 고아로 식별되고, 이어받기 시 현재 탭 소유·현재 도메인 URL로 전환되어야 합니다.', () => {
     const m = installV127Mocks();
     try {
-        addEpisodesToQueue([{ title: '1화', url: 'https://old.example/novel/10/1?x=1', episodeNum: '1', protocolDomain: 'https://old.example' }], '고아작품', { ownerTabId: 'tab_dead' });
+        addEpisodesToQueue([{ title: '1화', url: 'https://newtoki468.com/novel/10/1?x=1', episodeNum: '1', protocolDomain: 'https://newtoki468.com' }], '고아작품', { ownerTabId: 'tab_dead' });
         addEpisodesToQueue([{ title: '2화', url: 'https://old.example/novel/10/2', episodeNum: '2' }], '살아있는작품', { ownerTabId: 'tab_alive' });
         globalThis.GM_setValue('TOKI_TAB_HB_tab_alive', Date.now());
 
         const orphans = getOrphanItems();
         if (orphans.length !== 1 || orphans[0].title !== '고아작품') throw new Error(`고아 식별 실패: ${orphans.map(o => o.title)}`);
 
-        const n = reclaimOrphanItems({ targetOrigin: 'https://new.example' });
+        const n = reclaimOrphanItems({ targetOrigin: 'https://newtoki469.com' });
         if (n !== 1) throw new Error(`이어받기 개수 불일치: ${n}`);
         const item = getQueue().find(q => q.title === '고아작품');
         if (item.ownerTabId !== CURRENT_TAB_ID) throw new Error('소유 탭이 현재 탭으로 바뀌지 않음');
-        if (item.episodeUrl !== 'https://new.example/novel/10/1?x=1') throw new Error(`도메인 교체 실패: ${item.episodeUrl}`);
+        if (item.episodeUrl !== 'https://newtoki469.com/novel/10/1?x=1') throw new Error(`도메인 교체 실패: ${item.episodeUrl}`);
+        if (rewriteUrlOrigin('https://booktoki300.com/novel/1', 'https://newtoki469.com') !== 'https://booktoki300.com/novel/1') throw new Error('다른 사이트 주소까지 교체됨');
         if (item.status !== 'pending') throw new Error('상태가 pending으로 초기화되지 않음');
         if (getOrphanItems().length !== 0) throw new Error('이어받은 뒤에도 고아로 남음');
     } finally {
@@ -1877,6 +1881,90 @@ test('[v1.27.0] 챕터 묶음 합본은 회차 파일을 분할 단위대로 ZIP
     } finally {
         m.restore();
     }
+});
+
+test('[v1.27.0] 자동 속도 조절: 차단 신호는 쿨다운과 감속을, 연속 성공은 가속을, 실패 후 재시도는 백오프를 적용해야 합니다.', () => {
+    const m = installV127Mocks();
+    try {
+        resetPacing();
+        const base = getPacingState().level;
+        reportBlockSignal('HTTP 429 테스트');
+        const s1 = getPacingState();
+        if (s1.level !== Math.min(4, base + 2)) throw new Error(`감속 실패: ${s1.level}`);
+        if (getPacingWait().waitMs < 50000) throw new Error('쿨다운이 걸리지 않음');
+        if (getEffectiveMaxWorkers(3) !== 1) throw new Error('느린 단계에서 동시 창 수가 1로 제한되지 않음');
+        reportBlockSignal('같은 순간 몰려온 신호'); // 10초 내 중복 신호는 1회로 취급
+        if (getPacingState().backoffCount !== 1) throw new Error('중복 신호가 쿨다운 단계를 올림');
+        for (let i = 0; i < 8; i++) reportPacingSuccess();
+        if (getPacingState().level !== s1.level - 1) throw new Error('연속 성공 후 가속되지 않음');
+
+        addEpisodesToQueue([{ title: '1화', url: 'http://localhost/webtoon/9/1', episodeNum: '1' }], '백오프작품', {});
+        const id = getQueueItemId('백오프작품', '1');
+        updateQueueItem(id, { status: 'pending', retryCount: 1, errorMsg: '타임아웃' });
+        const it = getQueue().find(q => q.id === id);
+        if (!(it.nextRetryAt > Date.now() + 20000)) throw new Error(`재시도 백오프 미적용: ${it.nextRetryAt}`);
+    } finally {
+        resetPacing();
+        m.restore();
+    }
+});
+
+test('[v1.27.0] 순서대로 받기: 성공한 회차의 다음화 링크를 대기열과 합본 세션에 이어 붙이고, 다음화가 없으면 종료해야 합니다.', () => {
+    const m = installV127Mocks();
+    try {
+        resetPacing();
+        const items = [{ id: getQueueItemId('연속작품', '1'), num: '1', title: '1화', url: 'https://site1.com/novel/5/1', seq: 1 }];
+        const session = createMergeSession({ kind: 'novelVolume', seriesTitle: '연속작품', novelFormat: 'txt', items, template: {} });
+        const { chain, firstItemId } = createChain({ seriesTitle: '연속작품', startUrl: 'https://site1.com/novel/5/1', startNum: 1, template: { category: 'Novel' }, mergeSessionId: session.id });
+        const first = getQueue().find(q => q.id === firstItemId);
+        if (!first || first.chainId !== chain.id) throw new Error('첫 회차 등록 실패');
+
+        const next = continueChain(first, { nextEpisodeUrl: '/novel/5/2' }, { canReuseWindow: true });
+        if (!next || next.url !== 'https://site1.com/novel/5/2') throw new Error(`다음화 결정 실패: ${JSON.stringify(next)}`);
+        const second = getQueue().find(q => q.id === next.id);
+        if (!second || second.status !== 'processing' || second.chainSeq !== 2) throw new Error('다음화가 같은 창 이어 받기용으로 등록되지 않음');
+        if (getMergeSession(session.id).items.length !== 2) throw new Error('합본 세션에 다음화가 추가되지 않음');
+
+        // 되돌아가는 링크(1화)는 무시
+        if (continueChain(second, { nextEpisodeUrl: 'https://site1.com/novel/5/1' }, { canReuseWindow: true })) throw new Error('이미 받은 회차로 되돌아감');
+        // 다음화 없음 → 종료
+        const c2 = getChain(chain.id);
+        c2.status = 'running';
+        globalThis.GM_setValue('TOKI_CHAINS', { [chain.id]: c2 });
+        if (continueChain(second, {}, { canReuseWindow: true }) !== null) throw new Error('다음화가 없는데 진행됨');
+        if (getChain(chain.id).status !== 'done') throw new Error('체인이 종료 상태가 아님');
+    } finally {
+        m.restore();
+    }
+});
+
+test('[v1.27.0] findNextEpisodeUrl()은 "다음화" 링크를 찾고, 비활성·현재 주소·댓글 페이지네이션 링크는 제외해야 합니다.', () => {
+    const mkA = (attrs, text, extra = {}) => ({
+        tagName: 'A', textContent: text, className: attrs.class || '', id: attrs.id || '',
+        getAttribute: (k) => (k === 'class' ? attrs.class : attrs[k] ?? null),
+        hasAttribute: (k) => k in attrs,
+        closest: (sel) => (extra.inComment && /comment|pag/.test(sel) ? {} : null)
+    });
+    const make = (anchors) => ({
+        URL: 'https://newtoki469.com/webtoon/77/10',
+        querySelectorAll: (sel) => {
+            if (sel === 'a[href]') return anchors;
+            if (sel === 'a#goNextBtn') return anchors.filter(a => a.id === 'goNextBtn');
+            if (sel === 'a[rel="next"]') return anchors.filter(a => a.getAttribute('rel') === 'next');
+            if (sel === 'a[id*="next" i]') return anchors.filter(a => /next/i.test(a.id));
+            if (sel === 'a[class*="next" i]') return anchors.filter(a => /next/i.test(a.className));
+            return [];
+        }
+    });
+    const doc1 = make([
+        mkA({ href: '?page=2', class: 'pg_page next' }, '다음'),
+        mkA({ href: '/webtoon/77/10' }, '다음화'),
+        mkA({ href: '/webtoon/77/11', id: 'goNextBtn' }, '다음화 ▶')
+    ]);
+    const r1 = findNextEpisodeUrl(doc1, {});
+    if (r1 !== 'https://newtoki469.com/webtoon/77/11') throw new Error(`다음화 탐지 실패: ${r1}`);
+    const doc2 = make([mkA({ href: '#', id: 'goNextBtn', class: 'disabled' }, '다음화')]);
+    if (findNextEpisodeUrl(doc2, {}) !== null) throw new Error('마지막 화의 비활성 다음화를 링크로 오인');
 });
 
 // 테스트 기동

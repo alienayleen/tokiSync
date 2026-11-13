@@ -54,6 +54,16 @@ export class MenuModal {
                             <div id="toki-scan-summary" class="toki-scan-summary">아직 불러오지 않았습니다. 목록이 여러 페이지(예: 한 페이지 100화)로 나뉜 작품은 먼저 불러오면 전체 회차 수와 누락 구간을 미리 확인할 수 있습니다.</div>
                         </div>
                         <div class="toki-control-group">
+                            <label class="toki-label">순서대로 끝까지 받기 (권장: 전체 다운로드)</label>
+                            <div class="toki-btn-group-row" style="gap: 8px;">
+                                <button class="toki-btn-action toki-btn-sm toki-flex-1" id="toki-btn-chain-start">
+                                    <span>🔗 1화부터 다음화로 끝까지 받기</span>
+                                </button>
+                                <input type="number" id="toki-chain-end" class="toki-input" min="1" placeholder="끝 회차(선택)" style="max-width: 130px;">
+                            </div>
+                            <div class="toki-text-xs toki-mt-8 toki-ml-4">1화를 열어 받은 뒤 같은 창에서 "다음화"를 눌러 넘어가며 마지막 화까지 받습니다. 목록이 페이지로 나뉘어도 상관없습니다. 회차 페이지에서 누르면 그 화부터 시작합니다.</div>
+                        </div>
+                        <div class="toki-control-group">
                             <label class="toki-label">에피소드 범위 지정</label>
                             <input type="text" id="toki-range-input" class="toki-input" placeholder="예: 1,2,4-10,15 (비우면 전체)">
                             <div class="toki-text-xs toki-mt-8 toki-ml-4">쉼표(,)로 개별 번호, 하이픈(-)으로 연속 범위 지정</div>
@@ -410,6 +420,34 @@ export class MenuModal {
 
         // [v1.27.0] 전체 회차 불러오기 / 범위 미리보기 / 빠른 선택
         this.bindEpisodeScan(doc);
+        // [v1.27.0] 순서대로 끝까지 받기
+        const chainBtn = doc.getElementById('toki-btn-chain-start');
+        if (chainBtn && this.handlers.resolveChainStart && this.handlers.startChain) {
+            chainBtn.onclick = async () => {
+                chainBtn.disabled = true;
+                try {
+                    const start = await this.handlers.resolveChainStart();
+                    const endVal = parseInt((doc.getElementById('toki-chain-end') || {}).value, 10);
+                    const endNum = isNaN(endVal) ? null : endVal;
+                    const sourceText = {
+                        current: '지금 보고 있는 회차',
+                        list: '목록의 1화',
+                        firstButton: '페이지의 "첫화" 버튼',
+                        dropdown: '회차 선택 목록',
+                        listMin: '목록에서 가장 앞 회차 (1화를 찾지 못함)'
+                    }[start.source] || '';
+                    const warn = start.warn ? '\n\n⚠️ 1화를 찾지 못했습니다. 1화부터 받으려면 1화 페이지를 열고 거기서 다시 눌러 주세요.' : '';
+                    const msg = `${start.num}화부터 시작합니다. (${sourceText})\n${start.title || ''}\n\n같은 창에서 다음화를 따라가며 ${endNum ? `${endNum}화까지` : '마지막 화까지'} 받습니다.${warn}\n\n진행할까요?`;
+                    if (popupWindow.confirm(msg)) {
+                        await this.handlers.startChain(start, endNum);
+                    }
+                } catch (e) {
+                    popupWindow.alert('시작 회차를 찾지 못했습니다: ' + e.message);
+                } finally {
+                    chainBtn.disabled = false;
+                }
+            };
+        }
         // [v1.27.0] 중단된 작업·합본 세션 패널
         this.bindWorkPanel(popupWindow);
 
@@ -807,6 +845,22 @@ export class MenuModal {
                 }
             }
 
+            if (state.pacing && state.pacing.waitMs > 0) {
+                const sec = Math.ceil(state.pacing.waitMs / 1000);
+                const mmss = `${Math.floor(sec / 60)}분 ${sec % 60}초`;
+                const label = state.pacing.waitKind === 'rest' ? '☕ 잠시 휴식 중' : '⏳ 사이트 제한 신호로 잠시 쉬는 중';
+                cards.push(`<div class="toki-work-card is-warn">
+                    <div class="toki-work-title">${label} (${mmss} 남음)</div>
+                    <div class="toki-work-meta">${esc(state.pacing.waitReason)} · 현재 속도: ${esc(state.pacing.levelName)}</div>
+                    <div class="toki-work-actions"><button class="toki-chip" data-work-action="resume-now">▶️ 지금 재개</button></div>
+                </div>`);
+                if (!this._pacingTick) {
+                    this._pacingTick = setTimeout(() => { this._pacingTick = null; render(); }, 1000);
+                }
+            } else if (state.hasMyActive && state.pacing) {
+                cards.push(`<div class="toki-work-card"><span class="toki-work-meta">🚦 수집 속도: ${esc(state.pacing.levelName)} (사이트 반응에 따라 자동 조절)</span></div>`);
+            }
+
             if (state.orphanCount > 0) {
                 cards.push(`<div class="toki-work-card is-warn">
                     <div class="toki-work-title">⏸️ 중단된 개별 작업 ${state.orphanCount}화</div>
@@ -846,9 +900,13 @@ export class MenuModal {
                 const originNote = (!sess.sameOrigin && sess.kind === 'zipOfFiles')
                     ? '<div class="toki-work-meta">ℹ️ 다른 도메인에서 시작한 작업입니다. 만화 회차 데이터는 도메인별로 보관되어, 이어받으면 이 도메인에서 일부 회차를 다시 받을 수 있습니다.</div>'
                     : '';
+                const chainNote = sess.chainStatus
+                    ? `<div class="toki-work-meta">🔗 순서대로 받기: ${sess.chainStatus === 'running' ? '다음화를 따라가는 중' : esc(sess.chainReason || '종료')}</div>`
+                    : '';
                 cards.push(`<div class="toki-work-card ${cls}">
                     <div class="toki-work-title">📚 합본: ${esc(sess.title)} <span class="toki-work-meta">(${sess.format})</span></div>
                     <div class="toki-work-meta">${statusText} · 보관 ${sess.stored}/${sess.total}화</div>
+                    ${chainNote}
                     <div class="toki-work-bar"><div style="width:${sess.percent}%"></div></div>
                     ${originNote}
                     ${actions.length ? `<div class="toki-work-actions">${actions.join('')}</div>` : ''}
@@ -866,7 +924,9 @@ export class MenuModal {
             const id = btn.getAttribute('data-id');
             btn.disabled = true;
             try {
-                if (action === 'resume-orphans' && this.handlers.resumeWork) {
+                if (action === 'resume-now' && this.handlers.resumeNow) {
+                    this.handlers.resumeNow();
+                } else if (action === 'resume-orphans' && this.handlers.resumeWork) {
                     await this.handlers.resumeWork();
                 } else if (action === 'discard-orphans' && this.handlers.discardOrphans) {
                     if (popupWindow.confirm('중단된 개별 작업을 대기열에서 지우시겠습니까?')) this.handlers.discardOrphans();

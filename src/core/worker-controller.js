@@ -5,7 +5,7 @@
 
 import { fetchNovelTextViaApi } from './novel-decryptor.js';
 import { registerIpcListener, sendToWorker, registerWorkerOrigin, removeWorkerOrigin, validateNonce } from './ipc-broker.js';
-import { updateQueueItem, WORKER_STAGE, activeWorkers, getQueue, runSchedulerOnce, getQueuePaused, _activeProcessing, TAB_ID, removeSeriesFromQueue } from './queue.js';
+import { updateQueueItem, WORKER_STAGE, activeWorkers, getQueue, runSchedulerOnce, getQueuePaused, setQueuePaused, _activeProcessing, TAB_ID, removeSeriesFromQueue } from './queue.js';
 import { EventBus, EVT } from './EventBus.js';
 import { getConfig, SLEEP_MULTIPLIERS } from './config.js';
 import { refreshCacheAfterUpload } from './gas.js';
@@ -13,7 +13,9 @@ import { EpubBuilder } from './epub.js';
 import { CbzBuilder } from './cbz.js';
 import { TxtBuilder } from './txt.js';
 import { saveFile } from './utils.js';
-import { getMergeSession, storeMergeEpisode, scheduleMergeCheck, installMergeWatcher } from './merge-session.js';
+import { getMergeSession, storeMergeEpisode, scheduleMergeCheck, installMergeWatcher, updateMergeItemMeta } from './merge-session.js';
+import { continueChain } from './chain.js';
+import { reportPacingSuccess, reportBlockSignal } from './pacing.js';
 
 // Reference for the single worker popup (used in sequential mode)
 let activeWorkerRef = null;
@@ -176,6 +178,7 @@ async function fetchMediaViaWorkerSingleAttempt(episodeUrl, targetType = 'novel'
             // 2. CAPTCHA detected ➡️ Extend timeout to 5 minutes
             if (type === 'CAPTCHA_DETECTED') {
                 console.warn('[WorkerController] ⚠️ 캡차/CF 감지 ➡️ 타임아웃 5분으로 확장');
+                reportBlockSignal('캡차(보안 확인) 화면 감지');
                 if (timeoutId) {
                     clearTimeout(timeoutId);
                     timeoutId = setTimeout(() => {
@@ -449,6 +452,22 @@ export function initBatchWorkerController() {
             }
         });
 
+        // 1-1. [v1.27.0] 수집 창이 열렸지만 연결(핸드셰이크)이 25초 넘게 진전이 없으면 1회 안내
+        queue.forEach(item => {
+            if (item.status !== 'processing' || item.ownerTabId !== TAB_ID) return;
+            if (item.stage !== WORKER_STAGE.INIT || (item.progressPercent || 0) > 0) return;
+            const started = item.startedAt || item.lastActivity;
+            if (!started || now - started < 25000) return;
+            const flag = `tokisync_stall_notice_${item.id}_${started}`;
+            if (window[flag]) return;
+            window[flag] = true;
+            EventBus.emit(EVT.LOG, {
+                msg: `⚠️ [${item.episodeTitle}] 수집 창이 열렸지만 25초째 연결 신호가 없습니다. 수집 창에 캡차·오류 페이지가 떠 있는지, 팝업이 다른 사이트로 넘어갔는지 확인해 주세요.`,
+                tag: 'Queue',
+                level: 'warn'
+            });
+        });
+
         // 2. 수동 종료 감시
         for (const [id, popupRef] of activeWorkers.entries()) {
             const actualRef = popupRef && (popupRef.ref || popupRef);
@@ -510,12 +529,39 @@ export function initBatchWorkerController() {
 
         const ackPayload = { queueId: matchedId };
 
-        // 자식에게 즉시 수신 ACK 신호 전송 및 즉시 팝업 닫기 회수
+        // [v1.27.0] 순차 연속 받기: 실제 페이지에서 읽은 회차 제목으로 보정하고, 다음화를 먼저 등록한 뒤
+        //           가능하면 같은 수집 창에서 "다음화"로 넘어가 이어 받습니다(창을 닫았다 여는 대신).
+        let reuseNext = null;
+        if (item.chainId) {
+            const pageTitle = (payload.pageEpisodeTitle || '').trim();
+            if (pageTitle && pageTitle !== 'UnknownEpisode') {
+                item.episodeTitle = pageTitle;
+                updateQueueItem(matchedId, { episodeTitle: pageTitle });
+                if (item.mergeSessionId) updateMergeItemMeta(item.mergeSessionId, matchedId, { title: pageTitle });
+            }
+            try {
+                reuseNext = continueChain(item, payload, { canReuseWindow: !!(sourceWindow && !sourceWindow.closed) });
+            } catch (chainErr) {
+                console.warn('[WorkerController] 연속 받기 다음화 등록 실패:', chainErr);
+            }
+            if (reuseNext) {
+                activeWorkers.set(reuseNext.id, sourceWindow);
+                ackPayload.nextUrl = reuseNext.url;
+                ackPayload.nextGapMs = reuseNext.gapMs;
+                EventBus.emit(EVT.LOG, {
+                    msg: `➡️ [연속 받기] 같은 창에서 다음화로 이동합니다 (${(reuseNext.gapMs / 1000).toFixed(1)}초 뒤)`,
+                    tag: 'Chain',
+                    level: 'info'
+                });
+            }
+        }
+
+        // 자식에게 즉시 수신 ACK 신호 전송 및 (재사용하지 않으면) 즉시 팝업 닫기 회수
         if (sourceWindow) {
             try {
                 if (!sourceWindow.closed) {
                     sendToWorker(sourceWindow, 'IPC_ACK', ackPayload);
-                    sourceWindow.close(); // 즉시 close 강제
+                    if (!reuseNext) sourceWindow.close(); // 즉시 close 강제
                 }
             } catch (ackErr) {
                 console.warn('[WorkerController] [배치] 자식 팝업 close 또는 ACK 전송 실패:', ackErr);
@@ -726,6 +772,7 @@ export function initBatchWorkerController() {
             _activeProcessing.delete(matchedId);
             console.log(`[WorkerController] 🎉 [배치] 업로드 및 완료 처리 성공 (ID: ${matchedId})`);
             if (item.mergeSessionId) scheduleMergeCheck();
+            try { reportPacingSuccess(); } catch (e) {}
 
         } catch (uploadErr) {
             _activeProcessing.delete(matchedId);
@@ -888,8 +935,17 @@ export function initBatchWorkerController() {
                     const freshItem = freshQueue.find(i => i.id === matchedId);
                     if (!freshItem || freshItem.status !== 'processing' || getQueuePaused()) {
                         console.log('[WorkerController] ⏹️ 첫 통신 대기 후 중단/일시정지 감지 -> 주입 취소');
+                        // [v1.27.0] 수집 창이 열린 채 멈춘 이유를 사용자에게 1회 안내
+                        const reason = getQueuePaused()
+                            ? '대기열이 일시 정지 상태입니다. 대시보드에서 "재개"를 누르면 이 창에서 이어서 받습니다.'
+                            : `이 회차의 상태가 '${freshItem ? freshItem.status : '삭제됨'}'이라 수집을 시작하지 않았습니다.`;
+                        if (!window[`tokisync_ready_notice_${matchedId}`]) {
+                            window[`tokisync_ready_notice_${matchedId}`] = true;
+                            EventBus.emit(EVT.LOG, { msg: `⏸️ [${item.episodeTitle}] ${reason}`, tag: 'Queue', level: 'warn' });
+                        }
                         return;
                     }
+                    delete window[`tokisync_ready_notice_${matchedId}`];
 
                     console.log(`[WorkerController] 📢 [배치] 안전 대기 완료 ➡️ START_EXTRACTION 주입 (ID: ${matchedId})`);
                     
@@ -914,6 +970,14 @@ export function initBatchWorkerController() {
                 }
             } else {
                 console.warn('[WorkerController] [배치] WORKER_READY 수신했으나 매칭되는 activeWorkers 항목을 찾지 못했습니다.', targetUrl);
+                if (!window.__tokisync_unmatched_notice || Date.now() - window.__tokisync_unmatched_notice > 30000) {
+                    window.__tokisync_unmatched_notice = Date.now();
+                    EventBus.emit(EVT.LOG, {
+                        msg: `⚠️ 열린 수집 창(${targetUrl || '주소 미상'})이 대기열의 어떤 회차와도 연결되지 않습니다. 이전 작업에서 남은 창이면 닫아 주세요.`,
+                        tag: 'Queue',
+                        level: 'warn'
+                    });
+                }
             }
         }
 
@@ -931,6 +995,13 @@ export function initBatchWorkerController() {
 
             if (matchedId) {
                 console.warn(`[WorkerController] ⚠️ [배치] WAF 캡차 차단막 감지 (ID: ${matchedId})`);
+                // [v1.27.0] 다른 수집 창이 계속 요청하지 않도록 대기열 전체 쿨다운 + 일시 정지
+                //           (수집 창은 닫지 않음: 사용자가 그 창에서 보안 확인을 마친 뒤 "재개"를 누르면 같은 창에서 이어 받음)
+                reportBlockSignal('캡차(보안 확인) 화면 감지');
+                if (!getQueuePaused()) {
+                    setQueuePaused(true);
+                    EventBus.emit(EVT.NOTIFY_ERROR, { msg: '사이트가 보안 확인(캡차)을 요구해 다운로드를 일시 정지했습니다.\n\n1) 열려 있는 수집 창에서 보안 확인을 마치세요.\n2) 대시보드에서 "재개"를 누르면 그 창에서 이어서 받습니다.' });
+                }
                 const queue = getQueue();
                 const item = queue.find(i => i.id === matchedId);
                 if (item) {
@@ -1117,5 +1188,14 @@ export function initBatchWorkerController() {
                 runSchedulerOnce();
             }
         }
-    }, 'batch_controller');
+    }, {
+        listenerId: 'batch_controller',
+        // [v1.27.0] 도메인이 바뀐 수집 창도 "내가 연 창"이면 신뢰 (이어받기 시 핸드셰이크 차단 방지)
+        trustSource: (src) => {
+            for (const ref of activeWorkers.values()) {
+                if ((ref && (ref.ref || ref)) === src) return true;
+            }
+            return false;
+        }
+    });
 }

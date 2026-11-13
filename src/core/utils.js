@@ -777,6 +777,22 @@ export async function getImageDimensions(blob) {
  * @param {string} [referer]
  * @returns {Promise<Blob>}
  */
+/**
+ * Retry-After 헤더(초 또는 HTTP 날짜)를 밀리초로 변환 (없으면 0)
+ */
+export function parseRetryAfter(rawHeaders) {
+    try {
+        const m = String(rawHeaders || '').match(/^retry-after:\s*(.+)$/im);
+        if (!m) return 0;
+        const v = m[1].trim();
+        if (/^\d+$/.test(v)) return Math.min(parseInt(v, 10) * 1000, 30 * 60 * 1000);
+        const t = Date.parse(v);
+        return isNaN(t) ? 0 : Math.max(0, Math.min(t - Date.now(), 30 * 60 * 1000));
+    } catch (e) {
+        return 0;
+    }
+}
+
 export async function fetchBlobWithXHR(url, referer) {
     // 35초 절대 강제 타임아웃 프로미스 정의 (CORS/샌드박스 먹통 상황 방어용 극약 처방)
     let timeoutTimer = null;
@@ -795,7 +811,7 @@ export async function fetchBlobWithXHR(url, referer) {
                     mode: 'cors',
                     credentials: 'include'
                 });
-                if (!resp.ok) throw new Error(`HTTP status ${resp.status}`);
+                if (!resp.ok) { const e = new Error(`HTTP status ${resp.status}`); e.status = resp.status; throw e; }
                 return await resp.blob();
             } catch (fetchErr) {
                 throw new Error(`Standard Fetch 실패 (CORS 또는 네트워크 장애): ${fetchErr.message} -> ${url}`);
@@ -817,14 +833,18 @@ export async function fetchBlobWithXHR(url, referer) {
                         if (res.status >= 200 && res.status < 300) {
                             resolve(res.response);
                         } else {
-                            reject(new Error(`HTTP ${res.status}: ${url}`));
+                            // [v1.27.0] 자동 속도 조절이 403/429 등 제한 신호를 구분할 수 있도록 상태 코드와 Retry-After를 첨부
+                            const httpErr = new Error(`HTTP ${res.status}: ${url}`);
+                            httpErr.status = res.status;
+                            httpErr.retryAfterMs = parseRetryAfter(res.responseHeaders);
+                            reject(httpErr);
                         }
                     },
                     onerror: (err) => {
                         console.warn('[TokiSync Utils] GM_xmlhttpRequest 오류 감지. fetch 폴백을 발동합니다:', url);
                         fetch(url, { mode: 'cors', credentials: 'include' })
                             .then(r => {
-                                if (!r.ok) throw new Error(`HTTP status ${r.status}`);
+                                if (!r.ok) { const e = new Error(`HTTP status ${r.status}`); e.status = r.status; throw e; }
                                 return r.blob();
                             })
                             .then(resolve)
@@ -834,7 +854,7 @@ export async function fetchBlobWithXHR(url, referer) {
                         console.warn('[TokiSync Utils] GM_xmlhttpRequest 25초 타임아웃. fetch 폴백 시도:', url);
                         fetch(url, { mode: 'cors', credentials: 'include' })
                             .then(r => {
-                                if (!r.ok) throw new Error(`HTTP status ${r.status}`);
+                                if (!r.ok) { const e = new Error(`HTTP status ${r.status}`); e.status = r.status; throw e; }
                                 return r.blob();
                             })
                             .then(resolve)
@@ -845,7 +865,7 @@ export async function fetchBlobWithXHR(url, referer) {
                 console.error('[TokiSync Utils] GM_xmlhttpRequest 호출 중 예외 발생, 일반 fetch로 긴급 우회:', e);
                 fetch(url, { mode: 'cors', credentials: 'include' })
                     .then(r => {
-                        if (!r.ok) throw new Error(`HTTP status ${r.status}`);
+                        if (!r.ok) { const e = new Error(`HTTP status ${r.status}`); e.status = r.status; throw e; }
                         return r.blob();
                     })
                     .then(resolve)

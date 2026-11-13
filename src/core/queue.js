@@ -6,6 +6,7 @@
 import { EventBus, EVT } from './EventBus.js';
 import { startSilentAudio, stopSilentAudio } from './anti_sleep.js';
 import { getConfig } from './config.js';
+import { getEpisodeGapMs, getPacingWait, getEffectiveMaxWorkers, getRetryAt, reportSoftFailure } from './pacing.js';
 
 export const WORKER_STAGE = {
   INIT: 'STAGE_INIT',             // 초기화 및 Handshake 대기 중
@@ -125,10 +126,13 @@ export const addEpisodesToQueue = (episodes, novelTitle, options = {}) => {
       ownerTabId: ep.ownerTabId || options.ownerTabId || TAB_ID,
       isSingleVolume: Boolean(ep.isSingleVolume ?? options.isSingleVolume),
       mergeSessionId: ep.mergeSessionId || options.mergeSessionId || '', // [v1.27.0] 합본 세션 소속 (빈 값이면 개별 저장)
+      chainId: ep.chainId || '',          // [v1.27.0] 순차 연속 받기 체인 소속
+      chainSeq: ep.chainSeq || 0,
       status: 'pending',
       progressPercent: 0,
       stage: WORKER_STAGE.INIT,
       retryCount: 0,
+      nextRetryAt: 0,
       addedAt: Date.now()
     };
 
@@ -162,6 +166,15 @@ export const updateQueueItem = (id, updates) => {
     if (isAlreadyStopped) {
       console.log(`[Queue] 🛡️ 강제 중단된 큐 아이템에 대한 비동기 업데이트 거부: ${currentItem.episodeTitle}`);
       return false;
+    }
+
+    // [v1.27.0] 재시도 백오프: 실패 후 pending으로 되돌릴 때 즉시 재요청하지 않고 30초→2분→5분 뒤에 다시 시도
+    const prevRetry = currentItem.retryCount || 0;
+    if (updates.retryCount !== undefined && updates.retryCount > prevRetry) {
+      try { reportSoftFailure(); } catch (e) {}
+      if (updates.status === 'pending' && updates.nextRetryAt === undefined) {
+        updates = { ...updates, nextRetryAt: getRetryAt(updates.retryCount) };
+      }
     }
 
     const hasStateChange = updates.status && updates.status !== queue[index].status;
@@ -315,6 +328,15 @@ export const touchTabHeartbeat = () => gmSet(HB_PREFIX + TAB_ID, Date.now());
  */
 export const startTabHeartbeat = () => {
   if (heartbeatTimer) return;
+  // [v1.27.0 이어받기 수정] 새로고침 직전 pagehide에서 GM 삭제가 끝나지 않으면 이전 탭이 최대 3분간 "살아 있는" 것으로
+  // 보여 이어받기 버튼이 나타나지 않았습니다. 같은 탭의 이전 TAB_ID를 sessionStorage에 남겨 두었다가 즉시 사망 처리합니다.
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      const prev = sessionStorage.getItem('tokisync_tab_id');
+      if (prev && prev !== TAB_ID) gmDel(HB_PREFIX + prev);
+      sessionStorage.setItem('tokisync_tab_id', TAB_ID);
+    }
+  } catch (e) {}
   touchTabHeartbeat();
   heartbeatTimer = setInterval(touchTabHeartbeat, HB_INTERVAL_MS);
   try {
@@ -348,12 +370,22 @@ export const getOrphanItems = () => {
 /**
  * 원래 도메인과 현재 도메인이 다르면 회차 URL의 origin을 현재 도메인으로 교체합니다. (토끼 계열 미러 도메인 변경 대응)
  */
+/**
+ * 숫자만 다른 미러 도메인인지 판별 (newtoki468.com ↔ newtoki469.com: 같음 / booktoki ↔ newtoki: 다름)
+ */
+export const isSameSiteFamily = (hostA, hostB) => {
+  const norm = (h) => String(h || '').toLowerCase().replace(/^www\./, '').replace(/\d+/g, '');
+  return !!hostA && !!hostB && norm(hostA) === norm(hostB);
+};
+
 export const rewriteUrlOrigin = (url, targetOrigin) => {
   if (!url || !targetOrigin) return url;
   try {
     const u = new URL(url);
     const t = new URL(targetOrigin);
     if (u.origin === t.origin) return url;
+    // [v1.27.0 이어받기 수정] 다른 사이트(예: 북토끼 작업을 뉴토끼 탭에서 이어받기)로 회차 주소를 바꾸지 않음
+    if (!isSameSiteFamily(u.hostname, t.hostname)) return url;
     return `${t.origin}${u.pathname}${u.search}${u.hash}`;
   } catch (e) {
     return url;
@@ -380,6 +412,7 @@ export const reclaimOrphanItems = (options = {}) => {
       item.retryCount = 0;
       item.errorMsg = '';
     }
+    item.nextRetryAt = 0;
     // 현재 탭이 실제로 열어 둔 팝업이 있는 항목은 건드리지 않음
     if (item.status === 'processing' && item.ownerTabId === TAB_ID && activeWorkers.has(item.id)) return;
     if (item.ownerTabId && item.ownerTabId !== TAB_ID && !isTabAlive(item.ownerTabId)) deadTabs.add(item.ownerTabId);
@@ -520,12 +553,22 @@ export const stopAllWorkers = (shouldClear = false) => {
 };
 
 let isSchedulerRunning = false;
+let lastPopupBlockedNoticeAt = 0;
 let rerunRequested = false;
 
-// 인간 행동 모방 랜덤 지연시간(Jitter Delay) 유틸리티
-const sleepJitter = (minMs, maxMs) => {
-  const delay = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
-  return new Promise(resolve => setTimeout(resolve, delay));
+// [v1.27.0] 쿨다운/재시도 대기 후 스케줄러를 다시 깨우는 단일 타이머
+let wakeTimer = null;
+let wakeAt = 0;
+const scheduleWake = (delayMs) => {
+  const target = Date.now() + delayMs;
+  if (wakeTimer && wakeAt <= target) return; // 이미 더 이른 기상 예약이 있음
+  if (wakeTimer) clearTimeout(wakeTimer);
+  wakeAt = target;
+  wakeTimer = setTimeout(() => {
+    wakeTimer = null;
+    wakeAt = 0;
+    runSchedulerOnce();
+  }, delayMs);
 };
 
 /**
@@ -581,7 +624,7 @@ export const runSchedulerOnce = async () => {
     // 1. 동시 수집 한도 제약 (설정값 maxWorkers)
     //    [v1.27.0] 팝업이 닫힌 뒤 파일 조립/저장(_activeProcessing) 중인 회차는 다음 회차 수집을 막지 않도록,
     //    조립 대기 한도를 maxWorkers만큼 별도로 허용합니다. (기존: 조립이 끝나야 다음 팝업 기동)
-    const maxWorkers = getMaxWorkers();
+    const maxWorkers = getEffectiveMaxWorkers(getMaxWorkers());
     if (activeWorkers.size >= maxWorkers || _activeProcessing.size > maxWorkers) {
       isSchedulerRunning = false;
       return;
@@ -597,8 +640,26 @@ export const runSchedulerOnce = async () => {
       return;
     }
 
-    // 3. 현재 탭 소속의 pending(대기 중) 상태인 첫 번째 배치 에피소드 추출
-    const nextItem = queue.find(item => item.status === 'pending' && isMyBatchItem(item));
+    // [v1.27.0] 사이트 제한 신호 쿨다운 또는 장기 휴식 중이면 새 회차를 기동하지 않고 끝나는 시각에 다시 깨어남
+    const pacingWait = getPacingWait();
+    if (pacingWait.waitMs > 0 && queue.some(item => item.status === 'pending' && isMyBatchItem(item))) {
+      console.log(`[Queue Scheduler] ⏳ 자동 속도 조절 대기 (${Math.ceil(pacingWait.waitMs / 1000)}초): ${pacingWait.reason}`);
+      scheduleWake(pacingWait.waitMs + 500);
+      isSchedulerRunning = false;
+      return;
+    }
+
+    // 3. 현재 탭 소속의 pending(대기 중) 상태 중 재시도 대기 시각이 지난 첫 번째 배치 에피소드 추출
+    const nowTs = Date.now();
+    const myPending = queue.filter(item => item.status === 'pending' && isMyBatchItem(item));
+    const nextItem = myPending.find(item => !item.nextRetryAt || item.nextRetryAt <= nowTs);
+    if (!nextItem && myPending.length > 0) {
+      // 모두 재시도 대기 중 → 가장 빠른 재시도 시각에 다시 깨어남
+      const soonest = Math.min(...myPending.map(item => item.nextRetryAt || nowTs));
+      scheduleWake(Math.max(500, soonest - nowTs + 200));
+      isSchedulerRunning = false;
+      return;
+    }
     if (!nextItem) {
       // 대기 중인 작업도 없고 현재 진행 중인 활성 작업도 없다면 안티 슬립 오디오를 정지시킵니다.
       if (currentProcessing.length === 0) {
@@ -625,12 +686,14 @@ export const runSchedulerOnce = async () => {
       startSilentAudio();
     } catch (e) {}
 
-    await sleepJitter(2000, 4000);
+    // [v1.27.0] 회차 사이 대기: 자동 속도 단계에 따라 1.5초~30초 (기존 고정 2~4초)
+    const gapMs = getEpisodeGapMs();
+    await new Promise(resolve => setTimeout(resolve, gapMs));
 
     // [v1.21.8] 대기 지터 완료 후 사용자의 정지/일시정지 클릭 및 상태 정합성 재검증
     const freshQueue = getRawQueue();
     const freshItem = freshQueue.find(item => item.id === nextItem.id);
-    if (!freshItem || freshItem.status !== 'pending' || getQueuePaused()) {
+    if (!freshItem || freshItem.status !== 'pending' || getQueuePaused() || getPacingWait().waitMs > 0) {
       console.log(`[Queue Scheduler] ⏹️ 지터 대기 중 중단/일시정지 또는 상태 변경 감지 -> 기동 취소: ${nextItem.episodeTitle}`);
       isSchedulerRunning = false;
       return;
@@ -653,11 +716,17 @@ export const runSchedulerOnce = async () => {
         launchedThisRun = true;
         console.log(`[Queue Scheduler] ✅ 팝업 등록 완료: ${nextItem.episodeTitle} (activeWorkers=${activeWorkers.size})`);
     } else {
-        // 팝업 차단 등으로 창 생성 실패 시 즉시 failed 처리
-        updateQueueItem(nextItem.id, { 
-            status: 'failed', 
-            errorMsg: '브라우저 팝업 차단막에 의해 창 생성에 실패했습니다.' 
+        // [v1.27.0] 팝업 차단 시 영구 실패 대신 30초 뒤 재시도로 두고 사용자에게 안내 (이어받기 중 차단되어도 작업이 사라지지 않게)
+        updateQueueItem(nextItem.id, {
+            status: 'pending',
+            nextRetryAt: Date.now() + 30000,
+            errorMsg: '브라우저 팝업 차단막에 의해 창 생성에 실패했습니다. 팝업을 허용하면 자동으로 다시 시도합니다.'
         });
+        if (Date.now() - lastPopupBlockedNoticeAt > 60000) {
+          lastPopupBlockedNoticeAt = Date.now();
+          EventBus.emit(EVT.NOTIFY_ERROR, { msg: '브라우저가 수집 창(팝업)을 차단했습니다.\n주소창의 팝업 차단 아이콘에서 이 사이트의 팝업을 "항상 허용"으로 바꾸면 30초 안에 자동으로 다시 시도합니다.' });
+        }
+        scheduleWake(30500);
     }
 
   } catch (err) {
@@ -665,7 +734,7 @@ export const runSchedulerOnce = async () => {
   } finally {
     isSchedulerRunning = false;
     // [v1.27.0] 동시 수집 슬롯이 남아 있으면 즉시 다음 슬롯을 채웁니다.
-    if ((launchedThisRun && activeWorkers.size < getMaxWorkers()) || rerunRequested) {
+    if ((launchedThisRun && activeWorkers.size < getEffectiveMaxWorkers(getMaxWorkers())) || rerunRequested) {
       rerunRequested = false;
       setTimeout(() => runSchedulerOnce(), 0);
     }
@@ -700,6 +769,7 @@ const openEpisodePopup = (url, id, slotIndex = 0) => {
 };
 
 let isQueueSchedulerInitialized = false;
+export const isQueueSchedulerActive = () => isQueueSchedulerInitialized;
 
 /**
  * 이벤트 기반 백그라운드 세마포어 스케줄러 등록
