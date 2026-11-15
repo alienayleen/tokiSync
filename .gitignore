@@ -45,3 +45,6 @@ documentation/분석/북토끼*.png
 # Vite build target exclusion
 dist-viewer/
 
+
+# E2E 실행 로그
+test/e2e/*.log

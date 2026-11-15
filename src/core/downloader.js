@@ -220,6 +220,12 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
     logger.init();
     logger.show();
     logger.info(`다운로드 시작 (정책: ${policy}, 강제 덮어쓰기: ${forceOverwrite})...`);
+    // [v1.27.0 수정] 이전 캡차/수동 일시 정지 상태가 저장되어 남아 있으면 새 다운로드도 수집 창만 열린 채 멈췄습니다.
+    //               새 다운로드는 사용자의 명시적 시작이므로 일시 정지를 해제합니다.
+    if (getQueuePaused()) {
+        setQueuePaused(false);
+        logger.info('▶️ 이전에 걸려 있던 일시 정지를 해제하고 시작합니다.', 'Queue');
+    }
 
     // Auto-start Anti-Sleep mode (실제 재생 성공 여부를 확인한 뒤 로그 출력)
     startSilentAudio().then(ok => {

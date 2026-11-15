@@ -452,6 +452,16 @@ export function initBatchWorkerController() {
             }
         });
 
+        // 1-0. [v1.27.0] 캡차 화면이 60초 넘게 남아 있으면 대기열 일시 정지 + 알림 (수집 창은 유지)
+        const stuckCaptcha = queue.find(item => item.status === 'processing' && item.ownerTabId === TAB_ID
+            && item.captchaSince && now - item.captchaSince > 60000 && (item.progressPercent || 0) < 10);
+        if (stuckCaptcha) {
+            updateQueueItem(stuckCaptcha.id, { captchaSince: 0, lastActivity: now });
+            setQueuePaused(true);
+            EventBus.emit(EVT.NOTIFY_ERROR, { msg: `사이트가 보안 확인(캡차)을 요구하고 있어 다운로드를 일시 정지했습니다. (${stuckCaptcha.episodeTitle})\n\n1) 열려 있는 수집 창에서 보안 확인을 마치세요.\n2) 대시보드에서 "재개"를 누르면 그 창에서 이어서 받습니다.` });
+            return;
+        }
+
         // 1-1. [v1.27.0] 수집 창이 열렸지만 연결(핸드셰이크)이 25초 넘게 진전이 없으면 1회 안내
         queue.forEach(item => {
             if (item.status !== 'processing' || item.ownerTabId !== TAB_ID) return;
@@ -885,9 +895,15 @@ export function initBatchWorkerController() {
                     (item.status === 'pending' || item.status === 'processing') && 
                     normalizeUrl(item.episodeUrl) === normTarget
                 );
-                if (!matchedItem && activeWorkers.size === 1) {
+                // 활성 창이 1개뿐일 때의 대체 매칭: 수집 창이 아닌 창(대시보드·about:blank 등)을 잘못 연결하지 않도록
+                // 보낸 창 주소가 http(s)이고, 같은 사이트 계열이며, 기존 창 참조가 닫혔거나 일치하지 않을 때만 허용
+                if (!matchedItem && activeWorkers.size === 1 && /^https?:/i.test(targetUrl)) {
                     const [onlyActiveId] = activeWorkers.keys();
-                    matchedItem = queue.find(item => item.id === onlyActiveId && item.status === 'processing');
+                    const candidate = queue.find(item => item.id === onlyActiveId && item.status === 'processing');
+                    const fam = (u) => { try { return new URL(u).hostname.toLowerCase().replace(/^www\./, '').replace(/\d+/g, ''); } catch (_) { return ''; } };
+                    if (candidate && fam(candidate.episodeUrl) && fam(candidate.episodeUrl) === fam(targetUrl)) {
+                        matchedItem = candidate;
+                    }
                 }
                 if (matchedItem) {
                     matchedId = matchedItem.id;
@@ -998,10 +1014,9 @@ export function initBatchWorkerController() {
                 // [v1.27.0] 다른 수집 창이 계속 요청하지 않도록 대기열 전체 쿨다운 + 일시 정지
                 //           (수집 창은 닫지 않음: 사용자가 그 창에서 보안 확인을 마친 뒤 "재개"를 누르면 같은 창에서 이어 받음)
                 reportBlockSignal('캡차(보안 확인) 화면 감지');
-                if (!getQueuePaused()) {
-                    setQueuePaused(true);
-                    EventBus.emit(EVT.NOTIFY_ERROR, { msg: '사이트가 보안 확인(캡차)을 요구해 다운로드를 일시 정지했습니다.\n\n1) 열려 있는 수집 창에서 보안 확인을 마치세요.\n2) 대시보드에서 "재개"를 누르면 그 창에서 이어서 받습니다.' });
-                }
+                // 클라우드플레어 "잠시만 기다리세요" 화면은 대부분 몇 초 안에 자동 통과되므로 바로 멈추지 않고,
+                // 60초가 지나도 남아 있으면 배치 감시 루프에서 일시 정지 + 알림 (captchaSince 기록)
+                if (!item.captchaSince) updateQueueItem(matchedId, { captchaSince: Date.now() });
                 const queue = getQueue();
                 const item = queue.find(i => i.id === matchedId);
                 if (item) {
@@ -1042,6 +1057,10 @@ export function initBatchWorkerController() {
         }
 
         // 3. WORKER_PROGRESS: 자식 워커 실시간 진행률 UI 반영
+        if (type === 'WORKER_PROGRESS' && payload && payload.queueId && (payload.percent || 0) >= 10) {
+            const pItem = getQueue().find(i => i.id === payload.queueId);
+            if (pItem && pItem.captchaSince) updateQueueItem(payload.queueId, { captchaSince: 0 });
+        }
         if (type === 'WORKER_PROGRESS') {
             const { percent, stage, queueId } = payload || {};
             let matchedId = queueId;
