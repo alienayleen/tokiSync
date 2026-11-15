@@ -26,8 +26,8 @@ ${Array.from({ length: total }, (_, i) => total - i).map(n => `  <li class="ep-r
 
     const viewerPage = (n) => {
         if (options.captchaEp === n && !options._captchaSolved) {
-            // 클라우드플레어 "Just a moment" 화면처럼 몇 초 뒤 자동 통과(새로고침)
-            options._captchaSolved = true;
+            // 클라우드플레어 "Just a moment" 화면처럼 몇 초 뒤 자동 통과(새로고침). captchaStuck이면 계속 확인 화면
+            if (!options.captchaStuck) options._captchaSolved = true;
             return `<!doctype html><html><head><meta charset="utf-8"><title>Just a moment...</title><meta http-equiv="refresh" content="${options.captchaRefreshSec || 8}"></head><body><div id="challenge-running">checking</div></body></html>`;
         }
         const next = n < total ? `<a id="goNextBtn" href="/webtoon/100/ep${n + 1}">다음화 ▶</a>` : `<a id="goNextBtn" href="#" class="disabled">다음화</a>`;

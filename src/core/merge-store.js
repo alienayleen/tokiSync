@@ -14,12 +14,22 @@ const DB_STORE = 'episodes';
 
 const memoryStore = new Map();
 let dbPromise = null;
+let dbBroken = false;
+
+// [v1.27.0 수정] Tampermonkey 환경에서 IndexedDB 요청이 응답 없이 멈추면 폐기·이어받기·저장이 영원히 끝나지 않았습니다.
+// 모든 IndexedDB 작업에 제한 시간을 두고, 시간이 지나면 메모리 저장소로 대체합니다.
+const IDB_TIMEOUT_MS = 4000;
+const withTimeout = (promise, label) => new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`IndexedDB 응답 없음 (${label}, ${IDB_TIMEOUT_MS / 1000}초)`)), IDB_TIMEOUT_MS);
+    promise.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
+});
 
 const hasGM = () => typeof GM_getValue !== 'undefined' && typeof GM_setValue !== 'undefined';
 
 function openDb() {
+    if (dbBroken) return Promise.resolve(null);
     if (dbPromise) return dbPromise;
-    dbPromise = new Promise((resolve) => {
+    const opening = new Promise((resolve) => {
         try {
             if (typeof indexedDB === 'undefined' || !indexedDB || typeof indexedDB.open !== 'function') {
                 resolve(null);
@@ -35,15 +45,31 @@ function openDb() {
                 console.warn('[MergeStore] IndexedDB open 실패, 메모리 저장소로 대체합니다:', req.error);
                 resolve(null);
             };
+            req.onblocked = () => {
+                console.warn('[MergeStore] IndexedDB open이 다른 탭에 의해 차단됨, 메모리 저장소로 대체합니다.');
+                resolve(null);
+            };
         } catch (e) {
             console.warn('[MergeStore] IndexedDB 사용 불가, 메모리 저장소로 대체합니다:', e);
             resolve(null);
         }
     });
+    dbPromise = withTimeout(opening, 'open').catch((e) => {
+        console.warn('[MergeStore]', e.message, '→ 메모리 저장소로 대체합니다.');
+        dbBroken = true;
+        return null;
+    });
     return dbPromise;
 }
 
 function idbRequest(db, mode, fn) {
+    return withTimeout(idbRequestRaw(db, mode, fn), mode).catch((e) => {
+        if (/응답 없음/.test(e.message)) dbBroken = true;
+        throw e;
+    });
+}
+
+function idbRequestRaw(db, mode, fn) {
     return new Promise((resolve, reject) => {
         try {
             const tx = db.transaction(DB_STORE, mode);
@@ -76,10 +102,14 @@ export async function saveEpisodeData(key, record) {
     }
     const db = await openDb();
     if (db) {
-        await idbRequest(db, 'readwrite', (store) => store.put(record, key));
-    } else {
-        memoryStore.set(key, record);
+        try {
+            await idbRequest(db, 'readwrite', (store) => store.put(record, key));
+            return true;
+        } catch (e) {
+            console.warn('[MergeStore] IndexedDB 저장 실패, 메모리 저장소로 대체합니다:', e.message);
+        }
     }
+    memoryStore.set(key, record);
     return true;
 }
 

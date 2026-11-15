@@ -38,6 +38,14 @@ let isBatchControllerInitialized = false;
 // 🛡️ 배치 폴링 setInterval ID 추적 (중복 초기화 시 이전 인터벌 정리)
 let _batchPollingInterval = null;
 
+// [v1.27.0 수정] Tampermonkey의 window는 Proxy라서 없는 속성을 delete하면 TypeError가 나고,
+// 그 오류로 START_EXTRACTION 전송이 끊겨 수집 창이 연결된 채 아무것도 하지 않았습니다.
+// 내부 상태 표시는 window 속성 대신 모듈 변수로 관리합니다.
+const readyWaiting = new Set();        // 안전 대기 중인 회차 ID
+const readyNoticeShown = new Set();    // "시작하지 않은 이유" 안내를 이미 띄운 회차 ID
+const stallNoticeShown = new Set();    // "25초째 연결 신호 없음" 안내를 이미 띄운 (회차ID_시작시각)
+let lastUnmatchedNoticeAt = 0;
+
 // Security: Batch worker nonce tracking (queueId -> nonce)
 const batchWorkerNonces = new Map();
 
@@ -469,8 +477,8 @@ export function initBatchWorkerController() {
             const started = item.startedAt || item.lastActivity;
             if (!started || now - started < 25000) return;
             const flag = `tokisync_stall_notice_${item.id}_${started}`;
-            if (window[flag]) return;
-            window[flag] = true;
+            if (stallNoticeShown.has(flag)) return;
+            stallNoticeShown.add(flag);
             EventBus.emit(EVT.LOG, {
                 msg: `⚠️ [${item.episodeTitle}] 수집 창이 열렸지만 25초째 연결 신호가 없습니다. 수집 창에 캡차·오류 페이지가 떠 있는지, 팝업이 다른 사이트로 넘어갔는지 확인해 주세요.`,
                 tag: 'Queue',
@@ -922,11 +930,11 @@ export function initBatchWorkerController() {
                 
                 if (item) {
                     // 🛡️ 안전 대기 중 동일 에피소드의 READY 중복 처리 방어 가드
-                    if (window[`tokisync_waiting_${matchedId}`]) {
+                    if (readyWaiting.has(matchedId)) {
                         console.log(`[WorkerController] [배치] ID: ${matchedId} 는 이미 안전 대기 중입니다. 중복 READY 유입 차단.`);
                         return;
                     }
-                    window[`tokisync_waiting_${matchedId}`] = true;
+                    readyWaiting.add(matchedId);
                     updateQueueItem(matchedId, { lastActivity: Date.now() });
 
                     const config = getConfig();
@@ -943,7 +951,7 @@ export function initBatchWorkerController() {
                     try {
                         await new Promise(r => setTimeout(r, initialDelay));
                     } finally {
-                        delete window[`tokisync_waiting_${matchedId}`];
+                        readyWaiting.delete(matchedId);
                     }
                     
                     // 대기 완료 후 중단 여부 재체크
@@ -955,13 +963,13 @@ export function initBatchWorkerController() {
                         const reason = getQueuePaused()
                             ? '대기열이 일시 정지 상태입니다. 대시보드에서 "재개"를 누르면 이 창에서 이어서 받습니다.'
                             : `이 회차의 상태가 '${freshItem ? freshItem.status : '삭제됨'}'이라 수집을 시작하지 않았습니다.`;
-                        if (!window[`tokisync_ready_notice_${matchedId}`]) {
-                            window[`tokisync_ready_notice_${matchedId}`] = true;
+                        if (!readyNoticeShown.has(matchedId)) {
+                            readyNoticeShown.add(matchedId);
                             EventBus.emit(EVT.LOG, { msg: `⏸️ [${item.episodeTitle}] ${reason}`, tag: 'Queue', level: 'warn' });
                         }
                         return;
                     }
-                    delete window[`tokisync_ready_notice_${matchedId}`];
+                    readyNoticeShown.delete(matchedId);
 
                     console.log(`[WorkerController] 📢 [배치] 안전 대기 완료 ➡️ START_EXTRACTION 주입 (ID: ${matchedId})`);
                     
@@ -986,8 +994,8 @@ export function initBatchWorkerController() {
                 }
             } else {
                 console.warn('[WorkerController] [배치] WORKER_READY 수신했으나 매칭되는 activeWorkers 항목을 찾지 못했습니다.', targetUrl);
-                if (!window.__tokisync_unmatched_notice || Date.now() - window.__tokisync_unmatched_notice > 30000) {
-                    window.__tokisync_unmatched_notice = Date.now();
+                if (Date.now() - lastUnmatchedNoticeAt > 30000) {
+                    lastUnmatchedNoticeAt = Date.now();
                     EventBus.emit(EVT.LOG, {
                         msg: `⚠️ 열린 수집 창(${targetUrl || '주소 미상'})이 대기열의 어떤 회차와도 연결되지 않습니다. 이전 작업에서 남은 창이면 닫아 주세요.`,
                         tag: 'Queue',
@@ -1016,10 +1024,10 @@ export function initBatchWorkerController() {
                 reportBlockSignal('캡차(보안 확인) 화면 감지');
                 // 클라우드플레어 "잠시만 기다리세요" 화면은 대부분 몇 초 안에 자동 통과되므로 바로 멈추지 않고,
                 // 60초가 지나도 남아 있으면 배치 감시 루프에서 일시 정지 + 알림 (captchaSince 기록)
-                if (!item.captchaSince) updateQueueItem(matchedId, { captchaSince: Date.now() });
                 const queue = getQueue();
                 const item = queue.find(i => i.id === matchedId);
                 if (item) {
+                    if (!item.captchaSince) updateQueueItem(matchedId, { captchaSince: Date.now() });
                     // [Liveness Guard 오작동 방지] 단일 모드는 캡차 감지 시 타임아웃을 5분으로
                     // 연장하지만, 배치 모드는 이 신호를 받고도 lastActivity를 갱신하지 않아
                     // 60초 타임아웃 감시에 그대로 걸려 캡차 해제를 기다리는 정상 회차까지

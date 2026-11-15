@@ -430,8 +430,9 @@ export const resumeMergeSession = async (sessionId, options = {}) => {
 export const discardMergeSession = async (sessionId) => {
     const session = getMergeSession(sessionId);
     if (!session) return;
+    // [v1.27.0 수정] 세션·대기열 정리를 먼저 끝내고, 보관 데이터 삭제는 뒤에서 처리 (저장소가 응답하지 않아도 폐기는 완료)
     getQueue().filter(q => q.mergeSessionId === sessionId).forEach(q => removeQueueItem(q.id));
-    await deleteEpisodeData(session.items.map(i => makeMergeKey(sessionId, i.id)));
     removeSession(sessionId);
     logger.info(`🗑️ [합본] ${session.displayTitle} 작업을 폐기했습니다.`, 'Merge');
+    deleteEpisodeData(session.items.map(i => makeMergeKey(sessionId, i.id))).catch(e => console.warn('[MergeSession] 보관 데이터 삭제 실패(무시):', e));
 };

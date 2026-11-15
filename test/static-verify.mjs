@@ -116,6 +116,17 @@ verify('M1: EventBus.js에 dead constants(NOTIFY_CONFIRM 등)가 제거됨', () 
     }
 });
 
+// v1.27.0: Tampermonkey의 window는 Proxy라 없는 속성 delete가 TypeError를 던짐 (수집 시작 명령이 끊기던 회귀)
+verify('v1.27.0: src/core에서 delete window[...] / delete window.xxx 사용 금지', () => {
+    const dir = path.resolve(root, 'src/core');
+    const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]);
+    const offenders = walk(dir)
+        .filter(f => f.endsWith('.js') && !/test-|run-test/.test(path.basename(f)))
+        .filter(f => /delete\s+(window|unsafeWindow)\s*[\[.]/.test(fs.readFileSync(f, 'utf8')))
+        .map(f => path.relative(root, f));
+    if (offenders.length) throw new Error(`delete window 사용: ${offenders.join(', ')}`);
+});
+
 console.log(`\n📊 정적 검증 완료: ${passCount}건 통과 / ${failCount}건 실패\n`);
 
 if (failCount > 0) process.exit(1);
