@@ -190,11 +190,13 @@ export function registerIpcListener(callback, options = {}) {
     // Support legacy signature: registerIpcListener(callback, listenerId)
     let listenerId = 'default';
     let requireNonce = false;
+    let trustSource = null;
     if (typeof options === 'string') {
         listenerId = options;
     } else if (typeof options === 'object') {
         listenerId = options.listenerId || 'default';
         requireNonce = options.requireNonce || false;
+        trustSource = typeof options.trustSource === 'function' ? options.trustSource : null;
     }
 
     const targetWindow = typeof window !== 'undefined' ? (window.top || window) : null;
@@ -223,9 +225,17 @@ export function registerIpcListener(callback, options = {}) {
 
         // C4 fix: Origin validation — reject messages from non-null origins that aren't trusted
         if (event.origin !== 'null' && event.origin !== '' && event.origin !== window.location.origin) {
-            // For parent window: only accept from same origin or about:blank popups (origin="null")
-            console.warn(`[IPC:Broker] Blocked message from untrusted origin: ${event.origin}`);
-            return;
+            // [v1.27.0 이어받기 수정] 미러 도메인이 바뀌어 수집 창과 원래 탭의 origin이 달라지면 핸드셰이크가 조용히 차단되어
+            // 수집 창이 열린 채 멈췄습니다. 메시지를 보낸 창이 "내가 연 수집 창"이거나 "나를 연 부모 창"이면 신뢰합니다.
+            let trusted = false;
+            try {
+                if (event.source && typeof window !== 'undefined' && window.opener && event.source === window.opener) trusted = true;
+                if (!trusted && trustSource && event.source && trustSource(event.source)) trusted = true;
+            } catch (e) {}
+            if (!trusted) {
+                console.warn(`[IPC:Broker] Blocked message from untrusted origin: ${event.origin}`);
+                return;
+            }
         }
 
         // C4 fix: Nonce validation (when required or when nonce is present)

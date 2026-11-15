@@ -1,5 +1,7 @@
-import { tokiDownload, processItem, parseRangeSpec, resumeQueuedWork } from './downloader.js';
-import { startTabHeartbeat, getOrphanItems, discardOrphanItems, getQueue, TAB_ID } from './queue.js';
+import { tokiDownload, processItem, parseRangeSpec, resumeQueuedWork, startChainDownload } from './downloader.js';
+import { getChains, removeChain } from './chain.js';
+import { startTabHeartbeat, getOrphanItems, discardOrphanItems, getQueue, TAB_ID, runSchedulerOnce } from './queue.js';
+import { getPacingSummary, clearPacingCooldown } from './pacing.js';
 import { getMergeSessions, getMergeSessionProgress, finalizeMergeSession, discardMergeSession, resumeMergeSession, installMergeWatcher, MERGE_STATUS } from './merge-session.js';
 import { getAntiSleepState } from './anti_sleep.js';
 import { detectSite } from './detector.js'; 
@@ -211,6 +213,22 @@ export async function main() {
     startTabHeartbeat();
     installMergeWatcher();
 
+    // [v1.27.0] 이전에 멈춘 작업이 있으면 페이지 로드 시 알려줌 (생존 신호 판정이 끝나도록 잠시 뒤 검사)
+    setTimeout(() => {
+        try {
+            const orphanCount = getOrphanItems().filter(o => !o.mergeSessionId).length;
+            const stalledSessions = getMergeSessions().filter(sess => {
+                const prog = getMergeSessionProgress(sess);
+                return (!prog.isMine && !prog.ownerAlive) || sess.status === MERGE_STATUS.ATTENTION;
+            }).length;
+            if (orphanCount > 0 || stalledSessions > 0) {
+                logger.warn(`⏸️ 이어받을 수 있는 작업이 있습니다 (개별 ${orphanCount}화, 합본 ${stalledSessions}건). 대시보드 다운로드 탭에서 "이어받기"를 눌러 주세요.`, 'Queue');
+            }
+        } catch (e) {
+            console.warn('[TokiSync] 중단 작업 검사 실패:', e);
+        }
+    }, 1500);
+
     // [v1.27.0] 전체 회차 스캔 결과 (범위 미리보기용)
     let scannedEpisodeNums = null;
 
@@ -348,13 +366,52 @@ export async function main() {
             if (uniq.length === 0) return '';
             return `${uniq[uniq.length - 1]}-${uniq[0]}`;
         },
+        // ── [v1.27.0] 순서대로 받기 (1화부터 다음화를 따라가며) ─────
+        resolveChainStart: async () => {
+            const parser = await ParserFactory.getParser();
+            if (!parser) throw new Error('파서를 찾을 수 없습니다.');
+            const list = await parser.getListItems({ allPages: false });
+            // 뷰어(회차) 페이지에서 실행한 경우: 현재 화부터
+            if (!list || list.length === 0) {
+                const meta = parser.getViewerMetadata ? parser.getViewerMetadata(document) : {};
+                return { url: location.href, num: parseInt(meta.episodeNum, 10) || 1, title: meta.episodeTitle || '현재 화', source: 'current', seriesTitle: meta.seriesTitle || '' };
+            }
+            const parsed = list.map(li => parser.parseListItem(li.element || li))
+                .map(p => ({ ...p, n: parseInt(p.num, 10) }))
+                .filter(p => p.src);
+            const one = parsed.find(p => p.n === 1);
+            if (one) return { url: one.src, num: 1, title: one.title, source: 'list' };
+            // 목록에 1화가 없으면: "첫화/첫회/1화" 버튼 → 뷰어 회차 선택 드롭다운 → 목록의 가장 앞 회차 순으로 시도
+            const firstBtn = Array.from(document.querySelectorAll('a[href]')).find(a => {
+                const t = (a.textContent || '').replace(/\s+/g, '');
+                return /^(첫화|첫회|첫편|첫화보기|첫회보기|1화보기|1화)$/.test(t);
+            });
+            if (firstBtn) return { url: firstBtn.href, num: 1, title: '1화', source: 'firstButton' };
+            try {
+                if (typeof parser._collectViaViewerDropdown === 'function') {
+                    const dd = await parser._collectViaViewerDropdown(list);
+                    if (dd && dd.length) {
+                        const dp = dd.map(li => parser.parseListItem(li)).map(p => ({ ...p, n: parseInt(p.num, 10) })).filter(p => p.src);
+                        const pick = dp.find(p => p.n === 1) || dp.reduce((a, b) => ((b.n || 1e9) < (a.n || 1e9) ? b : a), dp[0]);
+                        if (pick) return { url: pick.src, num: pick.n || 1, title: pick.title, source: 'dropdown' };
+                    }
+                }
+            } catch (e) {
+                console.warn('[TokiSync] 회차 드롭다운 탐색 실패:', e);
+            }
+            const minItem = parsed.reduce((a, b) => ((b.n || 1e9) < (a.n || 1e9) ? b : a), parsed[0]);
+            return { url: minItem.src, num: minItem.n || 1, title: minItem.title, source: 'listMin', warn: true };
+        },
+        startChain: (start, endNum) => startChainDownload({ startUrl: start.url, startNum: start.num, endNum, seriesTitleHint: start.seriesTitle || '' }),
         // ── [v1.27.0] 중단된 작업 / 합본 세션 상태 ───────────────
         getWorkState: () => {
             const orphans = getOrphanItems();
             const orphanTitles = Array.from(new Set(orphans.filter(o => !o.mergeSessionId).map(o => o.title)));
             const queue = getQueue();
+            const chains = getChains();
             const sessions = getMergeSessions().map(sess => {
                 const prog = getMergeSessionProgress(sess, queue);
+                const chain = chains.find(c => c.mergeSessionId === sess.id);
                 return {
                     id: sess.id,
                     title: sess.displayTitle || sess.seriesTitle,
@@ -364,6 +421,8 @@ export async function main() {
                     isOrphan: !prog.isMine && !prog.ownerAlive,
                     isOtherTab: !prog.isMine && prog.ownerAlive,
                     sameOrigin: !sess.origin || sess.origin === window.location.origin,
+                    chainStatus: chain ? chain.status : null,
+                    chainReason: chain ? chain.stopReason : '',
                     ...prog,
                     missingItems: undefined
                 };
@@ -373,13 +432,18 @@ export async function main() {
                 orphanTitles,
                 sessions,
                 antiSleep: getAntiSleepState(),
+                pacing: getPacingSummary(),
                 hasMyActive: queue.some(q => q.ownerTabId === TAB_ID && (q.status === 'pending' || q.status === 'processing'))
             };
         },
+        resumeNow: () => { clearPacingCooldown(); runSchedulerOnce(); },
         resumeWork: (sessionId) => resumeQueuedWork(sessionId ? { sessionId } : {}),
         discardOrphans: () => discardOrphanItems(getOrphanItems().filter(o => !o.mergeSessionId).map(o => o.id)),
         saveMergeNow: (sessionId) => finalizeMergeSession(sessionId, { allowPartial: true }),
-        discardMerge: (sessionId) => discardMergeSession(sessionId),
+        discardMerge: async (sessionId) => {
+            getChains().filter(c => c.mergeSessionId === sessionId).forEach(c => removeChain(c.id));
+            await discardMergeSession(sessionId);
+        },
         migrateKavita: runKavitaMigration,
         migrateThumbnails: runThumbnailMigration,
         syncHistory: syncHistory,

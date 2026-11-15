@@ -13,8 +13,10 @@ import { startSilentAudio, stopSilentAudio } from './anti_sleep.js';
 import { fetchHistory, refreshCacheAfterUpload, getBooksByCacheId, initUpdateUploadViaGASRelay, getMergeIndexFragment } from './gas.js';
 import { fetchHistoryDirect, checkSingleHistoryDirect, getOAuthToken, getOrCreateFolder } from './network.js';
 import { fetchNovelText, fetchComicImages, closeActiveWorker, initBatchWorkerController } from './worker-controller.js';
-import { addEpisodesToQueue, initQueueScheduler, runSchedulerOnce, activeWorkers, WORKER_STAGE, updateQueueItem, getQueue, getQueueItemId, removeQueueItem, removeCompletedAndFailedItems, TAB_ID, getMaxWorkers, getOrphanItems, reclaimOrphanItems, isTabAlive } from './queue.js';
+import { setQueuePaused, getQueuePaused, addEpisodesToQueue, initQueueScheduler, runSchedulerOnce, activeWorkers, WORKER_STAGE, updateQueueItem, getQueue, getQueueItemId, removeQueueItem, removeCompletedAndFailedItems, TAB_ID, getMaxWorkers, getOrphanItems, reclaimOrphanItems, isTabAlive } from './queue.js';
 import { createMergeSession, resumeMergeSession, getMergeSessions } from './merge-session.js';
+import { getEffectiveMaxWorkers } from './pacing.js';
+import { createChain, getChains } from './chain.js';
 
 async function shouldSkipEpisode({
     numStr,
@@ -692,7 +694,7 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
  */
 export function startBatchPipeline(targets = []) {
     logger.log(`🚦 [멀티큐] 배치 수집기 가동 준비...`, 'Queue');
-    const maxWorkers = getMaxWorkers();
+    const maxWorkers = getEffectiveMaxWorkers(getMaxWorkers());
     const openCount = Math.max(0, Math.min(maxWorkers - activeWorkers.size, targets.length));
     if (openCount > 0) {
         logger.log(`🛡️ 팝업 차단 회피를 위한 자식 창 ${openCount}개 선제 확보(Pre-open) 중... (동시 수집 ${maxWorkers}개)`, 'Queue');
@@ -725,15 +727,17 @@ export function startBatchPipeline(targets = []) {
         }
     }
 
-    if (opened > 0 || activeWorkers.size > 0 || openCount === 0) {
-        initBatchWorkerController();
-        initQueueScheduler();
-        runSchedulerOnce();
+    // [v1.27.0 이어받기 수정] 사전 확보가 팝업 차단으로 실패해도 스케줄러는 반드시 기동합니다.
+    // (기존: 사전 확보 실패 시 스케줄러를 띄우지 않아 이어받은 회차가 대기 상태로 영원히 멈춤)
+    initBatchWorkerController();
+    initQueueScheduler();
+    runSchedulerOnce();
+    if (opened === 0 && openCount > 0) {
+        logger.warn('⚠️ 수집 창을 미리 열지 못했습니다. 팝업을 허용하면 스케줄러가 30초 간격으로 다시 시도합니다.', 'Queue');
+    } else {
         logger.success(`🚦 멀티큐 스케줄러 기동 완료.`, 'Queue');
-        return true;
     }
-    logger.error(`❌ 선제 확보된 자식 창이 없어 큐 수집을 시작하지 못했습니다.`, 'Queue');
-    return false;
+    return true;
 }
 
 /**
@@ -744,6 +748,8 @@ export function startBatchPipeline(targets = []) {
 export async function resumeQueuedWork(options = {}) {
     const targetOrigin = window.location.origin;
     let count = 0;
+    // 일시 정지 상태로 남아 있으면 이어받아도 아무것도 진행되지 않으므로 해제
+    if (getQueuePaused()) setQueuePaused(false);
     if (options.sessionId) {
         count = await resumeMergeSession(options.sessionId, { targetOrigin });
     } else {
@@ -754,6 +760,8 @@ export async function resumeQueuedWork(options = {}) {
             }
         }
         count += reclaimOrphanItems({ targetOrigin });
+        // 이 탭 소유지만 스케줄러가 없는(새로고침 전 작업) 대기/진행 항목도 이어받기
+        count += reclaimOrphanItems({ ids: getQueue().filter(q => q.ownerTabId === TAB_ID && !q.mergeSessionId && (q.status === 'pending' || q.status === 'processing') && !activeWorkers.has(q.id)).map(q => q.id), targetOrigin });
     }
     startSilentAudio();
     const targets = getQueue()
@@ -762,4 +770,104 @@ export async function resumeQueuedWork(options = {}) {
     if (targets.length > 0) startBatchPipeline(targets);
     EventBus.emit(EVT.UPDATE_PROGRESS);
     return count;
+}
+
+/**
+ * [v1.27.0] 순차 연속 받기: 지정한 회차부터 같은 수집 창에서 "다음화"를 따라가며 마지막 화(또는 끝 회차)까지 받습니다.
+ * 목록 페이지 페이지네이션과 무관하게 전체 회차를 받을 수 있으며, 저장 정책(개별/합본)은 일반 다운로드와 같습니다.
+ * @param {{ startUrl: string, startNum?: number, endNum?: number|null, seriesTitleHint?: string }} options
+ * @returns {Promise<boolean>} 시작 여부
+ */
+export async function startChainDownload(options = {}) {
+    const { startUrl, startNum = 1, endNum = null, seriesTitleHint = '' } = options;
+    if (!startUrl) {
+        EventBus.emit(EVT.NOTIFY_ERROR, { msg: '시작할 회차 주소를 찾지 못했습니다.' });
+        return false;
+    }
+    const config = getConfig();
+    logger.init();
+    logger.show();
+
+    const siteInfo = await detectSite();
+    const parser = await ParserFactory.getParser();
+    if (!siteInfo || !parser) {
+        EventBus.emit(EVT.NOTIFY_ERROR, { msg: '지원하지 않는 사이트이거나 파서를 초기화할 수 없습니다.' });
+        return false;
+    }
+    const { category, matchedRule } = siteInfo;
+    const siteName = matchedRule?.name || 'TokiSync Parser';
+    const isNovel = (category === 'Novel' || category === 'novel');
+
+    // 저장 정책: 연속 받기는 로컬 저장만 지원 (드라이브 정책이면 로컬로 저장)
+    const policy = config.policy;
+    const buildingPolicy = (policy === 'zipOfCbzs' || policy === 'folderInCbz') ? 'zipOfCbzs' : 'individual';
+    const destination = policy === 'native' ? 'native' : 'local';
+    if (policy === 'drive' || policy === 'drive_kavita') {
+        logger.warn('ℹ️ 순서대로 받기는 로컬 저장만 지원합니다. 드라이브 정책이어도 로컬로 저장합니다.', 'Chain');
+    }
+    const novelFormat = config.novelFormat || 'epub';
+    const mergeKind = (isNovel && config.novelMode === 'singleVolume')
+        ? 'novelVolume'
+        : (buildingPolicy === 'zipOfCbzs' ? 'zipOfFiles' : null);
+
+    let viewerMeta = null;
+    try { viewerMeta = parser.getViewerMetadata ? parser.getViewerMetadata(document) : null; } catch (e) {}
+    const explicitSeriesTitle = (parser.getSeriesTitle() || '').trim();
+    const seriesTitle = (explicitSeriesTitle || seriesTitleHint || (viewerMeta && viewerMeta.seriesTitle) || '')
+        .replace(/^\[[^\]]+\]\s*/, '')
+        .replace(/^Unknown\s*Series$/i, '')
+        .trim() || 'UnknownSeries';
+
+    // 같은 작품의 연속 받기가 이미 진행 중이면 중복 시작 차단
+    const runningChain = getChains().find(c => c.seriesTitle === seriesTitle && c.status === 'running'
+        && getQueue().some(q => q.chainId === c.id && (q.status === 'pending' || q.status === 'processing')));
+    if (runningChain) {
+        EventBus.emit(EVT.NOTIFY_ERROR, { msg: `"${seriesTitle}"의 순서대로 받기가 이미 진행 중입니다.` });
+        return false;
+    }
+
+    let seriesMetadata = {};
+    try { seriesMetadata = { ...(parser.getSeriesMetadata ? parser.getSeriesMetadata() : {}) }; } catch (e) {}
+    seriesMetadata.title = seriesTitle;
+
+    const template = {
+        category,
+        viewerCfg: parser.rule.viewer || {},
+        rootFolder: seriesTitle,
+        destination,
+        novelFormat,
+        matchedRule: parser.rule,
+        protocolDomain: parser.protocolDomain || window.location.origin,
+        seriesMetadata,
+        folderId: ''
+    };
+
+    const startN = parseInt(startNum, 10) || 1;
+    let mergeSessionId = '';
+    if (mergeKind) {
+        const session = createMergeSession({
+            kind: mergeKind,
+            seriesTitle,
+            displayTitle: seriesTitle,
+            rootFolder: seriesTitle,
+            category,
+            novelFormat,
+            siteName,
+            destination,
+            partSize: isNovel ? 0 : config.mergePartSize,
+            origin: window.location.origin,
+            items: [{ id: getQueueItemId(seriesTitle, String(startN)), num: String(startN), title: `${startN}화`, url: startUrl, seq: 1 }],
+            template
+        });
+        mergeSessionId = session.id;
+    }
+
+    const { firstItemId } = createChain({ seriesTitle, startUrl, startNum: startN, endNum, template, mergeSessionId });
+    logger.info(`🔗 [순서대로 받기] ${seriesTitle}: ${startN}화부터 ${endNum ? `${endNum}화까지` : '마지막 화까지'} 같은 창에서 다음화를 따라가며 받습니다.${mergeKind ? ' (끝나면 합본 저장)' : ''}`, 'Chain');
+
+    startSilentAudio().then(ok => {
+        if (!ok) logger.warn('[Anti-Sleep] 브라우저가 자동재생을 막아 백그라운드 유지 모드가 꺼져 있습니다. 페이지를 한 번 클릭하면 다시 시도합니다.', 'Anti-Sleep');
+    });
+    if (getQueuePaused()) setQueuePaused(false);
+    return startBatchPipeline([{ id: firstItemId, url: startUrl, title: `${startN}화` }]);
 }

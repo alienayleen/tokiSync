@@ -13,7 +13,7 @@
 
 import { EventBus, EVT } from './EventBus.js';
 import { logger } from './logger.js';
-import { getQueue, addEpisodesToQueue, removeQueueItem, TAB_ID, isTabAlive, reclaimOrphanItems, rewriteUrlOrigin } from './queue.js';
+import { getQueue, addEpisodesToQueue, removeQueueItem, TAB_ID, isTabAlive, reclaimOrphanItems, rewriteUrlOrigin, isSameSiteFamily } from './queue.js';
 import { saveEpisodeData, loadEpisodeData, deleteEpisodeData, makeMergeKey } from './merge-store.js';
 import { EpubBuilder } from './epub.js';
 import { TxtBuilder } from './txt.js';
@@ -124,6 +124,25 @@ export const createMergeSession = (opts) => {
     all[id] = session;
     writeAll(all);
     return session;
+};
+
+/**
+ * [v1.27.0] 순차 연속 받기: 진행하면서 발견한 회차를 세션에 추가
+ */
+export const appendMergeItems = (sessionId, newItems = []) => {
+    patchSession(sessionId, (s) => {
+        const known = new Set(s.items.map(i => i.id));
+        return { items: [...s.items, ...newItems.filter(i => !known.has(i.id))] };
+    });
+};
+
+/**
+ * [v1.27.0] 실제 페이지에서 읽은 회차 제목/번호로 세션 항목 정보 갱신 (연속 받기의 임시 번호 보정)
+ */
+export const updateMergeItemMeta = (sessionId, itemId, meta = {}) => {
+    patchSession(sessionId, (s) => ({
+        items: s.items.map(i => i.id === itemId ? { ...i, ...(meta.title ? { title: meta.title } : {}) } : i)
+    }));
 };
 
 // ── 회차 결과 보관 ───────────────────────────────────────────────
@@ -250,7 +269,8 @@ export const finalizeMergeSession = async (sessionId, options = {}) => {
     patchSession(sessionId, { status: MERGE_STATUS.SAVING });
 
     try {
-        const sorted = [...session.items].sort((a, b) => numValue(a.num) - numValue(b.num));
+        // 연속 받기(seq 보유)는 받은 순서, 그 외는 회차 번호 순
+        const sorted = [...session.items].sort((a, b) => (a.seq && b.seq) ? (a.seq - b.seq) : (numValue(a.num) - numValue(b.num)));
         const records = [];
         const missing = [];
         for (const it of sorted) {
@@ -345,7 +365,16 @@ export const finalizeMergeSession = async (sessionId, options = {}) => {
 export const resumeMergeSession = async (sessionId, options = {}) => {
     const session = getMergeSession(sessionId);
     if (!session) return 0;
-    const targetOrigin = options.targetOrigin || null;
+    // 같은 사이트의 미러 도메인일 때만 도메인 교체 (다른 사이트 탭에서 눌러도 원래 사이트 주소 유지)
+    let targetOrigin = options.targetOrigin || null;
+    try {
+        const baseOrigin = session.origin || session.template?.protocolDomain || '';
+        if (targetOrigin && baseOrigin && !isSameSiteFamily(new URL(baseOrigin).hostname, new URL(targetOrigin).hostname)) {
+            targetOrigin = null;
+        }
+    } catch (e) {
+        targetOrigin = null;
+    }
 
     // 1. 보관 데이터 실재 여부 검증 (IndexedDB는 origin별이므로 도메인이 바뀌면 조회되지 않음)
     const verifiedStored = [];
