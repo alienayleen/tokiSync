@@ -94,12 +94,22 @@ const DB_STORE = 'episodes';
 
 const memoryStore = new Map();
 let dbPromise = null;
+let dbBroken = false;
+
+// [v1.27.0 수정] Tampermonkey 환경에서 IndexedDB 요청이 응답 없이 멈추면 폐기·이어받기·저장이 영원히 끝나지 않았습니다.
+// 모든 IndexedDB 작업에 제한 시간을 두고, 시간이 지나면 메모리 저장소로 대체합니다.
+const IDB_TIMEOUT_MS = 4000;
+const withTimeout = (promise, label) => new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`IndexedDB 응답 없음 (${label}, ${IDB_TIMEOUT_MS / 1000}초)`)), IDB_TIMEOUT_MS);
+    promise.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
+});
 
 const hasGM = () => typeof GM_getValue !== 'undefined' && typeof GM_setValue !== 'undefined';
 
 function openDb() {
+    if (dbBroken) return Promise.resolve(null);
     if (dbPromise) return dbPromise;
-    dbPromise = new Promise((resolve) => {
+    const opening = new Promise((resolve) => {
         try {
             if (typeof indexedDB === 'undefined' || !indexedDB || typeof indexedDB.open !== 'function') {
                 resolve(null);
@@ -115,15 +125,31 @@ function openDb() {
                 console.warn('[MergeStore] IndexedDB open 실패, 메모리 저장소로 대체합니다:', req.error);
                 resolve(null);
             };
+            req.onblocked = () => {
+                console.warn('[MergeStore] IndexedDB open이 다른 탭에 의해 차단됨, 메모리 저장소로 대체합니다.');
+                resolve(null);
+            };
         } catch (e) {
             console.warn('[MergeStore] IndexedDB 사용 불가, 메모리 저장소로 대체합니다:', e);
             resolve(null);
         }
     });
+    dbPromise = withTimeout(opening, 'open').catch((e) => {
+        console.warn('[MergeStore]', e.message, '→ 메모리 저장소로 대체합니다.');
+        dbBroken = true;
+        return null;
+    });
     return dbPromise;
 }
 
 function idbRequest(db, mode, fn) {
+    return withTimeout(idbRequestRaw(db, mode, fn), mode).catch((e) => {
+        if (/응답 없음/.test(e.message)) dbBroken = true;
+        throw e;
+    });
+}
+
+function idbRequestRaw(db, mode, fn) {
     return new Promise((resolve, reject) => {
         try {
             const tx = db.transaction(DB_STORE, mode);
@@ -156,10 +182,14 @@ async function saveEpisodeData(key, record) {
     }
     const db = await openDb();
     if (db) {
-        await idbRequest(db, 'readwrite', (store) => store.put(record, key));
-    } else {
-        memoryStore.set(key, record);
+        try {
+            await idbRequest(db, 'readwrite', (store) => store.put(record, key));
+            return true;
+        } catch (e) {
+            console.warn('[MergeStore] IndexedDB 저장 실패, 메모리 저장소로 대체합니다:', e.message);
+        }
     }
+    memoryStore.set(key, record);
     return true;
 }
 
@@ -656,10 +686,11 @@ const resumeMergeSession = async (sessionId, options = {}) => {
 const discardMergeSession = async (sessionId) => {
     const session = getMergeSession(sessionId);
     if (!session) return;
+    // [v1.27.0 수정] 세션·대기열 정리를 먼저 끝내고, 보관 데이터 삭제는 뒤에서 처리 (저장소가 응답하지 않아도 폐기는 완료)
     (0,core_queue/* getQueue */.IS)().filter(q => q.mergeSessionId === sessionId).forEach(q => (0,core_queue/* removeQueueItem */.d$)(q.id));
-    await deleteEpisodeData(session.items.map(i => makeMergeKey(sessionId, i.id)));
     removeSession(sessionId);
     logger.logger.info(`🗑️ [합본] ${session.displayTitle} 작업을 폐기했습니다.`, 'Merge');
+    deleteEpisodeData(session.items.map(i => makeMergeKey(sessionId, i.id))).catch(e => console.warn('[MergeSession] 보관 데이터 삭제 실패(무시):', e));
 };
 
 
@@ -5809,6 +5840,14 @@ let isBatchControllerInitialized = false;
 // 🛡️ 배치 폴링 setInterval ID 추적 (중복 초기화 시 이전 인터벌 정리)
 let _batchPollingInterval = null;
 
+// [v1.27.0 수정] Tampermonkey의 window는 Proxy라서 없는 속성을 delete하면 TypeError가 나고,
+// 그 오류로 START_EXTRACTION 전송이 끊겨 수집 창이 연결된 채 아무것도 하지 않았습니다.
+// 내부 상태 표시는 window 속성 대신 모듈 변수로 관리합니다.
+const readyWaiting = new Set();        // 안전 대기 중인 회차 ID
+const readyNoticeShown = new Set();    // "시작하지 않은 이유" 안내를 이미 띄운 회차 ID
+const stallNoticeShown = new Set();    // "25초째 연결 신호 없음" 안내를 이미 띄운 (회차ID_시작시각)
+let lastUnmatchedNoticeAt = 0;
+
 // Security: Batch worker nonce tracking (queueId -> nonce)
 const batchWorkerNonces = new Map();
 
@@ -6240,8 +6279,8 @@ function initBatchWorkerController() {
             const started = item.startedAt || item.lastActivity;
             if (!started || now - started < 25000) return;
             const flag = `tokisync_stall_notice_${item.id}_${started}`;
-            if (window[flag]) return;
-            window[flag] = true;
+            if (stallNoticeShown.has(flag)) return;
+            stallNoticeShown.add(flag);
             _EventBus_js__WEBPACK_IMPORTED_MODULE_3__/* .EventBus */ .l.emit(_EventBus_js__WEBPACK_IMPORTED_MODULE_3__/* .EVT */ .c.LOG, {
                 msg: `⚠️ [${item.episodeTitle}] 수집 창이 열렸지만 25초째 연결 신호가 없습니다. 수집 창에 캡차·오류 페이지가 떠 있는지, 팝업이 다른 사이트로 넘어갔는지 확인해 주세요.`,
                 tag: 'Queue',
@@ -6693,11 +6732,11 @@ function initBatchWorkerController() {
                 
                 if (item) {
                     // 🛡️ 안전 대기 중 동일 에피소드의 READY 중복 처리 방어 가드
-                    if (window[`tokisync_waiting_${matchedId}`]) {
+                    if (readyWaiting.has(matchedId)) {
                         console.log(`[WorkerController] [배치] ID: ${matchedId} 는 이미 안전 대기 중입니다. 중복 READY 유입 차단.`);
                         return;
                     }
-                    window[`tokisync_waiting_${matchedId}`] = true;
+                    readyWaiting.add(matchedId);
                     (0,_queue_js__WEBPACK_IMPORTED_MODULE_2__/* .updateQueueItem */ .Gg)(matchedId, { lastActivity: Date.now() });
 
                     const config = (0,_config_js__WEBPACK_IMPORTED_MODULE_4__/* .getConfig */ .zj)();
@@ -6714,7 +6753,7 @@ function initBatchWorkerController() {
                     try {
                         await new Promise(r => setTimeout(r, initialDelay));
                     } finally {
-                        delete window[`tokisync_waiting_${matchedId}`];
+                        readyWaiting.delete(matchedId);
                     }
                     
                     // 대기 완료 후 중단 여부 재체크
@@ -6726,13 +6765,13 @@ function initBatchWorkerController() {
                         const reason = (0,_queue_js__WEBPACK_IMPORTED_MODULE_2__/* .getQueuePaused */ .kZ)()
                             ? '대기열이 일시 정지 상태입니다. 대시보드에서 "재개"를 누르면 이 창에서 이어서 받습니다.'
                             : `이 회차의 상태가 '${freshItem ? freshItem.status : '삭제됨'}'이라 수집을 시작하지 않았습니다.`;
-                        if (!window[`tokisync_ready_notice_${matchedId}`]) {
-                            window[`tokisync_ready_notice_${matchedId}`] = true;
+                        if (!readyNoticeShown.has(matchedId)) {
+                            readyNoticeShown.add(matchedId);
                             _EventBus_js__WEBPACK_IMPORTED_MODULE_3__/* .EventBus */ .l.emit(_EventBus_js__WEBPACK_IMPORTED_MODULE_3__/* .EVT */ .c.LOG, { msg: `⏸️ [${item.episodeTitle}] ${reason}`, tag: 'Queue', level: 'warn' });
                         }
                         return;
                     }
-                    delete window[`tokisync_ready_notice_${matchedId}`];
+                    readyNoticeShown.delete(matchedId);
 
                     console.log(`[WorkerController] 📢 [배치] 안전 대기 완료 ➡️ START_EXTRACTION 주입 (ID: ${matchedId})`);
                     
@@ -6757,8 +6796,8 @@ function initBatchWorkerController() {
                 }
             } else {
                 console.warn('[WorkerController] [배치] WORKER_READY 수신했으나 매칭되는 activeWorkers 항목을 찾지 못했습니다.', targetUrl);
-                if (!window.__tokisync_unmatched_notice || Date.now() - window.__tokisync_unmatched_notice > 30000) {
-                    window.__tokisync_unmatched_notice = Date.now();
+                if (Date.now() - lastUnmatchedNoticeAt > 30000) {
+                    lastUnmatchedNoticeAt = Date.now();
                     _EventBus_js__WEBPACK_IMPORTED_MODULE_3__/* .EventBus */ .l.emit(_EventBus_js__WEBPACK_IMPORTED_MODULE_3__/* .EVT */ .c.LOG, {
                         msg: `⚠️ 열린 수집 창(${targetUrl || '주소 미상'})이 대기열의 어떤 회차와도 연결되지 않습니다. 이전 작업에서 남은 창이면 닫아 주세요.`,
                         tag: 'Queue',
@@ -6787,10 +6826,10 @@ function initBatchWorkerController() {
                 (0,_pacing_js__WEBPACK_IMPORTED_MODULE_12__/* .reportBlockSignal */ .ay)('캡차(보안 확인) 화면 감지');
                 // 클라우드플레어 "잠시만 기다리세요" 화면은 대부분 몇 초 안에 자동 통과되므로 바로 멈추지 않고,
                 // 60초가 지나도 남아 있으면 배치 감시 루프에서 일시 정지 + 알림 (captchaSince 기록)
-                if (!item.captchaSince) (0,_queue_js__WEBPACK_IMPORTED_MODULE_2__/* .updateQueueItem */ .Gg)(matchedId, { captchaSince: Date.now() });
                 const queue = (0,_queue_js__WEBPACK_IMPORTED_MODULE_2__/* .getQueue */ .IS)();
                 const item = queue.find(i => i.id === matchedId);
                 if (item) {
+                    if (!item.captchaSince) (0,_queue_js__WEBPACK_IMPORTED_MODULE_2__/* .updateQueueItem */ .Gg)(matchedId, { captchaSince: Date.now() });
                     // [Liveness Guard 오작동 방지] 단일 모드는 캡차 감지 시 타임아웃을 5분으로
                     // 연장하지만, 배치 모드는 이 신호를 받고도 lastActivity를 갱신하지 않아
                     // 60초 타임아웃 감시에 그대로 걸려 캡차 해제를 기다리는 정상 회차까지
