@@ -1,7 +1,7 @@
 /**
  * TokiSync E2E 시험 (실제 Chromium + 빌드 번들 + 가짜 사이트)
  * 사용: node test/e2e/run-e2e.cjs [scenario]
- *   scenario: range (기본) | captcha | chain | resume
+ *   scenario: range (기본) | captcha | captcha-stuck | chain | resume
  * 사전 조건: npm run build:core (dist/tokiSync.user.js)
  */
 const fs = require('fs');
@@ -18,6 +18,7 @@ const scenario = process.argv[2] || 'range';
 const LOG_FILE = path.join(process.env.E2E_LOG_DIR || __dirname, `e2e-${scenario}.log`);
 
 const logs = [];
+const pageErrors = [];
 const log = (line) => { logs.push(line); };
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -32,13 +33,21 @@ async function waitFor(fn, timeoutMs, label) {
 }
 
 (async () => {
-    const site = await createMockSite({ total: 3, ...(scenario === 'captcha' ? { captchaEp: 1 } : {}) });
+    const site = await createMockSite({ total: 3, ...(scenario === 'captcha' ? { captchaEp: 1 } : {}), ...(scenario === 'captcha-stuck' ? { captchaEp: 1, captchaStuck: true } : {}) });
     const browser = await chromium.launch();
     const context = await browser.newContext({ acceptDownloads: true });
     // Tampermonkey처럼 http(s) 문서마다 1회 주입 (about:blank 대시보드 창에는 주입하지 않음)
     // Chromium은 팝업이 초기 about:blank에서 같은 origin 주소로 넘어갈 때 window 객체를 재사용하므로
     // addInitScript가 다시 실행되지 않는다 → domcontentloaded에서 미주입 문서에 직접 주입해 보완
-    const INJECT = `if (/^https?:/.test(location.protocol) && !window.__tokiInjected) { window.__tokiInjected = true;\n${SHIM}\n${JSZIP}\n${BUNDLE}\n}`;
+    // Tampermonkey 샌드박스처럼 스크립트가 보는 window를 Proxy로 감쌈:
+    //  - 없는 속성 delete 시 false 반환 → strict 모드 코드에서 TypeError (실제 TM과 동일, beta.2~3 회귀 재현용)
+    //  - 메서드는 실제 window에 바인딩
+    const TM_WINDOW_PROXY = `new Proxy(window, {
+        get(t, k) { const v = Reflect.get(t, k); return (typeof v === 'function' && typeof k === 'string' && !/^[A-Z]/.test(k)) ? v.bind(t) : v; },
+        set(t, k, v) { t[k] = v; return true; },
+        deleteProperty(t, k) { if (!(k in t)) return false; return delete t[k]; }
+    })`;
+    const INJECT = `if (/^https?:/.test(location.protocol) && !window.__tokiInjected) { window.__tokiInjected = true;\n${SHIM}\n${JSZIP}\n(function (window) {\n${BUNDLE}\n})(${TM_WINDOW_PROXY});\n}`;
     await context.addInitScript({ content: INJECT });
     const ensureInjected = (p) => p.on('domcontentloaded', () => { p.evaluate(INJECT).catch(() => {}); });
 
@@ -47,7 +56,7 @@ async function waitFor(fn, timeoutMs, label) {
     const savedFiles = async () => (page ? await page.evaluate(() => GM_getValue('__E2E_SAVED_FILES', [])).catch(() => []) : []);
     const attach = (p, label) => {
         p.on('console', m => log(`[${label}] ${m.type()}: ${m.text()}`));
-        p.on('pageerror', e => log(`[${label}] PAGEERROR: ${e.message}`));
+        p.on('pageerror', e => { pageErrors.push(`[${label}] ${e.message}`); log(`[${label}] PAGEERROR: ${e.message}`); });
         p.on('dialog', d => { log(`[${label}] DIALOG(${d.type()}): ${d.message()}`); d.accept().catch(() => {}); });
         p.on('download', d => { downloads.push(d.suggestedFilename()); log(`[${label}] DOWNLOAD: ${d.suggestedFilename()} (${d.url().slice(0, 60)})`); });
     };
@@ -88,6 +97,14 @@ async function waitFor(fn, timeoutMs, label) {
             await dash.click('#toki-btn-down-range');
             await waitFor(async () => (await savedFiles()).length >= 2, 120000, '회차 2개 저장');
             result.ok = true;
+        } else if (scenario === 'captcha-stuck') {
+            // 확인 화면이 풀리지 않으면 60초 뒤 대기열 일시 정지 + 알림이 떠야 함
+            const dash = await openDashboard();
+            await dash.fill('#toki-range-input', '1');
+            await dash.click('#toki-btn-down-range');
+            await waitFor(() => page.evaluate(() => GM_getValue('TOKI_QUEUE_PAUSED', false)), 120000, '캡차 지속 시 일시 정지');
+            await waitFor(() => logs.some(l => l.includes('DIALOG') && l.includes('보안 확인')), 10000, '캡차 알림 표시');
+            result.ok = true;
         } else if (scenario === 'chain') {
             await page.evaluate(() => GM_setValue('TOKI_DOWNLOAD_POLICY', 'zipOfCbzs'));
             const dash = await openDashboard();
@@ -113,6 +130,10 @@ async function waitFor(fn, timeoutMs, label) {
         result.error = e.message;
     }
     result.downloads = await savedFiles();
+    if (pageErrors.length) {
+        result.ok = false;
+        result.error = `페이지 오류 발생: ${pageErrors.slice(0, 3).join(' | ')}`;
+    }
     result.pages = await Promise.all(context.pages().map(async p => `${p.url()} name=${await p.evaluate(() => window.name).catch(() => '?')} worker=${await p.evaluate(() => !!window.tokisync_worker_extractor_initialized).catch(() => '?')} shim=${await p.evaluate(() => !!window.__gmShimInstalled).catch(() => '?')}`));
     result.queue = await page.evaluate(() => GM_getValue('TOKI_DOWNLOAD_QUEUE', [])).catch(() => 'n/a');
     result.paused = await page.evaluate(() => GM_getValue('TOKI_QUEUE_PAUSED', false)).catch(() => 'n/a');
