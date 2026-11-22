@@ -14,7 +14,7 @@
   },
   "scripts": {
     "test": "node src/core/run-test.js",
-    "test:e2e": "npm run build:core && node test/e2e/run-e2e.cjs range && node test/e2e/run-e2e.cjs captcha && node test/e2e/run-e2e.cjs captcha-stuck && node test/e2e/run-e2e.cjs chain && node test/e2e/run-e2e.cjs resume && node test/e2e/run-e2e.cjs domain-switch",
+    "test:e2e": "npm run build:core && node test/e2e/run-e2e.cjs range && node test/e2e/run-e2e.cjs captcha && node test/e2e/run-e2e.cjs captcha-stuck && node test/e2e/run-e2e.cjs chain && node test/e2e/run-e2e.cjs resume && node test/e2e/run-e2e.cjs domain-switch && node test/e2e/run-e2e.cjs stale-cooldown && node test/e2e/run-e2e.cjs novel-range && node test/e2e/run-e2e.cjs novel-resume",
     "serve-dist": "npx http-server dist --cors",
     "build": "npm run build:viewer && npm run build:core && npm run build:gas",
     "build:core": "npx webpack --config webpack.core.config.cjs",

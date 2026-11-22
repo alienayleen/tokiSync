@@ -147,11 +147,12 @@ export class MenuModal {
                     <div class="toki-control-group">
                         <label class="toki-label">다운로드 속도</label>
                         <select id="toki-sel-speed" class="toki-select">
-                            <option value="cautious">신중 (3-6초)</option>
-                            <option value="thorough">철저 (5-9초)</option>
-                            <option value="slow">느림 (7-14초)</option>
-                            <option value="very_slow">매우 느림 (10-20초)</option>
+                            <option value="cautious">신중 (기본 ×1.0)</option>
+                            <option value="thorough">철저 (×1.5)</option>
+                            <option value="slow">느림 (×2.2)</option>
+                            <option value="very_slow">매우 느림 (×3.0)</option>
                         </select>
+                        <div class="toki-text-xs toki-mt-8 toki-ml-4">회차 사이 대기 = 자동 속도 단계(빠름 1.5~3초 … 매우 느림 20~30초) × 이 배율. 사이트가 제한 신호(캡차·403/429)를 보내면 자동으로 더 느려지고 잠시 쉽니다. 쉬는 중에는 다운로드 탭에 남은 시간과 "지금 재개" 버튼이 표시됩니다.</div>
                     </div>
 
                     <div class="toki-control-group">

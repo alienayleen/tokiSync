@@ -5,7 +5,7 @@ import { CbzBuilder } from './cbz.js';
 import { getConfig } from './config.js';
 import JSZip from 'jszip';
 import { getOrphanItems, reclaimOrphanItems, runSchedulerOnce, updateQueueItem, rewriteUrlOrigin, TAB_ID as CURRENT_TAB_ID } from './queue.js';
-import { reportBlockSignal, reportPacingSuccess, getPacingState, getPacingWait, resetPacing, getEffectiveMaxWorkers } from './pacing.js';
+import { reportBlockSignal, reportPacingSuccess, getPacingState, getPacingWait, resetPacing, getEffectiveMaxWorkers, getEpisodeGapMs } from './pacing.js';
 import { createChain, continueChain, getChain } from './chain.js';
 import { findNextEpisodeUrl } from './worker-extractor.js';
 import { createMergeSession, storeMergeEpisode, finalizeMergeSession, checkMergeSessions, getMergeSession, MERGE_STATUS } from './merge-session.js';
@@ -1895,6 +1895,13 @@ test('[v1.27.0] 자동 속도 조절: 차단 신호는 쿨다운과 감속을, �
         if (s1.level !== Math.min(4, base + 2)) throw new Error(`감속 실패: ${s1.level}`);
         if (getPacingWait().waitMs < 50000) throw new Error('쿨다운이 걸리지 않음');
         if (getEffectiveMaxWorkers(3) !== 1) throw new Error('느린 단계에서 동시 창 수가 1로 제한되지 않음');
+        // 설정의 대기 속도 배율(느림 ×2.2)이 회차 사이 대기에 반영되는지
+        globalThis.GM_setValue('TOKI_PACING_STATE', { ...getPacingState(), level: 0, cooldownUntil: 0 });
+        globalThis.GM_setValue('TOKI_SLEEP_MODE', 'slow');
+        const slowGap = getEpisodeGapMs();
+        globalThis.GM_setValue('TOKI_SLEEP_MODE', 'cautious');
+        if (!(slowGap >= 1500 * 2.2 && slowGap <= 3000 * 2.2)) throw new Error(`느림 배율 미반영: ${slowGap}`);
+        globalThis.GM_setValue('TOKI_PACING_STATE', { ...getPacingState(), level: s1.level, cooldownUntil: Date.now() + 60000 });
         reportBlockSignal('같은 순간 몰려온 신호'); // 10초 내 중복 신호는 1회로 취급
         if (getPacingState().backoffCount !== 1) throw new Error('중복 신호가 쿨다운 단계를 올림');
         for (let i = 0; i < 8; i++) reportPacingSuccess();

@@ -40,6 +40,29 @@ ${next}
 </body></html>`;
     };
 
+    const novelTitle = options.novelTitle || '테스트소설';
+    const novelListPage = () => `<!doctype html><html><head><meta charset="utf-8"><title>${novelTitle}</title>
+<meta name="subject" content="${novelTitle}"></head><body>
+<h1 class="hero-v2-title">${novelTitle}</h1>
+<ul class="novel-eps">
+${Array.from({ length: total }, (_, i) => total - i).map(n => `  <li class="ep-row-v2"><a href="/novel/200/${n}"><span class="ne-num">${n}</span><span class="ne-title">${novelTitle} ${n}화</span></a></li>`).join('\n')}
+</ul></body></html>`;
+    const novelViewerPage = (n) => {
+        if (options.captchaEp === n && !options._captchaSolved) {
+            if (!options.captchaStuck) options._captchaSolved = true;
+            return `<!doctype html><html><head><meta charset="utf-8"><title>Just a moment...</title><meta http-equiv="refresh" content="${options.captchaRefreshSec || 8}"></head><body><div id="challenge-running">checking</div></body></html>`;
+        }
+        const next = n < total ? `<a id="goNextBtn" href="/novel/200/${n + 1}">다음화 ▶</a>` : `<a id="goNextBtn" href="#" class="disabled">다음화</a>`;
+        const paras = [1, 2, 3, 4].map(k => `<p>${novelTitle} ${n}화의 ${k}번째 문단입니다. 본문이 충분히 길어야 추출 조건(50자 이상)을 만족합니다.</p>`).join('');
+        return `<!doctype html><html><head><meta charset="utf-8"><title>${novelTitle} ${n}화</title>
+<meta property="og:title" content="${novelTitle}"></head><body>
+<div class="crumb"><a href="/novel/200">${novelTitle}</a> <strong>${n}화</strong></div>
+<h1 class="ne-h1">${novelTitle} ${n}화</h1>
+<article class="novel-viewer">${paras}</article>
+${next}
+</body></html>`;
+    };
+
     // 실제 Tampermonkey처럼 도메인과 무관하게 하나로 공유되는 GM 저장소 (모든 포트/호스트가 같은 메모리 사용)
     const gmStore = new Map();
     const gmChanges = [];
@@ -70,6 +93,15 @@ ${next}
         if (url.pathname === '/webtoon/100' || url.pathname === '/webtoon/100/') {
             res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
             return res.end(listPage());
+        }
+        // 소설 (blacktoon_novel 규칙 구조): 목록 /novel/200, 회차 /novel/200/{n}
+        if (url.pathname === '/novel/200' || url.pathname === '/novel/200/') {
+            res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+            return res.end(novelListPage());
+        }
+        if ((m = url.pathname.match(/^\/novel\/200\/(\d+)$/))) {
+            res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+            return res.end(novelViewerPage(parseInt(m[1], 10)));
         }
         if ((m = url.pathname.match(/^\/webtoon\/100\/ep(\d+)$/))) {
             res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
