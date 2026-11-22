@@ -748,26 +748,28 @@ export function startBatchPipeline(targets = []) {
 
 /**
  * [v1.27.0] 중단된 작업 이어받기 (고아 대기열 항목 + 합본 세션)
- * @param {{ sessionId?: string }} options sessionId가 있으면 해당 합본 세션만, 없으면 모든 고아 항목
+ * @param {{ sessionId?: string, forceOrigin?: boolean }} options sessionId가 있으면 해당 합본 세션만, 없으면 모든 고아 항목.
+ *        forceOrigin=true면 사용자가 고른 현재 도메인으로 회차 주소를 바꿔 이어받음 (다른 계열 미러 도메인 포함)
  * @returns {Promise<number>} 다시 수집할 회차 수
  */
 export async function resumeQueuedWork(options = {}) {
     const targetOrigin = window.location.origin;
+    const forceOrigin = !!options.forceOrigin;
     let count = 0;
     // 일시 정지 상태로 남아 있으면 이어받아도 아무것도 진행되지 않으므로 해제
     if (getQueuePaused()) setQueuePaused(false);
     if (options.sessionId) {
-        count = await resumeMergeSession(options.sessionId, { targetOrigin });
+        count = await resumeMergeSession(options.sessionId, { targetOrigin, forceOrigin });
     } else {
         // 고아 합본 세션 먼저 이어받기 → 나머지 고아 항목
         for (const session of getMergeSessions()) {
             if (session.ownerTabId !== TAB_ID && !isTabAlive(session.ownerTabId)) {
-                count += await resumeMergeSession(session.id, { targetOrigin });
+                count += await resumeMergeSession(session.id, { targetOrigin, forceOrigin });
             }
         }
-        count += reclaimOrphanItems({ targetOrigin });
+        count += reclaimOrphanItems({ targetOrigin, forceOrigin });
         // 이 탭 소유지만 스케줄러가 없는(새로고침 전 작업) 대기/진행 항목도 이어받기
-        count += reclaimOrphanItems({ ids: getQueue().filter(q => q.ownerTabId === TAB_ID && !q.mergeSessionId && (q.status === 'pending' || q.status === 'processing') && !activeWorkers.has(q.id)).map(q => q.id), targetOrigin });
+        count += reclaimOrphanItems({ ids: getQueue().filter(q => q.ownerTabId === TAB_ID && !q.mergeSessionId && (q.status === 'pending' || q.status === 'processing') && !activeWorkers.has(q.id)).map(q => q.id), targetOrigin, forceOrigin });
     }
     startSilentAudio();
     const targets = getQueue()

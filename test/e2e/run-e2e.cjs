@@ -1,7 +1,7 @@
 /**
  * TokiSync E2E 시험 (실제 Chromium + 빌드 번들 + 가짜 사이트)
  * 사용: node test/e2e/run-e2e.cjs [scenario]
- *   scenario: range (기본) | captcha | captcha-stuck | chain | resume
+ *   scenario: range (기본) | captcha | captcha-stuck | chain | resume | domain-switch
  * 사전 조건: npm run build:core (dist/tokiSync.user.js)
  */
 const fs = require('fs');
@@ -110,6 +110,30 @@ async function waitFor(fn, timeoutMs, label) {
             const dash = await openDashboard();
             await dash.click('#toki-btn-chain-start');
             await waitFor(async () => (await savedFiles()).some(n => n.endsWith('.zip')), 150000, '합본 ZIP 저장');
+            result.ok = true;
+        } else if (scenario === 'domain-switch') {
+            // 도메인 A에서 합본 다운로드 → 1화 보관 후 도메인 A를 떠남 → 도메인 B 페이지에서 "현재 도메인으로 바꿔 이어받기"
+            await page.evaluate(() => GM_setValue('TOKI_DOWNLOAD_POLICY', 'zipOfCbzs'));
+            let dash = await openDashboard();
+            await dash.click('#toki-btn-down-all');
+            await waitFor(() => page.evaluate(() => Object.values(GM_getValue('TOKI_MERGE_SESSIONS', {})).some(s => (s.storedIds || []).length >= 1)), 90000, '도메인 A에서 첫 회차 보관');
+            for (const p of context.pages()) { if (p !== page) await p.close().catch(() => {}); }
+            // 원래 탭(A)은 열어 둔 채(캡차로 멈춘 상황 가정) 도메인 B로 이동한 새 탭에서 가져오기
+            await page.evaluate(() => GM_setValue('TOKI_QUEUE_PAUSED', true));
+            const pageA = page;
+            page = await context.newPage();
+            attach(page, 'mainB');
+            await page.goto(`${site.originB}/webtoon/100`);
+            await sleep(2500);
+            dash = await openDashboard();
+            await waitFor(() => dash.$('[data-work-action="resume-session-here"]'), 10000, '현재 도메인으로 이어받기 버튼 표시');
+            await dash.click('[data-work-action="resume-session-here"]');
+            await pageA.close().catch(() => {});
+            await waitFor(async () => (await savedFiles()).some(n => n.endsWith('.zip')), 150000, '도메인 B에서 이어받은 뒤 합본 ZIP 저장');
+            const hostB = new URL(site.originB).host;
+            const bEpisodes = site.hits.filter(h => h.startsWith(hostB) && /\/ep\d+$/.test(h));
+            result.domainBEpisodeHits = bEpisodes;
+            if (!bEpisodes.some(h => /ep[23]$/.test(h))) throw new Error('도메인 B에서 남은 회차를 받지 않음');
             result.ok = true;
         } else if (scenario === 'resume') {
             await page.evaluate(() => GM_setValue('TOKI_DOWNLOAD_POLICY', 'zipOfCbzs'));

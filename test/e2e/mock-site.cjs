@@ -12,7 +12,7 @@ const PNG = Buffer.from(
     'base64'
 );
 
-function createMockSite(options = {}) {
+async function createMockSite(options = {}) {
     const total = options.total || 3;
     const seriesTitle = options.seriesTitle || '테스트웹툰';
     const hits = [];
@@ -40,10 +40,33 @@ ${next}
 </body></html>`;
     };
 
-    const server = http.createServer((req, res) => {
+    // 실제 Tampermonkey처럼 도메인과 무관하게 하나로 공유되는 GM 저장소 (모든 포트/호스트가 같은 메모리 사용)
+    const gmStore = new Map();
+    const gmChanges = [];
+    let gmSeq = 0;
+    const readBody = (req) => new Promise(r => { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => r(b)); });
+    const json = (res, obj) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
+
+    const handler = async (req, res) => {
         const url = new URL(req.url, 'http://localhost');
-        hits.push(url.pathname);
         let m;
+        if (url.pathname === '/__gm/get') {
+            const k = url.searchParams.get('k');
+            return json(res, gmStore.has(k) ? { has: true, v: gmStore.get(k) } : { has: false });
+        }
+        if (url.pathname === '/__gm/set' || url.pathname === '/__gm/del') {
+            const body = JSON.parse(await readBody(req) || '{}');
+            const old = gmStore.has(body.k) ? gmStore.get(body.k) : undefined;
+            if (url.pathname === '/__gm/set') gmStore.set(body.k, body.v); else gmStore.delete(body.k);
+            gmChanges.push({ seq: ++gmSeq, k: body.k, old, nv: url.pathname === '/__gm/set' ? body.v : undefined, writer: body.writer });
+            if (gmChanges.length > 5000) gmChanges.splice(0, gmChanges.length - 5000);
+            return json(res, { seq: gmSeq });
+        }
+        if (url.pathname === '/__gm/changes') {
+            const since = parseInt(url.searchParams.get('since') || '0', 10);
+            return json(res, { seq: gmSeq, changes: gmChanges.filter(c => c.seq > since) });
+        }
+        hits.push(`${req.headers.host}${url.pathname}`);
         if (url.pathname === '/webtoon/100' || url.pathname === '/webtoon/100/') {
             res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
             return res.end(listPage());
@@ -62,14 +85,23 @@ ${next}
         }
         res.writeHead(404);
         res.end('not found');
-    });
+    };
 
-    return new Promise(resolve => {
-        server.listen(0, '127.0.0.1', () => {
-            const { port } = server.address();
-            resolve({ server, origin: `http://127.0.0.1:${port}`, hits, options });
-        });
+    // 서로 다른 호스트명(127.0.0.1 / localhost)으로 같은 사이트를 두 도메인에서 제공 → 미러 도메인 전환 시험용
+    const listen = (host) => new Promise(resolve => {
+        const srv = http.createServer((req, res) => { handler(req, res).catch(e => { res.writeHead(500); res.end(String(e)); }); });
+        srv.listen(0, host, () => resolve(srv));
     });
+    const serverA = await listen('127.0.0.1');
+    const serverB = await listen('localhost');
+    const server = { close: () => { serverA.close(); serverB.close(); } };
+    return {
+        server,
+        origin: `http://127.0.0.1:${serverA.address().port}`,
+        originB: `http://localhost:${serverB.address().port}`,
+        hits,
+        options
+    };
 }
 
 module.exports = { createMockSite };

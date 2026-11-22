@@ -1781,6 +1781,8 @@ test('[v1.27.0] 소유 탭의 생존 신호가 없는 대기열 항목은 고아
         if (item.ownerTabId !== CURRENT_TAB_ID) throw new Error('소유 탭이 현재 탭으로 바뀌지 않음');
         if (item.episodeUrl !== 'https://newtoki469.com/novel/10/1?x=1') throw new Error(`도메인 교체 실패: ${item.episodeUrl}`);
         if (rewriteUrlOrigin('https://booktoki300.com/novel/1', 'https://newtoki469.com') !== 'https://booktoki300.com/novel/1') throw new Error('다른 사이트 주소까지 교체됨');
+        // 사용자가 직접 고른 경우(force)에는 다른 계열 미러 도메인으로도 경로를 유지한 채 교체
+        if (rewriteUrlOrigin('https://sbxh9.com/novel/63633/8661454?x=1', 'https://toki37.com', { force: true }) !== 'https://toki37.com/novel/63633/8661454?x=1') throw new Error('강제 도메인 교체 실패');
         if (item.status !== 'pending') throw new Error('상태가 pending으로 초기화되지 않음');
         if (getOrphanItems().length !== 0) throw new Error('이어받은 뒤에도 고아로 남음');
     } finally {

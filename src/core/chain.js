@@ -55,12 +55,13 @@ export const removeChain = (id) => {
 
 /**
  * URL 비교용 정규화 (해시·끝 슬래시 제거, 디코딩)
+ * [v1.27.0] 도메인을 바꿔 이어받아도 같은 회차로 인식하도록 경로+쿼리만 비교합니다.
  */
 export const normalizeEpisodeUrl = (url, base) => {
     try {
         const u = new URL(url, base || (typeof location !== 'undefined' ? location.href : undefined));
         u.hash = '';
-        let s = `${u.origin}${u.pathname.replace(/\/+$/, '')}${u.search}`;
+        let s = `${u.pathname.replace(/\/+$/, '')}${u.search}`;
         try { s = decodeURIComponent(s); } catch (e) {}
         return s;
     } catch (e) {
@@ -158,8 +159,11 @@ export const continueChain = (item, payload = {}, options = {}) => {
     const nextUrl = new URL(nextRaw, item.episodeUrl).href;
     const nextId = getQueueItemId(chain.seriesTitle, numStr);
 
+    let nextOrigin = chain.template.protocolDomain;
+    try { nextOrigin = new URL(nextUrl).origin; } catch (e) {}
     addEpisodesToQueue([{
         ...chain.template,
+        protocolDomain: nextOrigin,
         title: `${numStr}화`,
         url: nextUrl,
         episodeNum: numStr,

@@ -867,6 +867,7 @@ export class MenuModal {
                     <div class="toki-work-meta">${esc(state.orphanTitles.join(', '))} — 작업하던 탭이 닫히거나 새로고침되어 멈춰 있습니다.</div>
                     <div class="toki-work-actions">
                         <button class="toki-chip" data-work-action="resume-orphans">▶️ 이 탭에서 이어받기</button>
+                        ${state.orphanForeignHosts && state.orphanForeignHosts.length ? `<button class="toki-chip" data-work-action="resume-orphans-here">🔁 현재 도메인(${esc(state.currentHost)})으로 바꿔 이어받기</button>` : ''}
                         <button class="toki-chip" data-work-action="discard-orphans">🗑️ 비우기</button>
                     </div>
                 </div>`);
@@ -881,13 +882,18 @@ export class MenuModal {
                 } else if (sess.isOrphan) {
                     statusText = '⏸️ 중단됨 (작업하던 탭이 닫힘)';
                     cls = 'is-warn';
-                    actions.push(`<button class="toki-chip" data-work-action="resume-session" data-id="${sess.id}">▶️ 이어받기</button>`);
+                    actions.push(`<button class="toki-chip" data-work-action="resume-session" data-id="${sess.id}">▶️ ${sess.foreignDomain ? `원래 도메인(${esc(sess.originHost)})으로 ` : ''}이어받기</button>`);
+                    if (sess.foreignDomain) actions.push(`<button class="toki-chip" data-work-action="resume-session-here" data-id="${sess.id}" data-host="${esc(sess.originHost)}">🔁 현재 도메인(${esc(state.currentHost)})으로 바꿔 이어받기</button>`);
                 } else if (sess.isOtherTab) {
                     statusText = '🔄 다른 탭에서 수집 중';
+                    // 원래 탭이 캡차 등으로 멈춘 채 열려 있을 때: 이 탭으로 가져와 이어받기 (확인창으로 중복 위험 안내)
+                    actions.push(`<button class="toki-chip" data-work-action="resume-session" data-takeover="1" data-id="${sess.id}">📥 이 탭으로 가져와 이어받기</button>`);
+                    if (sess.foreignDomain) actions.push(`<button class="toki-chip" data-work-action="resume-session-here" data-takeover="1" data-id="${sess.id}" data-host="${esc(sess.originHost)}">🔁 현재 도메인(${esc(state.currentHost)})으로 바꿔 이어받기</button>`);
                 } else if (sess.status === 'attention') {
                     statusText = sess.stoppedByUser ? '⏹️ 사용자가 중단함' : `⚠️ ${sess.failed}화 실패`;
                     cls = 'is-warn';
                     actions.push(`<button class="toki-chip" data-work-action="resume-session" data-id="${sess.id}">🔁 ${sess.stoppedByUser ? '이어서 받기' : '실패 회차 재시도'}</button>`);
+                    if (sess.foreignDomain) actions.push(`<button class="toki-chip" data-work-action="resume-session-here" data-id="${sess.id}" data-host="${esc(sess.originHost)}">🔁 현재 도메인(${esc(state.currentHost)})으로 바꿔 이어받기</button>`);
                 } else {
                     statusText = `🔄 수집 중 (대기·진행 ${sess.active}화)`;
                 }
@@ -922,6 +928,10 @@ export class MenuModal {
             if (!btn) return;
             const action = btn.getAttribute('data-work-action');
             const id = btn.getAttribute('data-id');
+            if (btn.getAttribute('data-takeover') === '1') {
+                const takeOk = popupWindow.confirm('이 작업은 다른 탭이 맡고 있습니다.\n원래 탭에서 아직 받고 있다면 같은 회차를 두 번 받을 수 있으니, 원래 탭의 수집 창을 닫거나 원래 탭을 닫은 뒤 진행하는 것을 권합니다.\n\n이 탭으로 가져올까요?');
+                if (!takeOk) return;
+            }
             btn.disabled = true;
             try {
                 if (action === 'resume-now' && this.handlers.resumeNow) {
@@ -932,6 +942,11 @@ export class MenuModal {
                     if (popupWindow.confirm('중단된 개별 작업을 대기열에서 지우시겠습니까?')) this.handlers.discardOrphans();
                 } else if (action === 'resume-session' && this.handlers.resumeWork) {
                     await this.handlers.resumeWork(id);
+                } else if ((action === 'resume-session-here' || action === 'resume-orphans-here') && this.handlers.resumeWork) {
+                    const fromHost = btn.getAttribute('data-host') || '원래 도메인';
+                    const here = popupWindow.opener && popupWindow.opener.location ? popupWindow.opener.location.hostname : '현재 도메인';
+                    const ok = popupWindow.confirm(`남은 회차 주소의 도메인을 바꿔서 이어받습니다.\n\n${fromHost} → ${here}\n\n주소 뒷부분(작품·회차 번호)은 그대로 두고 도메인만 바꿉니다. 두 사이트의 회차 주소 구조가 같아야 정상적으로 받아집니다.\n(만화 합본은 이전 도메인에 보관된 회차를 이 도메인에서 읽을 수 없어 다시 받을 수 있습니다.)\n\n진행할까요?`);
+                    if (ok) await this.handlers.resumeWork(action === 'resume-session-here' ? id : null, { forceOrigin: true });
                 } else if (action === 'save-session' && this.handlers.saveMergeNow) {
                     if (popupWindow.confirm('지금까지 보관된 회차만으로 합본 파일을 저장하시겠습니까?\n(빠진 회차는 별도 리포트로 저장되며, 저장 후 이 합본 작업은 정리됩니다)')) {
                         await this.handlers.saveMergeNow(id);
