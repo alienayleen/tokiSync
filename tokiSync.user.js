@@ -622,10 +622,12 @@ const resumeMergeSession = async (sessionId, options = {}) => {
     const session = getMergeSession(sessionId);
     if (!session) return 0;
     // 같은 사이트의 미러 도메인일 때만 도메인 교체 (다른 사이트 탭에서 눌러도 원래 사이트 주소 유지)
+    // forceOrigin: 사용자가 "현재 도메인으로 바꿔 이어받기"를 직접 고른 경우 (다른 계열 도메인 허용)
+    const forceOrigin = !!options.forceOrigin;
     let targetOrigin = options.targetOrigin || null;
     try {
         const baseOrigin = session.origin || session.template?.protocolDomain || '';
-        if (targetOrigin && baseOrigin && !(0,core_queue/* isSameSiteFamily */.ie)(new URL(baseOrigin).hostname, new URL(targetOrigin).hostname)) {
+        if (!forceOrigin && targetOrigin && baseOrigin && !(0,core_queue/* isSameSiteFamily */.ie)(new URL(baseOrigin).hostname, new URL(targetOrigin).hostname)) {
             targetOrigin = null;
         }
     } catch (e) {
@@ -644,13 +646,19 @@ const resumeMergeSession = async (sessionId, options = {}) => {
     }
     const storedSet = new Set(verifiedStored);
 
+    // 1-1. [v1.27.0 수정] 보관 데이터를 잃은 회차(도메인 변경, 메모리 대체 후 새로고침 등)가 대기열에 '완료'로 남아 있으면
+    //      다시 받을 대상에서 빠졌습니다. 이런 항목은 대기열에서 지워 아래 3단계에서 새로 등록되게 합니다.
+    (0,core_queue/* getQueue */.IS)()
+        .filter(q => q.mergeSessionId === sessionId && q.status === 'completed' && !storedSet.has(q.id))
+        .forEach(q => (0,core_queue/* removeQueueItem */.d$)(q.id));
+
     // 2. 대기열에 남은 세션 항목 이어받기 (실패 항목 포함 → pending 전환)
     const queue = (0,core_queue/* getQueue */.IS)();
     const sessionQueue = queue.filter(q => q.mergeSessionId === sessionId && !storedSet.has(q.id));
     const inQueueIds = new Set(sessionQueue.map(q => q.id));
     if (sessionQueue.length > 0) {
         // 실패 항목은 소유 탭과 무관하게 이어받을 수 있도록 ids로 직접 지정
-        (0,core_queue/* reclaimOrphanItems */.G7)({ ids: sessionQueue.map(q => q.id), targetOrigin, includeFailed: true });
+        (0,core_queue/* reclaimOrphanItems */.G7)({ ids: sessionQueue.map(q => q.id), targetOrigin, includeFailed: true, forceOrigin });
     }
 
     // 3. 대기열에서 빠진 미보관 회차 재등록
@@ -659,7 +667,7 @@ const resumeMergeSession = async (sessionId, options = {}) => {
         .map(it => ({
             ...session.template,
             title: it.title,
-            url: targetOrigin ? (0,core_queue/* rewriteUrlOrigin */.Wv)(it.url, targetOrigin) : it.url,
+            url: targetOrigin ? (0,core_queue/* rewriteUrlOrigin */.Wv)(it.url, targetOrigin, { force: forceOrigin }) : it.url,
             episodeNum: it.num,
             protocolDomain: targetOrigin || session.template.protocolDomain,
             mergeSessionId: sessionId
@@ -1369,14 +1377,18 @@ const isSameSiteFamily = (hostA, hostB) => {
   return !!hostA && !!hostB && norm(hostA) === norm(hostB);
 };
 
-const rewriteUrlOrigin = (url, targetOrigin) => {
+/**
+ * 회차 주소의 도메인 교체 (경로·쿼리는 유지)
+ * @param {{ force?: boolean }} options force=true면 사용자가 직접 고른 다른 계열 도메인으로도 교체
+ */
+const rewriteUrlOrigin = (url, targetOrigin, options = {}) => {
   if (!url || !targetOrigin) return url;
   try {
     const u = new URL(url);
     const t = new URL(targetOrigin);
     if (u.origin === t.origin) return url;
     // [v1.27.0 이어받기 수정] 다른 사이트(예: 북토끼 작업을 뉴토끼 탭에서 이어받기)로 회차 주소를 바꾸지 않음
-    if (!isSameSiteFamily(u.hostname, t.hostname)) return url;
+    if (!options.force && !isSameSiteFamily(u.hostname, t.hostname)) return url;
     return `${t.origin}${u.pathname}${u.search}${u.hash}`;
   } catch (e) {
     return url;
@@ -1389,7 +1401,7 @@ const rewriteUrlOrigin = (url, targetOrigin) => {
  * @returns {number} 이어받은 항목 수
  */
 const reclaimOrphanItems = (options = {}) => {
-  const { ids = null, targetOrigin = null, includeFailed = false } = options;
+  const { ids = null, targetOrigin = null, includeFailed = false, forceOrigin = false } = options;
   const orphanIds = new Set((ids && ids.length) ? ids : getOrphanItems().map(i => i.id));
   if (orphanIds.size === 0) return 0;
   const deadTabs = new Set();
@@ -1413,8 +1425,8 @@ const reclaimOrphanItems = (options = {}) => {
     item.progressPercent = 0;
     item.lastActivity = Date.now();
     if (targetOrigin) {
-      item.episodeUrl = rewriteUrlOrigin(item.episodeUrl, targetOrigin);
-      if (item.protocolDomain) item.protocolDomain = rewriteUrlOrigin(item.protocolDomain, targetOrigin).replace(/\/$/, '');
+      item.episodeUrl = rewriteUrlOrigin(item.episodeUrl, targetOrigin, { force: forceOrigin });
+      if (item.protocolDomain) item.protocolDomain = rewriteUrlOrigin(item.protocolDomain, targetOrigin, { force: forceOrigin }).replace(/\/$/, '');
     }
     count++;
   });
@@ -4548,12 +4560,13 @@ const removeChain = (id) => {
 
 /**
  * URL 비교용 정규화 (해시·끝 슬래시 제거, 디코딩)
+ * [v1.27.0] 도메인을 바꿔 이어받아도 같은 회차로 인식하도록 경로+쿼리만 비교합니다.
  */
 const normalizeEpisodeUrl = (url, base) => {
     try {
         const u = new URL(url, base || (typeof location !== 'undefined' ? location.href : undefined));
         u.hash = '';
-        let s = `${u.origin}${u.pathname.replace(/\/+$/, '')}${u.search}`;
+        let s = `${u.pathname.replace(/\/+$/, '')}${u.search}`;
         try { s = decodeURIComponent(s); } catch (e) {}
         return s;
     } catch (e) {
@@ -4651,8 +4664,11 @@ const continueChain = (item, payload = {}, options = {}) => {
     const nextUrl = new URL(nextRaw, item.episodeUrl).href;
     const nextId = (0,_queue_js__WEBPACK_IMPORTED_MODULE_0__/* .getQueueItemId */ .G8)(chain.seriesTitle, numStr);
 
+    let nextOrigin = chain.template.protocolDomain;
+    try { nextOrigin = new URL(nextUrl).origin; } catch (e) {}
     (0,_queue_js__WEBPACK_IMPORTED_MODULE_0__/* .addEpisodesToQueue */ .id)([{
         ...chain.template,
+        protocolDomain: nextOrigin,
         title: `${numStr}화`,
         url: nextUrl,
         episodeNum: numStr,
@@ -7232,6 +7248,7 @@ async function fetchNovelTextViaApi(episodeUrl, config = {}, _isRetry = false) {
 /* harmony export */   z9: function() { return /* binding */ getPacingSummary; }
 /* harmony export */ });
 /* unused harmony exports PACING_LEVELS, MAX_LEVEL, RETRY_BACKOFF_MS, resetPacing */
+/* harmony import */ var _config_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(899);
 /**
  * tokiSync v1.27.0 - Adaptive Pacing (자동 속도 조절)
  *
@@ -7244,6 +7261,8 @@ async function fetchNovelTextViaApi(episodeUrl, config = {}, _isRetry = false) {
  *
  * 상태는 GM 스토리지(스크립트 전역)에 두어 부모 탭과 수집 팝업(워커)이 함께 읽고 씁니다.
  */
+
+
 
 const STATE_KEY = 'TOKI_PACING_STATE';
 
@@ -7385,10 +7404,12 @@ const getPacingWait = () => {
     return { waitMs: 0, kind: null, reason: '' };
 };
 
-/** 회차 사이 대기 시간 (현재 속도 단계 기준) */
+/** 회차 사이 대기 시간 (현재 속도 단계 × 설정의 대기 속도 배율: 신중 1.0 / 철저 1.5 / 느림 2.2 / 매우 느림 3.0) */
 const getEpisodeGapMs = () => {
     const lv = PACING_LEVELS[getPacingState().level] || PACING_LEVELS[DEFAULT_LEVEL];
-    return rand(lv.gap[0], lv.gap[1]);
+    let mult = 1;
+    try { mult = _config_js__WEBPACK_IMPORTED_MODULE_0__/* .SLEEP_MULTIPLIERS */ .dx[(0,_config_js__WEBPACK_IMPORTED_MODULE_0__/* .getConfig */ .zj)().sleepMode] || 1; } catch (e) {}
+    return Math.round(rand(lv.gap[0], lv.gap[1]) * mult);
 };
 
 /** 회차 내부 이미지 동시 다운로드 수 */
@@ -9325,11 +9346,12 @@ class MenuModal {
                     <div class="toki-control-group">
                         <label class="toki-label">다운로드 속도</label>
                         <select id="toki-sel-speed" class="toki-select">
-                            <option value="cautious">신중 (3-6초)</option>
-                            <option value="thorough">철저 (5-9초)</option>
-                            <option value="slow">느림 (7-14초)</option>
-                            <option value="very_slow">매우 느림 (10-20초)</option>
+                            <option value="cautious">신중 (기본 ×1.0)</option>
+                            <option value="thorough">철저 (×1.5)</option>
+                            <option value="slow">느림 (×2.2)</option>
+                            <option value="very_slow">매우 느림 (×3.0)</option>
                         </select>
+                        <div class="toki-text-xs toki-mt-8 toki-ml-4">회차 사이 대기 = 자동 속도 단계(빠름 1.5~3초 … 매우 느림 20~30초) × 이 배율. 사이트가 제한 신호(캡차·403/429)를 보내면 자동으로 더 느려지고 잠시 쉽니다. 쉬는 중에는 다운로드 탭에 남은 시간과 "지금 재개" 버튼이 표시됩니다.</div>
                     </div>
 
                     <div class="toki-control-group">
@@ -10045,6 +10067,7 @@ class MenuModal {
                     <div class="toki-work-meta">${esc(state.orphanTitles.join(', '))} — 작업하던 탭이 닫히거나 새로고침되어 멈춰 있습니다.</div>
                     <div class="toki-work-actions">
                         <button class="toki-chip" data-work-action="resume-orphans">▶️ 이 탭에서 이어받기</button>
+                        ${state.orphanForeignHosts && state.orphanForeignHosts.length ? `<button class="toki-chip" data-work-action="resume-orphans-here">🔁 현재 도메인(${esc(state.currentHost)})으로 바꿔 이어받기</button>` : ''}
                         <button class="toki-chip" data-work-action="discard-orphans">🗑️ 비우기</button>
                     </div>
                 </div>`);
@@ -10059,13 +10082,18 @@ class MenuModal {
                 } else if (sess.isOrphan) {
                     statusText = '⏸️ 중단됨 (작업하던 탭이 닫힘)';
                     cls = 'is-warn';
-                    actions.push(`<button class="toki-chip" data-work-action="resume-session" data-id="${sess.id}">▶️ 이어받기</button>`);
+                    actions.push(`<button class="toki-chip" data-work-action="resume-session" data-id="${sess.id}">▶️ ${sess.foreignDomain ? `원래 도메인(${esc(sess.originHost)})으로 ` : ''}이어받기</button>`);
+                    if (sess.foreignDomain) actions.push(`<button class="toki-chip" data-work-action="resume-session-here" data-id="${sess.id}" data-host="${esc(sess.originHost)}">🔁 현재 도메인(${esc(state.currentHost)})으로 바꿔 이어받기</button>`);
                 } else if (sess.isOtherTab) {
                     statusText = '🔄 다른 탭에서 수집 중';
+                    // 원래 탭이 캡차 등으로 멈춘 채 열려 있을 때: 이 탭으로 가져와 이어받기 (확인창으로 중복 위험 안내)
+                    actions.push(`<button class="toki-chip" data-work-action="resume-session" data-takeover="1" data-id="${sess.id}">📥 이 탭으로 가져와 이어받기</button>`);
+                    if (sess.foreignDomain) actions.push(`<button class="toki-chip" data-work-action="resume-session-here" data-takeover="1" data-id="${sess.id}" data-host="${esc(sess.originHost)}">🔁 현재 도메인(${esc(state.currentHost)})으로 바꿔 이어받기</button>`);
                 } else if (sess.status === 'attention') {
                     statusText = sess.stoppedByUser ? '⏹️ 사용자가 중단함' : `⚠️ ${sess.failed}화 실패`;
                     cls = 'is-warn';
                     actions.push(`<button class="toki-chip" data-work-action="resume-session" data-id="${sess.id}">🔁 ${sess.stoppedByUser ? '이어서 받기' : '실패 회차 재시도'}</button>`);
+                    if (sess.foreignDomain) actions.push(`<button class="toki-chip" data-work-action="resume-session-here" data-id="${sess.id}" data-host="${esc(sess.originHost)}">🔁 현재 도메인(${esc(state.currentHost)})으로 바꿔 이어받기</button>`);
                 } else {
                     statusText = `🔄 수집 중 (대기·진행 ${sess.active}화)`;
                 }
@@ -10100,6 +10128,10 @@ class MenuModal {
             if (!btn) return;
             const action = btn.getAttribute('data-work-action');
             const id = btn.getAttribute('data-id');
+            if (btn.getAttribute('data-takeover') === '1') {
+                const takeOk = popupWindow.confirm('이 작업은 다른 탭이 맡고 있습니다.\n원래 탭에서 아직 받고 있다면 같은 회차를 두 번 받을 수 있으니, 원래 탭의 수집 창을 닫거나 원래 탭을 닫은 뒤 진행하는 것을 권합니다.\n\n이 탭으로 가져올까요?');
+                if (!takeOk) return;
+            }
             btn.disabled = true;
             try {
                 if (action === 'resume-now' && this.handlers.resumeNow) {
@@ -10110,6 +10142,11 @@ class MenuModal {
                     if (popupWindow.confirm('중단된 개별 작업을 대기열에서 지우시겠습니까?')) this.handlers.discardOrphans();
                 } else if (action === 'resume-session' && this.handlers.resumeWork) {
                     await this.handlers.resumeWork(id);
+                } else if ((action === 'resume-session-here' || action === 'resume-orphans-here') && this.handlers.resumeWork) {
+                    const fromHost = btn.getAttribute('data-host') || '원래 도메인';
+                    const here = popupWindow.opener && popupWindow.opener.location ? popupWindow.opener.location.hostname : '현재 도메인';
+                    const ok = popupWindow.confirm(`남은 회차 주소의 도메인을 바꿔서 이어받습니다.\n\n${fromHost} → ${here}\n\n주소 뒷부분(작품·회차 번호)은 그대로 두고 도메인만 바꿉니다. 두 사이트의 회차 주소 구조가 같아야 정상적으로 받아집니다.\n(만화 합본은 이전 도메인에 보관된 회차를 이 도메인에서 읽을 수 없어 다시 받을 수 있습니다.)\n\n진행할까요?`);
+                    if (ok) await this.handlers.resumeWork(action === 'resume-session-here' ? id : null, { forceOrigin: true });
                 } else if (action === 'save-session' && this.handlers.saveMergeNow) {
                     if (popupWindow.confirm('지금까지 보관된 회차만으로 합본 파일을 저장하시겠습니까?\n(빠진 회차는 별도 리포트로 저장되며, 저장 후 이 합본 작업은 정리됩니다)')) {
                         await this.handlers.saveMergeNow(id);
@@ -13264,6 +13301,12 @@ async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwrite = fa
         (0,core_queue/* setQueuePaused */.EB)(false);
         core_logger.logger.info('▶️ 이전에 걸려 있던 일시 정지를 해제하고 시작합니다.', 'Queue');
     }
+    // [v1.27.0 수정] 이전 캡차 신호로 걸린 쉬는 시간(최대 15분)이 저장되어 남아 있으면 새 다운로드도 첫 회차 뒤 멈춘 것처럼 보였습니다.
+    //               사용자가 직접 시작한 경우에는 남은 쉬는 시간을 해제합니다 (속도 단계는 유지).
+    if ((0,pacing/* getPacingWait */.qf)().waitMs > 0) {
+        (0,pacing/* clearPacingCooldown */.HM)();
+        core_logger.logger.info('▶️ 이전 캡차로 걸려 있던 쉬는 시간을 해제하고 시작합니다.', 'Queue');
+    }
 
     // Auto-start Anti-Sleep mode (실제 재생 성공 여부를 확인한 뒤 로그 출력)
     (0,anti_sleep/* startSilentAudio */.yS)().then(ok => {
@@ -13786,26 +13829,29 @@ function startBatchPipeline(targets = []) {
 
 /**
  * [v1.27.0] 중단된 작업 이어받기 (고아 대기열 항목 + 합본 세션)
- * @param {{ sessionId?: string }} options sessionId가 있으면 해당 합본 세션만, 없으면 모든 고아 항목
+ * @param {{ sessionId?: string, forceOrigin?: boolean }} options sessionId가 있으면 해당 합본 세션만, 없으면 모든 고아 항목.
+ *        forceOrigin=true면 사용자가 고른 현재 도메인으로 회차 주소를 바꿔 이어받음 (다른 계열 미러 도메인 포함)
  * @returns {Promise<number>} 다시 수집할 회차 수
  */
 async function resumeQueuedWork(options = {}) {
     const targetOrigin = window.location.origin;
+    const forceOrigin = !!options.forceOrigin;
     let count = 0;
-    // 일시 정지 상태로 남아 있으면 이어받아도 아무것도 진행되지 않으므로 해제
+    // 일시 정지·쉬는 시간이 남아 있으면 이어받아도 진행되지 않으므로 해제 (사용자가 직접 누른 이어받기)
     if ((0,core_queue/* getQueuePaused */.kZ)()) (0,core_queue/* setQueuePaused */.EB)(false);
+    if ((0,pacing/* getPacingWait */.qf)().waitMs > 0) (0,pacing/* clearPacingCooldown */.HM)();
     if (options.sessionId) {
-        count = await (0,merge_session/* resumeMergeSession */.kC)(options.sessionId, { targetOrigin });
+        count = await (0,merge_session/* resumeMergeSession */.kC)(options.sessionId, { targetOrigin, forceOrigin });
     } else {
         // 고아 합본 세션 먼저 이어받기 → 나머지 고아 항목
         for (const session of (0,merge_session/* getMergeSessions */.ee)()) {
             if (session.ownerTabId !== core_queue/* TAB_ID */.Os && !(0,core_queue/* isTabAlive */.zf)(session.ownerTabId)) {
-                count += await (0,merge_session/* resumeMergeSession */.kC)(session.id, { targetOrigin });
+                count += await (0,merge_session/* resumeMergeSession */.kC)(session.id, { targetOrigin, forceOrigin });
             }
         }
-        count += (0,core_queue/* reclaimOrphanItems */.G7)({ targetOrigin });
+        count += (0,core_queue/* reclaimOrphanItems */.G7)({ targetOrigin, forceOrigin });
         // 이 탭 소유지만 스케줄러가 없는(새로고침 전 작업) 대기/진행 항목도 이어받기
-        count += (0,core_queue/* reclaimOrphanItems */.G7)({ ids: (0,core_queue/* getQueue */.IS)().filter(q => q.ownerTabId === core_queue/* TAB_ID */.Os && !q.mergeSessionId && (q.status === 'pending' || q.status === 'processing') && !core_queue/* activeWorkers */.mR.has(q.id)).map(q => q.id), targetOrigin });
+        count += (0,core_queue/* reclaimOrphanItems */.G7)({ ids: (0,core_queue/* getQueue */.IS)().filter(q => q.ownerTabId === core_queue/* TAB_ID */.Os && !q.mergeSessionId && (q.status === 'pending' || q.status === 'processing') && !core_queue/* activeWorkers */.mR.has(q.id)).map(q => q.id), targetOrigin, forceOrigin });
     }
     (0,anti_sleep/* startSilentAudio */.yS)();
     const targets = (0,core_queue/* getQueue */.IS)()
@@ -13913,6 +13959,7 @@ async function startChainDownload(options = {}) {
         if (!ok) core_logger.logger.warn('[Anti-Sleep] 브라우저가 자동재생을 막아 백그라운드 유지 모드가 꺼져 있습니다. 페이지를 한 번 클릭하면 다시 시도합니다.', 'Anti-Sleep');
     });
     if ((0,core_queue/* getQueuePaused */.kZ)()) (0,core_queue/* setQueuePaused */.EB)(false);
+    if ((0,pacing/* getPacingWait */.qf)().waitMs > 0) (0,pacing/* clearPacingCooldown */.HM)();
     return startBatchPipeline([{ id: firstItemId, url: startUrl, title: `${startN}화` }]);
 }
 
@@ -14332,6 +14379,11 @@ async function main() {
         getWorkState: () => {
             const orphans = (0,core_queue/* getOrphanItems */.Vl)();
             const orphanTitles = Array.from(new Set(orphans.filter(o => !o.mergeSessionId).map(o => o.title)));
+            // [v1.27.0] 현재 페이지와 다른 계열 도메인(예: sbxh ↔ toki37)에서 시작한 작업인지
+            const hostOf = (u) => { try { return new URL(u).hostname; } catch (e) { return ''; } };
+            const hereHost = window.location.hostname;
+            const isForeign = (u) => { const h = hostOf(u); return !!h && !(0,core_queue/* isSameSiteFamily */.ie)(h, hereHost); };
+            const orphanForeignHosts = Array.from(new Set(orphans.filter(o => !o.mergeSessionId && isForeign(o.episodeUrl)).map(o => hostOf(o.episodeUrl))));
             const queue = (0,core_queue/* getQueue */.IS)();
             const chains = (0,chain/* getChains */.h)();
             const sessions = (0,merge_session/* getMergeSessions */.ee)().map(sess => {
@@ -14346,6 +14398,8 @@ async function main() {
                     isOrphan: !prog.isMine && !prog.ownerAlive,
                     isOtherTab: !prog.isMine && prog.ownerAlive,
                     sameOrigin: !sess.origin || sess.origin === window.location.origin,
+                    originHost: hostOf(sess.origin || (sess.template && sess.template.protocolDomain) || ''),
+                    foreignDomain: isForeign(sess.origin || (sess.template && sess.template.protocolDomain) || ''),
                     chainStatus: chain ? chain.status : null,
                     chainReason: chain ? chain.stopReason : '',
                     ...prog,
@@ -14355,6 +14409,8 @@ async function main() {
             return {
                 orphanCount: orphans.filter(o => !o.mergeSessionId).length,
                 orphanTitles,
+                orphanForeignHosts,
+                currentHost: hereHost,
                 sessions,
                 antiSleep: (0,anti_sleep/* getAntiSleepState */.DY)(),
                 pacing: (0,pacing/* getPacingSummary */.z9)(),
@@ -14362,7 +14418,7 @@ async function main() {
             };
         },
         resumeNow: () => { (0,pacing/* clearPacingCooldown */.HM)(); (0,core_queue/* runSchedulerOnce */.gi)(); },
-        resumeWork: (sessionId) => resumeQueuedWork(sessionId ? { sessionId } : {}),
+        resumeWork: (sessionId, opts = {}) => resumeQueuedWork({ ...(sessionId ? { sessionId } : {}), forceOrigin: !!opts.forceOrigin }),
         discardOrphans: () => (0,core_queue/* discardOrphanItems */.fb)((0,core_queue/* getOrphanItems */.Vl)().filter(o => !o.mergeSessionId).map(o => o.id)),
         saveMergeNow: (sessionId) => (0,merge_session/* finalizeMergeSession */.pj)(sessionId, { allowPartial: true }),
         discardMerge: async (sessionId) => {
