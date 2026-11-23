@@ -378,14 +378,18 @@ export const isSameSiteFamily = (hostA, hostB) => {
   return !!hostA && !!hostB && norm(hostA) === norm(hostB);
 };
 
-export const rewriteUrlOrigin = (url, targetOrigin) => {
+/**
+ * 회차 주소의 도메인 교체 (경로·쿼리는 유지)
+ * @param {{ force?: boolean }} options force=true면 사용자가 직접 고른 다른 계열 도메인으로도 교체
+ */
+export const rewriteUrlOrigin = (url, targetOrigin, options = {}) => {
   if (!url || !targetOrigin) return url;
   try {
     const u = new URL(url);
     const t = new URL(targetOrigin);
     if (u.origin === t.origin) return url;
     // [v1.27.0 이어받기 수정] 다른 사이트(예: 북토끼 작업을 뉴토끼 탭에서 이어받기)로 회차 주소를 바꾸지 않음
-    if (!isSameSiteFamily(u.hostname, t.hostname)) return url;
+    if (!options.force && !isSameSiteFamily(u.hostname, t.hostname)) return url;
     return `${t.origin}${u.pathname}${u.search}${u.hash}`;
   } catch (e) {
     return url;
@@ -398,7 +402,7 @@ export const rewriteUrlOrigin = (url, targetOrigin) => {
  * @returns {number} 이어받은 항목 수
  */
 export const reclaimOrphanItems = (options = {}) => {
-  const { ids = null, targetOrigin = null, includeFailed = false } = options;
+  const { ids = null, targetOrigin = null, includeFailed = false, forceOrigin = false } = options;
   const orphanIds = new Set((ids && ids.length) ? ids : getOrphanItems().map(i => i.id));
   if (orphanIds.size === 0) return 0;
   const deadTabs = new Set();
@@ -422,8 +426,8 @@ export const reclaimOrphanItems = (options = {}) => {
     item.progressPercent = 0;
     item.lastActivity = Date.now();
     if (targetOrigin) {
-      item.episodeUrl = rewriteUrlOrigin(item.episodeUrl, targetOrigin);
-      if (item.protocolDomain) item.protocolDomain = rewriteUrlOrigin(item.protocolDomain, targetOrigin).replace(/\/$/, '');
+      item.episodeUrl = rewriteUrlOrigin(item.episodeUrl, targetOrigin, { force: forceOrigin });
+      if (item.protocolDomain) item.protocolDomain = rewriteUrlOrigin(item.protocolDomain, targetOrigin, { force: forceOrigin }).replace(/\/$/, '');
     }
     count++;
   });

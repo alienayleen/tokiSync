@@ -366,10 +366,12 @@ export const resumeMergeSession = async (sessionId, options = {}) => {
     const session = getMergeSession(sessionId);
     if (!session) return 0;
     // 같은 사이트의 미러 도메인일 때만 도메인 교체 (다른 사이트 탭에서 눌러도 원래 사이트 주소 유지)
+    // forceOrigin: 사용자가 "현재 도메인으로 바꿔 이어받기"를 직접 고른 경우 (다른 계열 도메인 허용)
+    const forceOrigin = !!options.forceOrigin;
     let targetOrigin = options.targetOrigin || null;
     try {
         const baseOrigin = session.origin || session.template?.protocolDomain || '';
-        if (targetOrigin && baseOrigin && !isSameSiteFamily(new URL(baseOrigin).hostname, new URL(targetOrigin).hostname)) {
+        if (!forceOrigin && targetOrigin && baseOrigin && !isSameSiteFamily(new URL(baseOrigin).hostname, new URL(targetOrigin).hostname)) {
             targetOrigin = null;
         }
     } catch (e) {
@@ -388,13 +390,19 @@ export const resumeMergeSession = async (sessionId, options = {}) => {
     }
     const storedSet = new Set(verifiedStored);
 
+    // 1-1. [v1.27.0 수정] 보관 데이터를 잃은 회차(도메인 변경, 메모리 대체 후 새로고침 등)가 대기열에 '완료'로 남아 있으면
+    //      다시 받을 대상에서 빠졌습니다. 이런 항목은 대기열에서 지워 아래 3단계에서 새로 등록되게 합니다.
+    getQueue()
+        .filter(q => q.mergeSessionId === sessionId && q.status === 'completed' && !storedSet.has(q.id))
+        .forEach(q => removeQueueItem(q.id));
+
     // 2. 대기열에 남은 세션 항목 이어받기 (실패 항목 포함 → pending 전환)
     const queue = getQueue();
     const sessionQueue = queue.filter(q => q.mergeSessionId === sessionId && !storedSet.has(q.id));
     const inQueueIds = new Set(sessionQueue.map(q => q.id));
     if (sessionQueue.length > 0) {
         // 실패 항목은 소유 탭과 무관하게 이어받을 수 있도록 ids로 직접 지정
-        reclaimOrphanItems({ ids: sessionQueue.map(q => q.id), targetOrigin, includeFailed: true });
+        reclaimOrphanItems({ ids: sessionQueue.map(q => q.id), targetOrigin, includeFailed: true, forceOrigin });
     }
 
     // 3. 대기열에서 빠진 미보관 회차 재등록
@@ -403,7 +411,7 @@ export const resumeMergeSession = async (sessionId, options = {}) => {
         .map(it => ({
             ...session.template,
             title: it.title,
-            url: targetOrigin ? rewriteUrlOrigin(it.url, targetOrigin) : it.url,
+            url: targetOrigin ? rewriteUrlOrigin(it.url, targetOrigin, { force: forceOrigin }) : it.url,
             episodeNum: it.num,
             protocolDomain: targetOrigin || session.template.protocolDomain,
             mergeSessionId: sessionId

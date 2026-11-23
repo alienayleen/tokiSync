@@ -15,7 +15,7 @@ import { fetchHistoryDirect, checkSingleHistoryDirect, getOAuthToken, getOrCreat
 import { fetchNovelText, fetchComicImages, closeActiveWorker, initBatchWorkerController } from './worker-controller.js';
 import { setQueuePaused, getQueuePaused, addEpisodesToQueue, initQueueScheduler, runSchedulerOnce, activeWorkers, WORKER_STAGE, updateQueueItem, getQueue, getQueueItemId, removeQueueItem, removeCompletedAndFailedItems, TAB_ID, getMaxWorkers, getOrphanItems, reclaimOrphanItems, isTabAlive } from './queue.js';
 import { createMergeSession, resumeMergeSession, getMergeSessions } from './merge-session.js';
-import { getEffectiveMaxWorkers } from './pacing.js';
+import { getEffectiveMaxWorkers, clearPacingCooldown, getPacingWait } from './pacing.js';
 import { createChain, getChains } from './chain.js';
 
 async function shouldSkipEpisode({
@@ -225,6 +225,12 @@ export async function tokiDownload(rangeSpec, policy = 'zipOfCbzs', forceOverwri
     if (getQueuePaused()) {
         setQueuePaused(false);
         logger.info('▶️ 이전에 걸려 있던 일시 정지를 해제하고 시작합니다.', 'Queue');
+    }
+    // [v1.27.0 수정] 이전 캡차 신호로 걸린 쉬는 시간(최대 15분)이 저장되어 남아 있으면 새 다운로드도 첫 회차 뒤 멈춘 것처럼 보였습니다.
+    //               사용자가 직접 시작한 경우에는 남은 쉬는 시간을 해제합니다 (속도 단계는 유지).
+    if (getPacingWait().waitMs > 0) {
+        clearPacingCooldown();
+        logger.info('▶️ 이전 캡차로 걸려 있던 쉬는 시간을 해제하고 시작합니다.', 'Queue');
     }
 
     // Auto-start Anti-Sleep mode (실제 재생 성공 여부를 확인한 뒤 로그 출력)
@@ -748,26 +754,29 @@ export function startBatchPipeline(targets = []) {
 
 /**
  * [v1.27.0] 중단된 작업 이어받기 (고아 대기열 항목 + 합본 세션)
- * @param {{ sessionId?: string }} options sessionId가 있으면 해당 합본 세션만, 없으면 모든 고아 항목
+ * @param {{ sessionId?: string, forceOrigin?: boolean }} options sessionId가 있으면 해당 합본 세션만, 없으면 모든 고아 항목.
+ *        forceOrigin=true면 사용자가 고른 현재 도메인으로 회차 주소를 바꿔 이어받음 (다른 계열 미러 도메인 포함)
  * @returns {Promise<number>} 다시 수집할 회차 수
  */
 export async function resumeQueuedWork(options = {}) {
     const targetOrigin = window.location.origin;
+    const forceOrigin = !!options.forceOrigin;
     let count = 0;
-    // 일시 정지 상태로 남아 있으면 이어받아도 아무것도 진행되지 않으므로 해제
+    // 일시 정지·쉬는 시간이 남아 있으면 이어받아도 진행되지 않으므로 해제 (사용자가 직접 누른 이어받기)
     if (getQueuePaused()) setQueuePaused(false);
+    if (getPacingWait().waitMs > 0) clearPacingCooldown();
     if (options.sessionId) {
-        count = await resumeMergeSession(options.sessionId, { targetOrigin });
+        count = await resumeMergeSession(options.sessionId, { targetOrigin, forceOrigin });
     } else {
         // 고아 합본 세션 먼저 이어받기 → 나머지 고아 항목
         for (const session of getMergeSessions()) {
             if (session.ownerTabId !== TAB_ID && !isTabAlive(session.ownerTabId)) {
-                count += await resumeMergeSession(session.id, { targetOrigin });
+                count += await resumeMergeSession(session.id, { targetOrigin, forceOrigin });
             }
         }
-        count += reclaimOrphanItems({ targetOrigin });
+        count += reclaimOrphanItems({ targetOrigin, forceOrigin });
         // 이 탭 소유지만 스케줄러가 없는(새로고침 전 작업) 대기/진행 항목도 이어받기
-        count += reclaimOrphanItems({ ids: getQueue().filter(q => q.ownerTabId === TAB_ID && !q.mergeSessionId && (q.status === 'pending' || q.status === 'processing') && !activeWorkers.has(q.id)).map(q => q.id), targetOrigin });
+        count += reclaimOrphanItems({ ids: getQueue().filter(q => q.ownerTabId === TAB_ID && !q.mergeSessionId && (q.status === 'pending' || q.status === 'processing') && !activeWorkers.has(q.id)).map(q => q.id), targetOrigin, forceOrigin });
     }
     startSilentAudio();
     const targets = getQueue()
@@ -875,5 +884,6 @@ export async function startChainDownload(options = {}) {
         if (!ok) logger.warn('[Anti-Sleep] 브라우저가 자동재생을 막아 백그라운드 유지 모드가 꺼져 있습니다. 페이지를 한 번 클릭하면 다시 시도합니다.', 'Anti-Sleep');
     });
     if (getQueuePaused()) setQueuePaused(false);
+    if (getPacingWait().waitMs > 0) clearPacingCooldown();
     return startBatchPipeline([{ id: firstItemId, url: startUrl, title: `${startN}화` }]);
 }

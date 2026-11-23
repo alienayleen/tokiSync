@@ -1,6 +1,6 @@
 import { tokiDownload, processItem, parseRangeSpec, resumeQueuedWork, startChainDownload } from './downloader.js';
 import { getChains, removeChain } from './chain.js';
-import { startTabHeartbeat, getOrphanItems, discardOrphanItems, getQueue, TAB_ID, runSchedulerOnce } from './queue.js';
+import { startTabHeartbeat, getOrphanItems, discardOrphanItems, getQueue, TAB_ID, runSchedulerOnce, isSameSiteFamily } from './queue.js';
 import { getPacingSummary, clearPacingCooldown } from './pacing.js';
 import { getMergeSessions, getMergeSessionProgress, finalizeMergeSession, discardMergeSession, resumeMergeSession, installMergeWatcher, MERGE_STATUS } from './merge-session.js';
 import { getAntiSleepState } from './anti_sleep.js';
@@ -407,6 +407,11 @@ export async function main() {
         getWorkState: () => {
             const orphans = getOrphanItems();
             const orphanTitles = Array.from(new Set(orphans.filter(o => !o.mergeSessionId).map(o => o.title)));
+            // [v1.27.0] 현재 페이지와 다른 계열 도메인(예: sbxh ↔ toki37)에서 시작한 작업인지
+            const hostOf = (u) => { try { return new URL(u).hostname; } catch (e) { return ''; } };
+            const hereHost = window.location.hostname;
+            const isForeign = (u) => { const h = hostOf(u); return !!h && !isSameSiteFamily(h, hereHost); };
+            const orphanForeignHosts = Array.from(new Set(orphans.filter(o => !o.mergeSessionId && isForeign(o.episodeUrl)).map(o => hostOf(o.episodeUrl))));
             const queue = getQueue();
             const chains = getChains();
             const sessions = getMergeSessions().map(sess => {
@@ -421,6 +426,8 @@ export async function main() {
                     isOrphan: !prog.isMine && !prog.ownerAlive,
                     isOtherTab: !prog.isMine && prog.ownerAlive,
                     sameOrigin: !sess.origin || sess.origin === window.location.origin,
+                    originHost: hostOf(sess.origin || (sess.template && sess.template.protocolDomain) || ''),
+                    foreignDomain: isForeign(sess.origin || (sess.template && sess.template.protocolDomain) || ''),
                     chainStatus: chain ? chain.status : null,
                     chainReason: chain ? chain.stopReason : '',
                     ...prog,
@@ -430,6 +437,8 @@ export async function main() {
             return {
                 orphanCount: orphans.filter(o => !o.mergeSessionId).length,
                 orphanTitles,
+                orphanForeignHosts,
+                currentHost: hereHost,
                 sessions,
                 antiSleep: getAntiSleepState(),
                 pacing: getPacingSummary(),
@@ -437,7 +446,7 @@ export async function main() {
             };
         },
         resumeNow: () => { clearPacingCooldown(); runSchedulerOnce(); },
-        resumeWork: (sessionId) => resumeQueuedWork(sessionId ? { sessionId } : {}),
+        resumeWork: (sessionId, opts = {}) => resumeQueuedWork({ ...(sessionId ? { sessionId } : {}), forceOrigin: !!opts.forceOrigin }),
         discardOrphans: () => discardOrphanItems(getOrphanItems().filter(o => !o.mergeSessionId).map(o => o.id)),
         saveMergeNow: (sessionId) => finalizeMergeSession(sessionId, { allowPartial: true }),
         discardMerge: async (sessionId) => {

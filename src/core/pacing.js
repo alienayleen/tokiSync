@@ -11,6 +11,8 @@
  * 상태는 GM 스토리지(스크립트 전역)에 두어 부모 탭과 수집 팝업(워커)이 함께 읽고 씁니다.
  */
 
+import { getConfig, SLEEP_MULTIPLIERS } from './config.js';
+
 const STATE_KEY = 'TOKI_PACING_STATE';
 
 export const PACING_LEVELS = [
@@ -151,10 +153,12 @@ export const getPacingWait = () => {
     return { waitMs: 0, kind: null, reason: '' };
 };
 
-/** 회차 사이 대기 시간 (현재 속도 단계 기준) */
+/** 회차 사이 대기 시간 (현재 속도 단계 × 설정의 대기 속도 배율: 신중 1.0 / 철저 1.5 / 느림 2.2 / 매우 느림 3.0) */
 export const getEpisodeGapMs = () => {
     const lv = PACING_LEVELS[getPacingState().level] || PACING_LEVELS[DEFAULT_LEVEL];
-    return rand(lv.gap[0], lv.gap[1]);
+    let mult = 1;
+    try { mult = SLEEP_MULTIPLIERS[getConfig().sleepMode] || 1; } catch (e) {}
+    return Math.round(rand(lv.gap[0], lv.gap[1]) * mult);
 };
 
 /** 회차 내부 이미지 동시 다운로드 수 */
