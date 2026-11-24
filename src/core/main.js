@@ -1,5 +1,5 @@
 import { tokiDownload, processItem, parseRangeSpec, resumeQueuedWork, startChainDownload } from './downloader.js';
-import { getChains, removeChain } from './chain.js';
+import { getChains, removeChain, finishChainManually } from './chain.js';
 import { startTabHeartbeat, getOrphanItems, discardOrphanItems, getQueue, TAB_ID, runSchedulerOnce, isSameSiteFamily } from './queue.js';
 import { getPacingSummary, clearPacingCooldown } from './pacing.js';
 import { getMergeSessions, getMergeSessionProgress, finalizeMergeSession, discardMergeSession, resumeMergeSession, installMergeWatcher, MERGE_STATUS } from './merge-session.js';
@@ -379,30 +379,32 @@ export async function main() {
             const parsed = list.map(li => parser.parseListItem(li.element || li))
                 .map(p => ({ ...p, n: parseInt(p.num, 10) }))
                 .filter(p => p.src);
+            // 목록 첫 페이지는 보통 최신 회차를 보여 주므로 가장 큰 번호를 "목록상 마지막 화"로 기억 (마지막 화 오판 방지)
+            const knownMaxNum = parsed.reduce((mx, p) => (p.n > mx ? p.n : mx), 0) || null;
             const one = parsed.find(p => p.n === 1);
-            if (one) return { url: one.src, num: 1, title: one.title, source: 'list' };
+            if (one) return { url: one.src, num: 1, title: one.title, source: 'list', knownMaxNum };
             // 목록에 1화가 없으면: "첫화/첫회/1화" 버튼 → 뷰어 회차 선택 드롭다운 → 목록의 가장 앞 회차 순으로 시도
             const firstBtn = Array.from(document.querySelectorAll('a[href]')).find(a => {
                 const t = (a.textContent || '').replace(/\s+/g, '');
                 return /^(첫화|첫회|첫편|첫화보기|첫회보기|1화보기|1화)$/.test(t);
             });
-            if (firstBtn) return { url: firstBtn.href, num: 1, title: '1화', source: 'firstButton' };
+            if (firstBtn) return { url: firstBtn.href, num: 1, title: '1화', source: 'firstButton', knownMaxNum };
             try {
                 if (typeof parser._collectViaViewerDropdown === 'function') {
                     const dd = await parser._collectViaViewerDropdown(list);
                     if (dd && dd.length) {
                         const dp = dd.map(li => parser.parseListItem(li)).map(p => ({ ...p, n: parseInt(p.num, 10) })).filter(p => p.src);
                         const pick = dp.find(p => p.n === 1) || dp.reduce((a, b) => ((b.n || 1e9) < (a.n || 1e9) ? b : a), dp[0]);
-                        if (pick) return { url: pick.src, num: pick.n || 1, title: pick.title, source: 'dropdown' };
+                        if (pick) return { url: pick.src, num: pick.n || 1, title: pick.title, source: 'dropdown', knownMaxNum };
                     }
                 }
             } catch (e) {
                 console.warn('[TokiSync] 회차 드롭다운 탐색 실패:', e);
             }
             const minItem = parsed.reduce((a, b) => ((b.n || 1e9) < (a.n || 1e9) ? b : a), parsed[0]);
-            return { url: minItem.src, num: minItem.n || 1, title: minItem.title, source: 'listMin', warn: true };
+            return { url: minItem.src, num: minItem.n || 1, title: minItem.title, source: 'listMin', warn: true, knownMaxNum };
         },
-        startChain: (start, endNum) => startChainDownload({ startUrl: start.url, startNum: start.num, endNum, seriesTitleHint: start.seriesTitle || '' }),
+        startChain: (start, endNum) => startChainDownload({ startUrl: start.url, startNum: start.num, endNum, knownMaxNum: start.knownMaxNum || null, seriesTitleHint: start.seriesTitle || '' }),
         // ── [v1.27.0] 중단된 작업 / 합본 세션 상태 ───────────────
         getWorkState: () => {
             const orphans = getOrphanItems();
@@ -438,6 +440,8 @@ export async function main() {
                 orphanCount: orphans.filter(o => !o.mergeSessionId).length,
                 orphanTitles,
                 orphanForeignHosts,
+                // 합본이 아닌(개별 저장) 순서대로 받기 중 멈춘 것
+                stalledChains: chains.filter(c => c.status === 'stalled' && !c.mergeSessionId).map(c => ({ id: c.id, title: c.seriesTitle, reason: c.stopReason })),
                 currentHost: hereHost,
                 sessions,
                 antiSleep: getAntiSleepState(),
@@ -446,7 +450,8 @@ export async function main() {
             };
         },
         resumeNow: () => { clearPacingCooldown(); runSchedulerOnce(); },
-        resumeWork: (sessionId, opts = {}) => resumeQueuedWork({ ...(sessionId ? { sessionId } : {}), forceOrigin: !!opts.forceOrigin }),
+        resumeWork: (sessionId, opts = {}) => resumeQueuedWork({ ...(sessionId ? { sessionId } : {}), ...(opts.chainId ? { chainId: opts.chainId } : {}), forceOrigin: !!opts.forceOrigin }),
+        finishChain: (chainId) => { finishChainManually(chainId); removeChain(chainId); },
         discardOrphans: () => discardOrphanItems(getOrphanItems().filter(o => !o.mergeSessionId).map(o => o.id)),
         saveMergeNow: (sessionId) => finalizeMergeSession(sessionId, { allowPartial: true }),
         discardMerge: async (sessionId) => {

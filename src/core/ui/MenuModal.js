@@ -874,6 +874,17 @@ export class MenuModal {
                 </div>`);
             }
 
+            (state.stalledChains || []).forEach(ch => {
+                cards.push(`<div class="toki-work-card is-warn">
+                    <div class="toki-work-title">🔗 순서대로 받기 멈춤: ${esc(ch.title)}</div>
+                    <div class="toki-work-meta">${esc(ch.reason)}</div>
+                    <div class="toki-work-actions">
+                        <button class="toki-chip" data-work-action="resume-chain" data-id="${ch.id}">▶️ 이어서 받기</button>
+                        <button class="toki-chip" data-work-action="finish-chain" data-id="${ch.id}">🏁 여기까지로 끝내기</button>
+                    </div>
+                </div>`);
+            });
+
             state.sessions.forEach(sess => {
                 let statusText = '';
                 let cls = '';
@@ -943,6 +954,10 @@ export class MenuModal {
                     if (popupWindow.confirm('중단된 개별 작업을 대기열에서 지우시겠습니까?')) this.handlers.discardOrphans();
                 } else if (action === 'resume-session' && this.handlers.resumeWork) {
                     await this.handlers.resumeWork(id);
+                } else if (action === 'resume-chain' && this.handlers.resumeWork) {
+                    await this.handlers.resumeWork(null, { chainId: id });
+                } else if (action === 'finish-chain' && this.handlers.finishChain) {
+                    if (popupWindow.confirm('순서대로 받기를 여기까지로 끝낼까요?')) this.handlers.finishChain(id);
                 } else if ((action === 'resume-session-here' || action === 'resume-orphans-here') && this.handlers.resumeWork) {
                     const fromHost = btn.getAttribute('data-host') || '원래 도메인';
                     const here = popupWindow.opener && popupWindow.opener.location ? popupWindow.opener.location.hostname : '현재 도메인';

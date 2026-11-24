@@ -21,6 +21,15 @@ import { saveFile } from './utils.js';
 
 const SESSIONS_KEY = 'TOKI_MERGE_SESSIONS';
 
+// chain.js가 이 모듈을 import하므로 순환 참조를 피하려고 연속 받기 상태는 저장소에서 직접 읽음
+const readChainsRaw = () => {
+    try {
+        if (typeof GM_getValue !== 'undefined') return Object.values(GM_getValue('TOKI_CHAINS', {}) || {});
+        if (typeof localStorage !== 'undefined') return Object.values(JSON.parse(localStorage.getItem('TOKI_CHAINS') || '{}'));
+    } catch (e) {}
+    return [];
+};
+
 export const MERGE_STATUS = {
     RUNNING: 'running',       // 수집 진행 중
     ATTENTION: 'attention',   // 실패/중단 회차 존재 → 사용자 선택 대기
@@ -202,6 +211,12 @@ export const checkMergeSessions = async () => {
         const prog = getMergeSessionProgress(session, queue);
         if (prog.active > 0) continue;
 
+        // [v1.27.0] 순서대로 받기가 "멈춤" 상태면 합본 저장을 보류 (마지막 화 오판으로 일부만 저장되는 것 방지)
+        const blockingChain = readChainsRaw().find(c => c.mergeSessionId === session.id && c.status === 'stalled');
+        if (blockingChain) {
+            patchSession(session.id, { status: MERGE_STATUS.ATTENTION });
+            continue;
+        }
         if (prog.failed === 0 && prog.stored === prog.total) {
             await finalizeMergeSession(session.id);
         } else {

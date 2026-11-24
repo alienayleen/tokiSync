@@ -16,7 +16,7 @@ import { fetchNovelText, fetchComicImages, closeActiveWorker, initBatchWorkerCon
 import { setQueuePaused, getQueuePaused, addEpisodesToQueue, initQueueScheduler, runSchedulerOnce, activeWorkers, WORKER_STAGE, updateQueueItem, getQueue, getQueueItemId, removeQueueItem, removeCompletedAndFailedItems, TAB_ID, getMaxWorkers, getOrphanItems, reclaimOrphanItems, isTabAlive } from './queue.js';
 import { createMergeSession, resumeMergeSession, getMergeSessions } from './merge-session.js';
 import { getEffectiveMaxWorkers, clearPacingCooldown, getPacingWait } from './pacing.js';
-import { createChain, getChains } from './chain.js';
+import { createChain, getChains, reopenStalledChain } from './chain.js';
 
 async function shouldSkipEpisode({
     numStr,
@@ -778,6 +778,11 @@ export async function resumeQueuedWork(options = {}) {
         // 이 탭 소유지만 스케줄러가 없는(새로고침 전 작업) 대기/진행 항목도 이어받기
         count += reclaimOrphanItems({ ids: getQueue().filter(q => q.ownerTabId === TAB_ID && !q.mergeSessionId && (q.status === 'pending' || q.status === 'processing') && !activeWorkers.has(q.id)).map(q => q.id), targetOrigin, forceOrigin });
     }
+    // [v1.27.0] "멈춤" 상태인 순서대로 받기는 멈춘 회차를 다시 열어 다음화부터 이어 받음
+    const stalled = getChains().filter(c => c.status === 'stalled'
+        && (options.sessionId ? c.mergeSessionId === options.sessionId : (options.chainId ? c.id === options.chainId : true)));
+    stalled.forEach(c => { if (reopenStalledChain(c.id)) count++; });
+
     startSilentAudio();
     const targets = getQueue()
         .filter(q => q.status === 'pending' && q.ownerTabId === TAB_ID)
@@ -794,7 +799,7 @@ export async function resumeQueuedWork(options = {}) {
  * @returns {Promise<boolean>} 시작 여부
  */
 export async function startChainDownload(options = {}) {
-    const { startUrl, startNum = 1, endNum = null, seriesTitleHint = '' } = options;
+    const { startUrl, startNum = 1, endNum = null, knownMaxNum = null, seriesTitleHint = '' } = options;
     if (!startUrl) {
         EventBus.emit(EVT.NOTIFY_ERROR, { msg: '시작할 회차 주소를 찾지 못했습니다.' });
         return false;
@@ -877,7 +882,7 @@ export async function startChainDownload(options = {}) {
         mergeSessionId = session.id;
     }
 
-    const { firstItemId } = createChain({ seriesTitle, startUrl, startNum: startN, endNum, template, mergeSessionId });
+    const { firstItemId } = createChain({ seriesTitle, startUrl, startNum: startN, endNum, knownMaxNum, template, mergeSessionId });
     logger.info(`🔗 [순서대로 받기] ${seriesTitle}: ${startN}화부터 ${endNum ? `${endNum}화까지` : '마지막 화까지'} 같은 창에서 다음화를 따라가며 받습니다.${mergeKind ? ' (끝나면 합본 저장)' : ''}`, 'Chain');
 
     startSilentAudio().then(ok => {
