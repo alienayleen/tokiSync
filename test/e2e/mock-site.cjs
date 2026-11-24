@@ -24,13 +24,34 @@ async function createMockSite(options = {}) {
 ${Array.from({ length: total }, (_, i) => total - i).map(n => `  <li class="ep-row-v2"><a class="ep-row-v2-link" href="/webtoon/100/ep${n}"><span class="ep-row-v2-no">${n}</span><span class="ep-row-v2-title"><strong>${seriesTitle} ${n}화</strong></span></a></li>`).join('\n')}
 </ul></body></html>`;
 
+    // 그누보드식 자체 캡차 화면 (자동입력 방지 문자). customCaptchaEp 회차를 처음 열 때 1회 표시 후 몇 초 뒤 정상 화면으로(사용자가 푼 상황)
+    const customCaptcha = (n) => {
+        if (options.customCaptchaEp === n && !options._customCaptchaServed) {
+            options._customCaptchaServed = true;
+            return `<!doctype html><html><head><meta charset="utf-8"><title>캡챠 인증</title><meta http-equiv="refresh" content="${options.captchaRefreshSec || 8}"></head><body>
+<form action="/bbs/captcha_check.php" method="post"><img id="captcha_img" src="/plugin/kcaptcha/kcaptcha_image.php"><input type="text" name="captcha_key" id="captcha_key">
+<p>자동입력 방지 문자를 입력해 주세요.</p><button type="submit">확인</button></form></body></html>`;
+        }
+        return null;
+    };
+    // missingNextOnceEp 회차는 처음 한 번 다음화 링크 없이 제공 (깨진 페이지 상황)
+    const dropNextOnce = (n) => {
+        if (options.missingNextOnceEp === n && !options._missingNextServed) {
+            options._missingNextServed = true;
+            return true;
+        }
+        return false;
+    };
+
     const viewerPage = (n) => {
+        const cc = customCaptcha(n);
+        if (cc) return cc;
         if (options.captchaEp === n && !options._captchaSolved) {
             // 클라우드플레어 "Just a moment" 화면처럼 몇 초 뒤 자동 통과(새로고침). captchaStuck이면 계속 확인 화면
             if (!options.captchaStuck) options._captchaSolved = true;
             return `<!doctype html><html><head><meta charset="utf-8"><title>Just a moment...</title><meta http-equiv="refresh" content="${options.captchaRefreshSec || 8}"></head><body><div id="challenge-running">checking</div></body></html>`;
         }
-        const next = n < total ? `<a id="goNextBtn" href="/webtoon/100/ep${n + 1}">다음화 ▶</a>` : `<a id="goNextBtn" href="#" class="disabled">다음화</a>`;
+        const next = (n < total && !dropNextOnce(n)) ? `<a id="goNextBtn" href="/webtoon/100/ep${n + 1}">다음화 ▶</a>` : `<a id="goNextBtn" href="#" class="disabled">다음화</a>`;
         return `<!doctype html><html><head><meta charset="utf-8"><title>${seriesTitle} ${n}화</title>
 <meta property="og:title" content="${seriesTitle}"></head><body>
 <div class="crumb"><a href="/webtoon/100">${seriesTitle}</a> <strong>${n}화</strong></div>
@@ -48,11 +69,13 @@ ${next}
 ${Array.from({ length: total }, (_, i) => total - i).map(n => `  <li class="ep-row-v2"><a href="/novel/200/${n}"><span class="ne-num">${n}</span><span class="ne-title">${novelTitle} ${n}화</span></a></li>`).join('\n')}
 </ul></body></html>`;
     const novelViewerPage = (n) => {
+        const cc = customCaptcha(n);
+        if (cc) return cc;
         if (options.captchaEp === n && !options._captchaSolved) {
             if (!options.captchaStuck) options._captchaSolved = true;
             return `<!doctype html><html><head><meta charset="utf-8"><title>Just a moment...</title><meta http-equiv="refresh" content="${options.captchaRefreshSec || 8}"></head><body><div id="challenge-running">checking</div></body></html>`;
         }
-        const next = n < total ? `<a id="goNextBtn" href="/novel/200/${n + 1}">다음화 ▶</a>` : `<a id="goNextBtn" href="#" class="disabled">다음화</a>`;
+        const next = (n < total && !dropNextOnce(n)) ? `<a id="goNextBtn" href="/novel/200/${n + 1}">다음화 ▶</a>` : `<a id="goNextBtn" href="#" class="disabled">다음화</a>`;
         const paras = [1, 2, 3, 4].map(k => `<p>${novelTitle} ${n}화의 ${k}번째 문단입니다. 본문이 충분히 길어야 추출 조건(50자 이상)을 만족합니다.</p>`).join('');
         return `<!doctype html><html><head><meta charset="utf-8"><title>${novelTitle} ${n}화</title>
 <meta property="og:title" content="${novelTitle}"></head><body>

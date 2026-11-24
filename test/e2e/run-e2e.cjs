@@ -1,7 +1,7 @@
 /**
  * TokiSync E2E 시험 (실제 Chromium + 빌드 번들 + 가짜 사이트)
  * 사용: node test/e2e/run-e2e.cjs [scenario]
- *   scenario: range (기본) | captcha | captcha-stuck | chain | resume | domain-switch | stale-cooldown
+ *   scenario: range (기본) | captcha | captcha-stuck | chain | chain-captcha | chain-stall | resume | domain-switch | stale-cooldown
  *   novel-<scenario>: 소설 목록/뷰어로 같은 시나리오 실행 (예: novel-resume)
  *   E2E_SLEEP=slow: 대기 속도 설정을 바꿔 실행
  * 사전 조건: npm run build:core (dist/tokiSync.user.js)
@@ -39,7 +39,7 @@ async function waitFor(fn, timeoutMs, label) {
 }
 
 (async () => {
-    const site = await createMockSite({ total: 3, ...(baseScenario === 'captcha' ? { captchaEp: 1 } : {}), ...(baseScenario === 'captcha-stuck' ? { captchaEp: 1, captchaStuck: true } : {}) });
+    const site = await createMockSite({ total: 3, ...(baseScenario === 'captcha' ? { captchaEp: 1 } : {}), ...(baseScenario === 'captcha-stuck' ? { captchaEp: 1, captchaStuck: true } : {}), ...(baseScenario === 'chain-captcha' ? { customCaptchaEp: 2 } : {}), ...(baseScenario === 'chain-stall' ? { missingNextOnceEp: 2 } : {}) });
     const browser = await chromium.launch();
     const context = await browser.newContext({ acceptDownloads: true });
     // Tampermonkey처럼 http(s) 문서마다 1회 주입 (about:blank 대시보드 창에는 주입하지 않음)
@@ -82,10 +82,19 @@ async function waitFor(fn, timeoutMs, label) {
     await sleep(1500);
 
     const openDashboard = async () => {
-        const [dash] = await Promise.all([
-            context.waitForEvent('page', { timeout: 10000 }),
-            page.evaluate(() => window.__gmMenu['⚙️ 설정 (Settings)']())
-        ]);
+        // 대시보드 창이 늦게 뜨는 경우가 있어 1회 재시도 (메뉴 등록 전 호출 대비)
+        let dash = null;
+        for (let attempt = 0; attempt < 2 && !dash; attempt++) {
+            try {
+                [dash] = await Promise.all([
+                    context.waitForEvent('page', { timeout: 15000 }),
+                    page.evaluate(() => window.__gmMenu['⚙️ 설정 (Settings)']())
+                ]);
+            } catch (e) {
+                if (attempt === 1) throw e;
+                await sleep(1500);
+            }
+        }
         await dash.waitForLoadState();
         await sleep(800);
         // 메뉴의 "설정"으로 열면 설정 탭이 기본이므로 다운로드 탭으로 전환
@@ -121,6 +130,26 @@ async function waitFor(fn, timeoutMs, label) {
             await dash.click('#toki-btn-down-range');
             await waitFor(() => page.evaluate(() => GM_getValue('TOKI_QUEUE_PAUSED', false)), 120000, '캡차 지속 시 일시 정지');
             await waitFor(() => logs.some(l => l.includes('DIALOG') && l.includes('보안 확인')), 10000, '캡차 알림 표시');
+            result.ok = true;
+        } else if (baseScenario === 'chain-captcha' || baseScenario === 'chain-stall') {
+            // chain-captcha: 2화에서 사이트 자체 캡차 화면 → 풀린 뒤 이어서 3화까지 합본 (캡차 화면을 마지막 화로 오판하지 않아야 함)
+            // chain-stall: 2화 페이지에 다음화 링크가 한 번 빠짐 → 목록상 3화까지 있으므로 "멈춤"(합본 보류) → 이어서 받기 → 3화까지 합본
+            await page.evaluate((novel) => { if (novel) { GM_setValue('TOKI_NOVEL_MODE', 'singleVolume'); GM_setValue('TOKI_NOVEL_FORMAT', 'txt'); } else { GM_setValue('TOKI_DOWNLOAD_POLICY', 'zipOfCbzs'); } }, IS_NOVEL);
+            let dash = await openDashboard();
+            await dash.click('#toki-btn-chain-start');
+            if (baseScenario === 'chain-stall') {
+                await waitFor(() => page.evaluate(() => Object.values(GM_getValue('TOKI_CHAINS', {})).some(c => c.status === 'stalled')), 120000, '다음화 링크 누락 시 멈춤 상태');
+                await sleep(4000);
+                const early = await savedFiles();
+                if (early.length) throw new Error(`멈춤 상태인데 합본이 저장됨: ${early.join(', ')}`);
+                await dash.close().catch(() => {});
+                dash = await openDashboard();
+                await waitFor(() => dash.$('[data-work-action="resume-session"]'), 10000, '이어서 받기 버튼 표시');
+                await dash.click('[data-work-action="resume-session"]');
+            }
+            await waitFor(async () => (await savedFiles()).some(n => /\((1-3화)\)\.(zip|txt|epub)$/.test(n)), 200000, '3화까지 합본 저장');
+            const files = await savedFiles();
+            if (files.some(n => /\((1-2화|1화)\)/.test(n))) throw new Error(`중간 회차에서 합본이 먼저 저장됨: ${files.join(', ')}`);
             result.ok = true;
         } else if (baseScenario === 'chain') {
             await page.evaluate((novel) => { if (novel) { GM_setValue('TOKI_NOVEL_MODE', 'singleVolume'); GM_setValue('TOKI_NOVEL_FORMAT', 'txt'); } else { GM_setValue('TOKI_DOWNLOAD_POLICY', 'zipOfCbzs'); } }, IS_NOVEL);

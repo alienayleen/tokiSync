@@ -73,7 +73,7 @@ export const normalizeEpisodeUrl = (url, base) => {
  * 순차 연속 받기 체인 생성 + 첫 회차 대기열 등록
  * @returns {{ chain: object, firstItemId: string }}
  */
-export const createChain = ({ seriesTitle, startUrl, startNum = 1, endNum = null, template = {}, mergeSessionId = '' }) => {
+export const createChain = ({ seriesTitle, startUrl, startNum = 1, endNum = null, knownMaxNum = null, template = {}, mergeSessionId = '' }) => {
     const id = `chain_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
     const startN = parseInt(startNum, 10) || 1;
     const firstNum = String(startN);
@@ -82,6 +82,8 @@ export const createChain = ({ seriesTitle, startUrl, startNum = 1, endNum = null
         seriesTitle,
         startNum: startN,
         endNum: endNum ? parseInt(endNum, 10) : null,
+        // [v1.27.0] 시작 시점에 목록에서 확인한 가장 큰 회차 번호 (다음화 링크를 못 찾았을 때 "마지막 화" 오판 방지용)
+        knownMaxNum: knownMaxNum ? parseInt(knownMaxNum, 10) : null,
         count: 1,
         seen: [normalizeEpisodeUrl(startUrl)],
         status: 'running',
@@ -108,6 +110,53 @@ export const createChain = ({ seriesTitle, startUrl, startNum = 1, endNum = null
     return { chain, firstItemId: getQueueItemId(seriesTitle, firstNum) };
 };
 
+/**
+ * 연속 받기 멈춤: 다음 회차를 더 등록하지 않고, 합본 저장도 보류 (사용자가 "이어서 받기"로 해당 회차를 다시 받으면 이어짐)
+ */
+const stallChain = (chainId, item, reason) => {
+    const chain = patchChain(chainId, {
+        status: 'stalled',
+        stopReason: reason,
+        stalledItem: { id: item.id, url: item.episodeUrl, num: item.episodeNum, title: item.episodeTitle, seq: item.chainSeq || 0 }
+    });
+    if (chain) {
+        logger.warn(`⏸️ [연속 받기] ${chain.seriesTitle}: ${reason}`, 'Chain');
+        try { EventBus.emit(EVT.NOTIFY_ERROR, { msg: `[순서대로 받기] ${chain.seriesTitle}\n${reason}` }); } catch (e) {}
+    }
+};
+
+/**
+ * 멈춘 연속 받기 재개: 멈춘 회차를 다시 대기열에 넣어, 성공하면 그 페이지의 다음화부터 이어 받음
+ * @returns {string|null} 다시 등록한 큐 아이템 ID
+ */
+export const reopenStalledChain = (chainId) => {
+    const chain = getChain(chainId);
+    if (!chain || chain.status !== 'stalled' || !chain.stalledItem) return null;
+    // 합본 세션이 이미 저장·폐기되었으면 이어 받을 곳이 없으므로 체인 기록만 정리
+    if (chain.mergeSessionId && !getMergeSession(chain.mergeSessionId)) {
+        removeChain(chainId);
+        return null;
+    }
+    const it = chain.stalledItem;
+    addEpisodesToQueue([{
+        ...chain.template,
+        title: it.title || `${it.num}화`,
+        url: it.url,
+        episodeNum: it.num,
+        chainId: chain.id,
+        chainSeq: it.seq,
+        mergeSessionId: chain.mergeSessionId
+    }], chain.seriesTitle, { mergeSessionId: chain.mergeSessionId });
+    patchChain(chainId, { status: 'running', stopReason: '', stalledItem: null });
+    logger.info(`▶️ [연속 받기] ${chain.seriesTitle}: ${it.num}화를 다시 열어 다음화를 찾습니다.`, 'Chain');
+    return getQueueItemId(chain.seriesTitle, String(it.num));
+};
+
+/** 연속 받기를 여기서 끝내기 (사용자 선택) */
+export const finishChainManually = (chainId) => {
+    finishChain(chainId, '사용자가 여기까지로 끝냈습니다');
+};
+
 const finishChain = (chainId, reason) => {
     const chain = patchChain(chainId, { status: 'done', stopReason: reason });
     if (chain) logger.success(`🏁 [연속 받기] ${chain.seriesTitle}: ${reason} (총 ${chain.count}화)`, 'Chain');
@@ -126,6 +175,16 @@ export const continueChain = (item, payload = {}, options = {}) => {
 
     const nextRaw = payload.nextEpisodeUrl;
     if (!nextRaw) {
+        // [v1.27.0 수정] 캡차 화면 등 정상 회차가 아닌 페이지에서는 다음화 링크가 없어 "마지막 화"로 오판하고 합본을 저장해 버렸습니다.
+        // 목록에서 확인한 마지막 회차보다 앞이면 끝내지 않고 "멈춤"으로 두어, 사용자가 확인 후 이어서 받게 합니다.
+        const seqNum = chain.startNum + (item.chainSeq || chain.count) - 1;
+        const pageNum = parseInt(payload.pageEpisodeNum, 10);
+        const currentNum = (pageNum > 0 && pageNum !== 0) ? Math.max(pageNum, seqNum) : seqNum;
+        const limit = chain.endNum || chain.knownMaxNum;
+        if (limit && currentNum < limit) {
+            stallChain(chain.id, item, `${currentNum}화에서 다음화 링크를 찾지 못했습니다 (목록상 ${limit}화까지 있음). 수집 창에 캡차나 오류 화면이 떠 있었는지 확인한 뒤 "이어서 받기"를 눌러 주세요.`);
+            return null;
+        }
         finishChain(chain.id, '다음화 링크가 없어 마지막 화로 판단했습니다');
         return null;
     }

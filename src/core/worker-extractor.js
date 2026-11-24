@@ -16,6 +16,35 @@ let isWorkerExtractorInitialized = false;
 let workerIpcCleanup = null;
 
 /**
+ * [v1.27.0] 보안 확인(캡차) 화면 판별
+ * - 클라우드플레어 챌린지/Turnstile, reCAPTCHA, hCaptcha는 요소만으로 판별
+ * - 그누보드 등 사이트 자체 캡차(자동입력 방지 문자)는 회차 본문/이미지가 없을 때만 캡차로 판단
+ *   (정상 회차 페이지의 비회원 댓글 작성란에도 캡차 입력칸이 있을 수 있기 때문)
+ */
+export function detectCaptchaPage(doc, viewerCfg = {}) {
+    if (!doc) return false;
+    const q = (sel) => { try { return doc.querySelector(sel); } catch (e) { return null; } };
+    const title = String(doc.title || '');
+    if (/Just a moment|Attention Required|잠시만 기다리|보안 확인/i.test(title)) return true;
+    if (q('#cf-challenge-running') || q('.cf-browser-verification') || q('#challenge-running') || q('#challenge-form')
+        || q('.cf-turnstile') || q('iframe[src*="challenges.cloudflare.com"]')) return true;
+    if (q('.g-recaptcha') || q('iframe[src*="recaptcha"]') || q('.h-captcha') || q('iframe[src*="hcaptcha"]')) return true;
+
+    const contentSels = [viewerCfg.novelContent, viewerCfg.imageContainer, 'article.novel-viewer', '#novel_content', '.vw-imgs', '#toon_content_imgs', '.view-padding']
+        .filter(Boolean).join(', ');
+    let hasContent = false;
+    try {
+        const el = contentSels ? doc.querySelector(contentSels) : null;
+        hasContent = !!(el && ((el.textContent || '').trim().length > 50 || (el.querySelectorAll && el.querySelectorAll('img').length > 0)));
+    } catch (e) {}
+    if (hasContent) return false;
+    const captchaEl = q('form[action*="captcha" i]') || q('input[name*="captcha" i]') || q('img[src*="captcha" i]') || q('#captcha') || q('[id*="captcha" i]');
+    const bodyText = String((doc.body && doc.body.textContent) || '').replace(/\s+/g, ' ');
+    const captchaText = /자동\s*입력\s*방지|로봇이\s*아닙니다|캡[챠차]|보안\s*문자|captcha/i.test(bodyText);
+    return !!(captchaEl || (captchaText && bodyText.length < 3000));
+}
+
+/**
  * [v1.27.0] 뷰어 페이지에서 "다음화" 링크 주소 찾기 (순차 연속 받기용)
  * - 규칙의 viewer.nextEpisode 셀렉터 → id/class/rel에 next가 들어간 링크 → "다음화/다음 회/다음편" 텍스트 링크 순
  * - href가 없거나(#, javascript:) 비활성(disabled)이거나 현재 주소와 같은 링크는 제외
@@ -161,14 +190,12 @@ export function initWorkerExtractor() {
                 console.warn('[TokiSync:Worker] 안티 슬립 기동 실패 (무시 가능):', e.message);
             }
 
-            // CF Challenge Check
-            const isCloudflare = document.title.includes('Just a moment') ||
-                                 document.getElementById('cf-challenge-running') ||
-                                 document.querySelector('.cf-browser-verification') ||
-                                 document.getElementById('challenge-running');
-            
+            // CF Challenge / 사이트 자체 캡차 Check ([v1.27.0] 캡차 화면을 회차로 오인해 수집·"마지막 화" 판단하던 문제 방지)
+            const startViewerCfg = (msg.payload && msg.payload.matchedRule && msg.payload.matchedRule.viewer) || {};
+            const isCloudflare = detectCaptchaPage(document, startViewerCfg);
+
             if (isCloudflare) {
-                console.warn("⚠️ [TokiSync:Worker] 클라우드플레어 보안 챌린지 감지 - 대기 모드 진입");
+                console.warn("⚠️ [TokiSync:Worker] 보안 확인(캡차) 화면 감지 - 대기 모드 진입");
                 sendToParent('CAPTCHA_DETECTED', { queueId });
                 return;
             }
